@@ -25,21 +25,42 @@ alm = np.random.normal(size=lmax + 1)
 split = 200#1024
 
 
-def decomp(eps, A):
+def decomp(A, eps=eps):
     n = A.shape[1]
     A_tmp, k, ilist, rnorms = interpolative_decomposition(eps, A.copy('F'))
+#    as_matrix(A_tmp).plot()
     ilist -= 1
     A_tilde = np.zeros((k, n))
     A_tilde[:, ilist[:k]] = np.eye(k)
     A_tilde[:, ilist[k:]] = A_tmp
+    print 'n=%4d k=%4d' % (n, k)
     return A[:, ilist[:k]], A_tilde
     
-A_k, A_tilde = decomp(eps, P[:, :split])
+#A_k, A_tilde = decomp(P[:, :split])
 #A_tilde[A_tilde > 1] = 1
 #as_matrix(A_tilde).plot()
-B = np.dot(A_k, A_tilde)
-as_matrix(B).plot()
+#B = np.dot(A_k, A_tilde)
+#as_matrix(B - P[:, :split]).plot()
 
+
+def butterfly(A):
+    hmid = A.shape[1] // 2
+    if hmid < 32:
+        return #1/0
+    L = A[:, :hmid]
+    L_subset, L_interpolate = decomp(L)
+    
+    R = A[:, hmid:]
+    R_subset, R_interpolate = decomp(R)
+
+    LR = np.hstack([L_subset, R_subset])
+    vmid = LR.shape[0] // 2
+    T = LR[:vmid, :]
+    butterfly(T)
+    B = LR[vmid:, :]
+    butterfly(B)
+
+butterfly(P[:, :])
 
 #A1, krank, ilist, rnorms = interpolative_decomposition(eps, P[:, :split].copy('F'))
 #print krank

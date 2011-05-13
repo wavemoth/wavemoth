@@ -3,8 +3,13 @@ cimport numpy as np
 
 cdef extern:
     void iddp_id "iddp_id_"(double *eps, int *m, int *n,
-                            double *a, int *krank, int *list,
+                            double *a, int *krank, int *ilist,
                             double *rnorms)
+    void idd_reconint "idd_reconint_"(int *n,
+                                      int *ilist,
+                                      int *krank,
+                                      double *proj,
+                                      double *p)
     
 def interpolative_decomposition(double eps, np.ndarray[double, ndim=2,
                                                        mode='fortran'] A):
@@ -33,13 +38,13 @@ c                 (these may be used to check the stability of the ID)
     cdef np.ndarray[double, mode='fortran'] rnorms
     m = A.shape[0]
     n = A.shape[1]
-    ilist = np.empty(n, dtype=np.intc)
-    rnorms = np.empty(n, dtype=np.double)
+    ilist = np.zeros(n, dtype=np.intc)
+    rnorms = np.zeros(n, dtype=np.double)
     
     iddp_id(&eps, &m, &n, <double*>A.data,
             &krank, <int*>ilist.data, <double*>rnorms.data)
-
-
-    return A[:krank, :n - krank], krank, ilist, rnorms
-#   c       a -- the first krank*(n-krank) elements of a constitute
-#c            the krank x (n-krank) interpolation matrix proj
+    
+    P = A.reshape(n * m, order='F')
+    P = P[:krank * (n - krank)]
+    P = P.reshape(krank, n - krank, order='F')
+    return P, krank, ilist, rnorms

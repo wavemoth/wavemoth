@@ -38,9 +38,7 @@ A_k, A_tilde = decomp(eps, P[:, :split])
 #A_tilde[A_tilde > 1] = 1
 #as_matrix(A_tilde).plot()
 B = np.dot(A_k, A_tilde)
-B[np.abs(B) > 1] = 0
 as_matrix(B).plot()
-#as_matrix(P[:, :split]).plot()
 
 
 #A1, krank, ilist, rnorms = interpolative_decomposition(eps, P[:, :split].copy('F'))

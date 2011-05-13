@@ -48,4 +48,10 @@ def build(bld):
         use='NUMPY',
         features='c pyext cshlib')
 
+    bld(source=(['spherew/interpolative_decomposition.pyx'] +
+                bld.srcnode.ant_glob(incl=['libidlight/*.f'])),
+        target='interpolative_decomposition',
+        use='fcshlib NUMPY',
+        features='fc c pyext cshlib')
+
 # vim:ft=python

@@ -1,6 +1,6 @@
 cdef extern from "ylmgen_c.h":
     ctypedef struct Ylmgen_C:
-        double *lamfact
+        double *ylm
     
     void Ylmgen_init(Ylmgen_C *gen, int l_max, int m_max, int s_max,
                      int spinrec, double epsilon)
@@ -16,7 +16,8 @@ import numpy as np
 from libc.string cimport memcpy
 
 def computed_normalized_associated_legendre(int m, theta,
-                                           int lmax, double epsilon=1e-30):
+                                            int lmax, double epsilon=1e-30,
+                                            out=None):
     """
     Given a value for m, computes the matrix :math:`\tilde{P}_\ell^m(\theta)`,
     with values for ``theta`` taken along rows and l = 0..l_max along columns.
@@ -25,9 +26,12 @@ def computed_normalized_associated_legendre(int m, theta,
     cdef Ylmgen_C ctx
     cdef Py_ssize_t col, row
     cdef np.ndarray[double, mode='c'] theta_ = np.ascontiguousarray(theta, dtype=np.double)
-    cdef np.ndarray[double, ndim=2] out = np.empty((theta_.shape[0], lmax + 1), np.double)
-
-    out[...] = 2
+    cdef np.ndarray[double, ndim=2] out_
+    if out is None:
+        out = np.empty((theta_.shape[0], lmax + 1), np.double)
+    out_ = out
+    if out_.shape[0] != theta_.shape[0] or out_.shape[1] != lmax + 1:
+        raise ValueError("Invalid shape of out")
     Ylmgen_init(&ctx, lmax, lmax, 0, 0, epsilon)
     try:
         Ylmgen_set_theta(&ctx, <double*>theta_.data, theta_.shape[0])
@@ -35,7 +39,7 @@ def computed_normalized_associated_legendre(int m, theta,
             Ylmgen_prepare(&ctx, row, m)
             Ylmgen_recalc_Ylm(&ctx)
             for col in range(lmax + 1):
-                out[row, col] = ctx.lamfact[col]
+                out[row, col] = ctx.ylm[col]
     finally:
         Ylmgen_destroy(&ctx)
     return out

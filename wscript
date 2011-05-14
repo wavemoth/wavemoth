@@ -54,4 +54,9 @@ def build(bld):
         use='fcshlib NUMPY',
         features='fc c pyext cshlib')
 
+    bld(source=(['spherew/matvec.pyx', 'src/matvec.c']),
+        includes=['src'],
+        target='matvec',
+        use='NUMPY',
+        features='c pyext cshlib')
 # vim:ft=python

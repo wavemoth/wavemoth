@@ -1,11 +1,17 @@
 from __future__ import division
+
+# Stick .. in PYTHONPATH
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname('__file__'), '..'))
+                
 from spherew import *
 import numpy as np
 from numpy import pi
 from cmb.oomatrix import as_matrix
 from matplotlib import pyplot as plt
 
-lmax = 5000
+lmax = 1000
 #Nside = 2048
 eps = 1e-10
 m = 0
@@ -31,7 +37,7 @@ def decomp(A, eps=eps):
     print 'n=%4d k=%4d' % (n, k)
     return A[:, ilist[:k]], A_tilde
     
-A_k, A_tilde = decomp(P[:, :split])
+#A_k, A_tilde = decomp(P[:, :split])
 #A_tilde[A_tilde > 1] = 1
 #as_matrix(A_tilde).plot()
 #B = np.dot(A_k, A_tilde)

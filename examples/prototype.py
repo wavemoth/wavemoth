@@ -12,10 +12,11 @@ from numpy import pi
 from cmb.oomatrix import as_matrix
 from matplotlib import pyplot as plt
 
-lmax = 8
-Nside = 4
+lmax = 32
+Nside = 16
 eps = 1e-10
-m = 1
+m = 2
+lsig = 30
 
 theta = get_ring_thetas(Nside)
 
@@ -27,7 +28,7 @@ P = compute_normalized_associated_legendre(m, theta, lmax)
 #as_matrix(P).plot()
 
 alm = np.zeros(lmax + 1, dtype=np.complex)
-alm[1] = 1
+alm[lsig] = 1
 
 def decomp(A, eps=eps):
     n = A.shape[1]
@@ -155,7 +156,7 @@ if 1:
     for i, (rn, phi0) in enumerate(zip(get_ring_pixel_counts(Nside), phi0_arr)):
         g_m = g_m_theta[i, :rn // 2 + 1]
         # Phase-shift to phi_0
-        g_m = g_m * np.exp(-1j * m * phi0)
+        g_m = g_m * np.exp(1j * m * phi0)
         ring = np.fft.irfft(g_m, rn)
         ring *= rn # see np.fft convention
     #    print ring
@@ -168,7 +169,7 @@ if 1:
     alm_fid = harmonic_sphere_map(0, lmin=0, lmax=lmax, is_complex=False)
 #    alm_fid[1**2 + m] = 1
 
-    alm_fid[1**2 + 1 + m] = 1
+    alm_fid[lsig**2 + lsig + m] = np.sqrt(2) # real is repacked
 #    alm_fid[1**2 - m] = -1
     alm_fid.to_pixel(Nside).plot(title='fiducial')
 

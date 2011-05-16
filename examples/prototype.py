@@ -6,26 +6,28 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname('__file__'), '..'))
                 
 from spherew import *
+from spherew.healpix import *
 import numpy as np
 from numpy import pi
 from cmb.oomatrix import as_matrix
 from matplotlib import pyplot as plt
 
-lmax = 1000
-#Nside = 2048
+lmax = 8
+Nside = 4
 eps = 1e-10
-m = 0
+m = 1
 
-theta = np.linspace(0.1, pi/2-0.1, lmax + 1)
+theta = get_ring_thetas(Nside)
 
 def bench():
     compute_normalized_associated_legendre(0, theta, lmax, out=P)
 
-P = compute_normalized_associated_legendre(0, theta, lmax)
+P = compute_normalized_associated_legendre(m, theta, lmax)
 #print np.std(P)
 #as_matrix(P).plot()
 
-alm = np.random.normal(size=lmax + 1)
+alm = np.zeros(lmax + 1, dtype=np.complex)
+alm[1] = 1
 
 def decomp(A, eps=eps):
     n = A.shape[1]
@@ -104,7 +106,7 @@ class HStack:
     
 def butterfly(A):
     hmid = A.shape[1] // 2
-    if hmid < 64:
+    if hmid <= 4:
         return Dense(A)        
     L = A[:, :hmid]
     L_subset, L_p = decomp(L)
@@ -125,13 +127,70 @@ def butterfly(A):
     
     return Butterfly(T_p, B_p, L_p, R_p, T_obj, B_obj)
 
-C = 128 * 2
-lst = []
-for i in range(0, P.shape[1], C):
-    X = P[:, i:i + C] 
-    lst.append(butterfly(X))
-BP = HStack(lst)
-DP = Dense(P)
-e1 = BP.apply(alm)
-e2 = DP.apply(alm)
+if 0:
+    plt.figure()
+    plt.plot(get_ring_phi0(Nside))
+    
 
+if 1:
+    C = 60 * 2
+    lst = []
+    for i in range(0, P.shape[1], C):
+        X = P[:, i:i + C] 
+        lst.append(butterfly(X))
+    BP = HStack(lst)
+    DP = Dense(P)
+    g = BP.apply(alm.real) + 1j * BP.apply(alm.imag)
+    g = DP.apply(alm.real) + 1j * DP.apply(alm.imag)
+
+    Npix = 12 * Nside**2
+    map = np.zeros(Npix)
+    g_m_theta = np.zeros((4 * Nside - 1, 4 * Npix), dtype=np.complex)
+    g_m_theta[:, m] = g
+
+    idx = 0
+
+    phi0_arr = get_ring_phi0(Nside)
+
+    for i, (rn, phi0) in enumerate(zip(get_ring_pixel_counts(Nside), phi0_arr)):
+        g_m = g_m_theta[i, :rn // 2 + 1]
+        # Phase-shift to phi_0
+        g_m = g_m * np.exp(-1j * m * phi0)
+        ring = np.fft.irfft(g_m, rn)
+        ring *= rn # see np.fft convention
+    #    print ring
+        map[idx:idx + rn] = ring
+        idx += rn
+
+    from cmb.maps import pixel_sphere_map, harmonic_sphere_map
+    pixel_sphere_map(map).plot(title='fast')
+
+    alm_fid = harmonic_sphere_map(0, lmin=0, lmax=lmax, is_complex=False)
+#    alm_fid[1**2 + m] = 1
+
+    alm_fid[1**2 + 1 + m] = 1
+#    alm_fid[1**2 - m] = -1
+    alm_fid.to_pixel(Nside).plot(title='fiducial')
+
+## plt.clf()
+
+
+## from sympy.mpmath import legenp
+## from scipy.special import gamma, sph_harm
+
+## l = lmax
+
+## if 0:
+##     l = 2
+    
+##     plt.plot(theta, P[:, l])
+##     Lambda_lm = np.sqrt((2 * l + 1) / np.pi / 4 * gamma(l -m + 1) / gamma(l + m  + 1))
+##     Plm = np.array([float(legenp(l, m, ct)) for ct in np.cos(theta)])
+##     plt.plot(theta, Lambda_lm * Plm)
+
+##     sp = sph_harm(m, l, 0, theta)
+##     plt.plot(theta, sp)
+    
+
+## #e2 = DP.apply(alm)
+## #print BP.size() / DP.size()

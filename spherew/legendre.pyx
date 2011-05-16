@@ -15,9 +15,9 @@ cimport numpy as np
 import numpy as np
 from libc.string cimport memcpy
 
-def computed_normalized_associated_legendre(int m, theta,
-                                            int lmax, double epsilon=1e-30,
-                                            out=None):
+def compute_normalized_associated_legendre(int m, theta,
+                                           int lmax, double epsilon=1e-30,
+                                           out=None):
     """
     Given a value for m, computes the matrix :math:`\tilde{P}_\ell^m(\theta)`,
     with values for ``theta`` taken along rows and l = 0..l_max along columns.

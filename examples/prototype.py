@@ -19,9 +19,9 @@ m = 0
 theta = np.linspace(0.1, pi/2-0.1, lmax + 1)
 
 def bench():
-    computed_normalized_associated_legendre(0, theta, lmax, out=P)
+    compute_normalized_associated_legendre(0, theta, lmax, out=P)
 
-P = computed_normalized_associated_legendre(0, theta, lmax)
+P = compute_normalized_associated_legendre(0, theta, lmax)
 #print np.std(P)
 #as_matrix(P).plot()
 

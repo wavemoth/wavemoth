@@ -16,6 +16,7 @@ def test_norm_Plm():
     yield test(np.pi/2, 0, 10)
     yield test(np.pi/4, 0, 10)
     yield test(3 * np.pi/4, 0, 10)
+    yield test(np.pi/4, 1, 4)
     yield test(np.pi/4, 2, 4)
     
 

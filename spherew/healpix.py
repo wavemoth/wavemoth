@@ -1,5 +1,6 @@
 from __future__ import division
 import numpy as np
+from numpy import pi
 
 def get_ring_thetas(Nside):
     i = np.arange(1, 4 * Nside - 1)
@@ -11,6 +12,16 @@ def get_ring_thetas(Nside):
     z[2 * Nside:] = -z[2 * Nside - 2::-1]
     theta = np.arccos(z)
     return theta
+
+def get_ring_phi0(Nside):
+    counts = get_ring_pixel_counts(Nside)
+    phi = np.zeros(4 * Nside - 1)
+    ring_indices = np.arange(1, 4 * Nside)
+    phi[:Nside - 1] = pi / (4 * ring_indices[:Nside - 1])
+    phi[Nside - 1:3 * Nside] = pi / 4 / Nside
+    phi[Nside:3 * Nside:2] = 0
+    phi[3 * Nside:] = phi[Nside - 2::-1]
+    return phi
 
 def get_ring_pixel_counts(Nside):
     # North polar cap: Start with 4 pixels, add 4 more per ring

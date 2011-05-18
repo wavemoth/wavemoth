@@ -124,21 +124,37 @@ def butterfly(A):
 #
 
 class InnerSumPerM:
-    def __init__(self, m, theta_arr, lmax):
-        P = compute_normalized_associated_legendre(m, theta_arr, lmax)
+    def __init__(self, m, x_grid, lmax):
+        P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax)
         self.P_even = Dense(P[:, ::2])
         self.P_odd = Dense(P[:, 1::2])
+        self.include_equator = 0 in x_grid
 
     def compute(self, a_l):
         a_l_even = a_l[::2]
         a_l_odd = a_l[1::2]
         g_even = self.P_even.apply(a_l_even.real) + 1j * self.P_even.apply(a_l_even.imag)
         g_odd = self.P_odd.apply(a_l_odd.real) + 1j * self.P_odd.apply(a_l_odd.imag)
+        # We have now computed for all given cos(theta) >= 0. Retrieve the
+        # opposite hemisphere by symmetry. If equator is included it
+        # should not be mirrored
+        if self.include_equator:
+            # TODO Do not include equator for odd part
+            assert np.abs(g_odd[-1]) < 1e-10
+        start = -2 if self.include_equator else -1
+        g_even = np.hstack([g_even, g_even[start::-1]])
+        g_odd = np.hstack([g_odd, -g_odd[start::-1]])
         return g_even + g_odd
+        
 
 def al2gmtheta(m, a_l, theta_arr):
     lmax = a_l.shape[0] - 1 + m
-    return InnerSumPerM(m, theta_arr, lmax).compute(a_l)
+    x = np.cos(theta_arr)
+    x[np.abs(x) < 1e-10] = 0
+    xneg = x[x < 0]
+    xpos = x[x > 0]
+    assert np.allclose(-xneg[::-1], xpos)
+    return InnerSumPerM(m, x[x >= 0], lmax).compute(a_l)
 
 def alm2map(m, a_l, Nside):
     theta = get_ring_thetas(Nside)
@@ -146,6 +162,9 @@ def alm2map(m, a_l, Nside):
     Npix = 12 * Nside**2
     map = np.zeros(Npix)
     g_m_theta = np.zeros((4 * Nside - 1, 4 * Npix), dtype=np.complex)
+    print g_m_theta.shape, g.shape
+#    plt.clf()
+#    plt.plot(g.real)
     g_m_theta[:, m] = g
 
     idx = 0

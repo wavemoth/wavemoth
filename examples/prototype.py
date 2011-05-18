@@ -123,25 +123,22 @@ def butterfly(A):
 # down to HEALPix grid
 #
 
-#class InnerSumPerM:
-#    def __init__(self, m, theta_arr, lmax):
-#        P = compute_normalized_associated_legendre(m, theta_arr, lmax)
-#        self.P_even = P[:, 
+class InnerSumPerM:
+    def __init__(self, m, theta_arr, lmax):
+        P = compute_normalized_associated_legendre(m, theta_arr, lmax)
+        self.P_even = Dense(P[:, ::2])
+        self.P_odd = Dense(P[:, 1::2])
 
+    def compute(self, a_l):
+        a_l_even = a_l[::2]
+        a_l_odd = a_l[1::2]
+        g_even = self.P_even.apply(a_l_even.real) + 1j * self.P_even.apply(a_l_even.imag)
+        g_odd = self.P_odd.apply(a_l_odd.real) + 1j * self.P_odd.apply(a_l_odd.imag)
+        return g_even + g_odd
 
 def al2gmtheta(m, a_l, theta_arr):
     lmax = a_l.shape[0] - 1 + m
-    P = compute_normalized_associated_legendre(m, theta_arr, lmax)
-    if 0:
-        lst = []
-        for i in range(0, P.shape[1], C):
-            X = P[:, i:i + C] 
-            lst.append(butterfly(X))
-        BP = HStack(lst)
-    DP = Dense(P)
-#    g = BP.apply(a_l.real) + 1j * BP.apply(a_l.imag)
-    g = DP.apply(a_l.real) + 1j * DP.apply(a_l.imag)
-    return g
+    return InnerSumPerM(m, theta_arr, lmax).compute(a_l)
 
 def alm2map(m, a_l, Nside):
     theta = get_ring_thetas(Nside)

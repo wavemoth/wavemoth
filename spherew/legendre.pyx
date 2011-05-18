@@ -20,7 +20,7 @@ def compute_normalized_associated_legendre(int m, theta,
                                            out=None):
     """
     Given a value for m, computes the matrix :math:`\tilde{P}_\ell^m(\theta)`,
-    with values for ``theta`` taken along rows and l = 0..l_max along columns.
+    with values for ``theta`` taken along rows and l = m..l_max along columns.
     
     """
     cdef Ylmgen_C ctx
@@ -28,9 +28,9 @@ def compute_normalized_associated_legendre(int m, theta,
     cdef np.ndarray[double, mode='c'] theta_ = np.ascontiguousarray(theta, dtype=np.double)
     cdef np.ndarray[double, ndim=2] out_
     if out is None:
-        out = np.empty((theta_.shape[0], lmax + 1), np.double)
+        out = np.empty((theta_.shape[0], lmax - m + 1), np.double)
     out_ = out
-    if out_.shape[0] != theta_.shape[0] or out_.shape[1] != lmax + 1:
+    if out_.shape[0] != theta_.shape[0] or out_.shape[1] != lmax + 1 - m:
         raise ValueError("Invalid shape of out")
     Ylmgen_init(&ctx, lmax, lmax, 0, 0, epsilon)
     try:
@@ -39,7 +39,7 @@ def compute_normalized_associated_legendre(int m, theta,
             Ylmgen_prepare(&ctx, row, m)
             Ylmgen_recalc_Ylm(&ctx)
             for col in range(lmax + 1):
-                out[row, col] = ctx.ylm[col]
+                out[row, col - m] = ctx.ylm[col]
     finally:
         Ylmgen_destroy(&ctx)
     return out

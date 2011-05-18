@@ -122,8 +122,15 @@ def butterfly(A):
 # Spherical harmonic transform for a single l,
 # down to HEALPix grid
 #
+
+#class InnerSumPerM:
+#    def __init__(self, m, theta_arr, lmax):
+#        P = compute_normalized_associated_legendre(m, theta_arr, lmax)
+#        self.P_even = P[:, 
+
+
 def al2gmtheta(m, a_l, theta_arr):
-    lmax = a_l.shape[0] - 1
+    lmax = a_l.shape[0] - 1 + m
     P = compute_normalized_associated_legendre(m, theta_arr, lmax)
     if 0:
         lst = []
@@ -168,12 +175,12 @@ def alm2map(m, a_l, Nside):
 lmax = 16
 Nside = 16
 m = 2
-a_l = np.zeros(lmax + 1)
-a_l[3] = 1
-a_l[4] = -1
+a_l = np.zeros(lmax + 1 - m)
+a_l[3 - m] = 1
+a_l[4 - m] = -1
 #a_l[15] = 0.1
 #a_l = (-1) ** np.zeros(lmax + 1)
-a_l[:m] = 0
+
     
 if 1:
     map = alm2map(m, a_l, Nside)
@@ -183,8 +190,8 @@ if 1:
 
     alm_fid = harmonic_sphere_map(0, lmin=0, lmax=lmax, is_complex=False)
     assert m != 0
-    for l in range(lmax + 1):
-        alm_fid[l**2 + l + m] = np.sqrt(2) * a_l[l] # real is repacked
+    for l in range(m, lmax + 1):
+        alm_fid[l**2 + l + m] = np.sqrt(2) * a_l[l - m] # real is repacked
 
     alm_fid.to_pixel(Nside).plot(title='fiducial')
 #    (map - alm_fid.to_pixel(Nside)).plot(title='diff')

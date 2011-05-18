@@ -126,24 +126,23 @@ def butterfly(A):
 class InnerSumPerM:
     def __init__(self, m, x_grid, lmax):
         P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax)
-        self.P_even = Dense(P[:, ::2])
-        self.P_odd = Dense(P[:, 1::2])
-        self.include_equator = 0 in x_grid
+        assert x_grid[-1] == 0
+        self.P_even = Dense(P[:-1, ::2])
+        self.P_odd = Dense(P[:-1, 1::2])
+        # Treat equator seperately, as we cannot interpolate to it from
+        # samples in (0, 1). Only need even part, as odd part will be 0.
+        self.P_equator = Dense(P[-1:, ::2])
 
     def compute(self, a_l):
         a_l_even = a_l[::2]
         a_l_odd = a_l[1::2]
         g_even = self.P_even.apply(a_l_even.real) + 1j * self.P_even.apply(a_l_even.imag)
         g_odd = self.P_odd.apply(a_l_odd.real) + 1j * self.P_odd.apply(a_l_odd.imag)
-        # We have now computed for all given cos(theta) >= 0. Retrieve the
-        # opposite hemisphere by symmetry. If equator is included it
-        # should not be mirrored
-        if self.include_equator:
-            # TODO Do not include equator for odd part
-            assert np.abs(g_odd[-1]) < 1e-10
-        start = -2 if self.include_equator else -1
-        g_even = np.hstack([g_even, g_even[start::-1]])
-        g_odd = np.hstack([g_odd, -g_odd[start::-1]])
+        g_equator = self.P_equator.apply(a_l_even.real) + 1j * self.P_equator.apply(a_l_even.imag)
+        # We have now computed for all cos(theta) >= 0. Retrieve the
+        # opposite hemisphere by symmetry.
+        g_even = np.hstack([g_even, g_equator, g_even[::-1]])
+        g_odd = np.hstack([g_odd, 0, -g_odd[::-1]])
         return g_even + g_odd
         
 
@@ -202,12 +201,12 @@ if 1:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map
-    pixel_sphere_map(map).plot(title='fast')
+#    pixel_sphere_map(map).plot(title='fast')
 
     alm_fid = harmonic_sphere_map(0, lmin=0, lmax=lmax, is_complex=False)
     assert m != 0
     for l in range(m, lmax + 1):
         alm_fid[l**2 + l + m] = np.sqrt(2) * a_l[l - m] # real is repacked
 
-    alm_fid.to_pixel(Nside).plot(title='fiducial')
-#    (map - alm_fid.to_pixel(Nside)).plot(title='diff')
+#    alm_fid.to_pixel(Nside).plot(title='fiducial')
+    (map - alm_fid.to_pixel(Nside)).plot(title='diff')

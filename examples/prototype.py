@@ -12,44 +12,19 @@ from numpy import pi
 from cmb.oomatrix import as_matrix
 from matplotlib import pyplot as plt
 
-lmax = 32
-Nside = 16
+#
+# Some parameters
+#
+C = 60*2
 eps = 1e-10
-m = 2
-lsig = 30
 
-theta = get_ring_thetas(Nside)
-
-def bench():
-    compute_normalized_associated_legendre(0, theta, lmax, out=P)
-
-P = compute_normalized_associated_legendre(m, theta, lmax)
-#print np.std(P)
-#as_matrix(P).plot()
-
-alm = np.zeros(lmax + 1, dtype=np.complex)
-alm[lsig] = 1
-
-def decomp(A, eps=eps):
-    n = A.shape[1]
-    A_tmp, k, ilist, rnorms = interpolative_decomposition(eps, A.copy('F'))
-    ilist -= 1
-    A_tilde = np.zeros((k, n))
-    A_tilde[:, ilist[:k]] = np.eye(k)
-    A_tilde[:, ilist[k:]] = A_tmp
-    print 'n=%4d k=%4d' % (n, k)
-    return A[:, ilist[:k]], A_tilde
-    
-#A_k, A_tilde = decomp(P[:, :split])
-#A_tilde[A_tilde > 1] = 1
-#as_matrix(A_tilde).plot()
-#B = np.dot(A_k, A_tilde)
-#as_matrix(B - P[:, :split]).plot()
-
-#sizes = []
-#horzbutterfly(P, sizes)
-#print sum(sizes)
-
+#
+# Tiny object-oriented matrix library; the compressed matrix
+# is represented as a tree of these matrices of various types.
+# 
+# In C, the matrix is rather represented as a stream of contiguous
+# data with flags specifying what type the data is.
+#
 
 class Dense(object):
     def __init__(self, A):
@@ -104,7 +79,22 @@ class HStack:
     
     def size(self):
         return (sum(np.prod(x.shape) for x in self.lst))
-    
+
+
+#
+# The butterfly algorithm
+#
+
+def decomp(A, eps=eps):
+    n = A.shape[1]
+    A_tmp, k, ilist, rnorms = interpolative_decomposition(eps, A.copy('F'))
+    ilist -= 1
+    A_tilde = np.zeros((k, n))
+    A_tilde[:, ilist[:k]] = np.eye(k)
+    A_tilde[:, ilist[k:]] = A_tmp
+    print 'n=%4d k=%4d' % (n, k)
+    return A[:, ilist[:k]], A_tilde
+       
 def butterfly(A):
     hmid = A.shape[1] // 2
     if hmid <= 4:
@@ -128,22 +118,27 @@ def butterfly(A):
     
     return Butterfly(T_p, B_p, L_p, R_p, T_obj, B_obj)
 
-if 0:
-    plt.figure()
-    plt.plot(get_ring_phi0(Nside))
-    
-
-if 1:
-    C = 60 * 2
-    lst = []
-    for i in range(0, P.shape[1], C):
-        X = P[:, i:i + C] 
-        lst.append(butterfly(X))
-    BP = HStack(lst)
+#
+# Spherical harmonic transform for a single l,
+# down to HEALPix grid
+#
+def al2gmtheta(m, a_l, theta_arr):
+    lmax = a_l.shape[0] - 1
+    P = compute_normalized_associated_legendre(m, theta_arr, lmax)
+    if 0:
+        lst = []
+        for i in range(0, P.shape[1], C):
+            X = P[:, i:i + C] 
+            lst.append(butterfly(X))
+        BP = HStack(lst)
     DP = Dense(P)
-    g = BP.apply(alm.real) + 1j * BP.apply(alm.imag)
-    g = DP.apply(alm.real) + 1j * DP.apply(alm.imag)
+#    g = BP.apply(a_l.real) + 1j * BP.apply(a_l.imag)
+    g = DP.apply(a_l.real) + 1j * DP.apply(a_l.imag)
+    return g
 
+def alm2map(m, a_l, Nside):
+    theta = get_ring_thetas(Nside)
+    g = al2gmtheta(m, a_l, theta)
     Npix = 12 * Nside**2
     map = np.zeros(Npix)
     g_m_theta = np.zeros((4 * Nside - 1, 4 * Npix), dtype=np.complex)
@@ -163,35 +158,33 @@ if 1:
         map[idx:idx + rn] = ring
         idx += rn
 
+    return map
+
+
+#
+# Parameters
+#
+
+lmax = 16
+Nside = 16
+m = 2
+a_l = np.zeros(lmax + 1)
+a_l[3] = 1
+a_l[4] = -1
+#a_l[15] = 0.1
+#a_l = (-1) ** np.zeros(lmax + 1)
+a_l[:m] = 0
+    
+if 1:
+    map = alm2map(m, a_l, Nside)
+
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map
     pixel_sphere_map(map).plot(title='fast')
 
     alm_fid = harmonic_sphere_map(0, lmin=0, lmax=lmax, is_complex=False)
-#    alm_fid[1**2 + m] = 1
+    assert m != 0
+    for l in range(lmax + 1):
+        alm_fid[l**2 + l + m] = np.sqrt(2) * a_l[l] # real is repacked
 
-    alm_fid[lsig**2 + lsig + m] = np.sqrt(2) # real is repacked
-#    alm_fid[1**2 - m] = -1
     alm_fid.to_pixel(Nside).plot(title='fiducial')
-
-## plt.clf()
-
-
-## from sympy.mpmath import legenp
-## from scipy.special import gamma, sph_harm
-
-## l = lmax
-
-## if 0:
-##     l = 2
-    
-##     plt.plot(theta, P[:, l])
-##     Lambda_lm = np.sqrt((2 * l + 1) / np.pi / 4 * gamma(l -m + 1) / gamma(l + m  + 1))
-##     Plm = np.array([float(legenp(l, m, ct)) for ct in np.cos(theta)])
-##     plt.plot(theta, Lambda_lm * Plm)
-
-##     sp = sph_harm(m, l, 0, theta)
-##     plt.plot(theta, sp)
-    
-
-## #e2 = DP.apply(alm)
-## #print BP.size() / DP.size()
+#    (map - alm_fid.to_pixel(Nside)).plot(title='diff')

@@ -33,3 +33,4 @@ dist
 .lock-*
 *.o
 joblib
+bin/*

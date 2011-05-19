@@ -40,8 +40,10 @@ def configure(conf):
     conf.check_cython_version(minver=(0,11,1))
     conf.check_tool('inplace', tooldir='tools')
 
-    conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core'.split()
+    conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
     conf.env.LINKFLAGS_BLAS = ['-L/opt/intel/mkl/lib/intel64', '-Wl,-R/opt/intel/mkl/lib/intel64/']
+
+    print conf.env
 
 
 def build(bld):
@@ -70,5 +72,13 @@ def build(bld):
         target='butterfly',
         use='NUMPY BLAS',
         features='c pyext cshlib')
-    
+
+    bld(source=(['bench/matmulbench.c']),
+        includes=['src'],
+        target='matmulbench',
+        install_path='bin',
+        libs=['math'],
+        use='LIBC BLAS',
+        features='c cprogram')
+
 # vim:ft=python

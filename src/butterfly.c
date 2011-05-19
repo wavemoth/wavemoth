@@ -36,12 +36,12 @@ static int zero_right_d(char *matrixdata, double *x, double *y,
 static int dense_rowmajor_right_d(char *matrixdata, double *x, double *y,
                                   bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec) {
   double *matrix = (double*)(matrixdata + 16);
-  /* dgemm uses Fortran-order, so do transposed multiply */
-  printf("%d\n", matrixdata[1]);
-  printf("%d\n", matrixdata[15]);
-  printf("%d\n", matrixdata[16]);
-  dgemm('T', 'T', nrow, nvec, ncol, 1.0, matrix, ncol, x, nvec,
-        0.0, y, nrow);
+  /* dgemm uses Fortran-order, so do transposed multiply;
+     C-order: y^T = x^T * matrix^T
+     Fortran-order: y = x * matrix
+  */
+  int m = nvec, n = nrow, k = ncol;
+  dgemm('N', 'N', m, n, k, 1.0, x, m, matrix, k, 0.0, y, m);
   return 0;
 }
 

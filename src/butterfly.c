@@ -1,23 +1,10 @@
 #include "butterfly.h"
 #include "stdio.h"
+#include "blas.h"
 
 typedef int (*apply_dz_func_t)(char *matrixdata, 
                                double *x, double *y,
                                bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec);
-/*
-LAPACK headers
-*/
-void dgemm_(char *transa, char *transb, int *m, int *n,
-            int *k, double *alpha, double *a, int *lda, 
-            double *b, int *ldb, double *beta, double *c,
-            int *ldc);
-
-static void dgemm(char transa, char transb, int m, int n, int k,
-           double alpha, double *a, int lda, double *b,
-           int ldb, double beta, double *c, int ldc) {
-  dgemm_(&transa, &transb, &m, &n, &k, &alpha, a, &lda, b,
-         &ldb, &beta, c, &ldc);
-}
 
 /*
 Type implementations

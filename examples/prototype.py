@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 #
 # Some parameters
 #
-C = 60*2
+C = 200*2
 eps = 1e-10
 
 #
@@ -85,19 +85,14 @@ class HStack:
 # The butterfly algorithm
 #
 
-def decomp(A, eps=eps):
-    n = A.shape[1]
-    A_tmp, k, ilist, rnorms = interpolative_decomposition(eps, A.copy('F'))
-    ilist -= 1
-    A_tilde = np.zeros((k, n))
-    A_tilde[:, ilist[:k]] = np.eye(k)
-    A_tilde[:, ilist[k:]] = A_tmp
-    print 'n=%4d k=%4d' % (n, k)
-    return A[:, ilist[:k]], A_tilde
-       
 def butterfly(A):
+    def decomp(m):
+        s, ip = interpolative_decomposition(m, eps)
+        print 'Rank: (%.2f) %d / %d ' % (s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1])
+        return s, ip
+    
     hmid = A.shape[1] // 2
-    if hmid <= 4:
+    if hmid <= 40:
         return Dense(A)        
     L = A[:, :hmid]
     L_subset, L_p = decomp(L)
@@ -118,17 +113,36 @@ def butterfly(A):
     
     return Butterfly(T_p, B_p, L_p, R_p, T_obj, B_obj)
 
+def split_butterfly(A):
+    lst = []
+    for i in range(0, A.shape[1], C):
+        X = A[:, i:i + C] 
+        lst.append(butterfly(X))
+    return HStack(lst)
+    
+
 #
 # Spherical harmonic transform for a single l,
 # down to HEALPix grid
 #
 
 class InnerSumPerM:
-    def __init__(self, m, x_grid, lmax):
+    def __init__(self, m, x_grid, lmax, compress=True):
         P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax)
         assert x_grid[-1] == 0
-        self.P_even = Dense(P[:-1, ::2])
-        self.P_odd = Dense(P[:-1, 1::2])
+
+        P_even_arr = P[:-1, ::2]
+        P_odd_arr = P[:-1, 1::2]
+        if compress:
+            self.P_even = split_butterfly(P_even_arr)
+            self.P_odd = split_butterfly(P_odd_arr)
+            print self.P_even.size(), self.P_odd.size()
+            print Dense(P_even_arr).size(), Dense(P_odd_arr).size()
+            print 'Compression:', ((self.P_even.size() + self.P_odd.size()) / 
+                (Dense(P_even_arr).size() + Dense(P_odd_arr).size()))
+        else:
+            self.P_even = Dense(P_even_arr)
+            self.P_odd = Dense(P_odd_arr)
         # Treat equator seperately, as we cannot interpolate to it from
         # samples in (0, 1). Only need even part, as odd part will be 0.
         self.P_equator = Dense(P[-1:, ::2])
@@ -187,8 +201,8 @@ def alm2map(m, a_l, Nside):
 # Parameters
 #
 
-lmax = 16
-Nside = 16
+lmax = 1000
+Nside = 512
 m = 2
 a_l = np.zeros(lmax + 1 - m)
 a_l[3 - m] = 1
@@ -196,8 +210,32 @@ a_l[4 - m] = -1
 #a_l[15] = 0.1
 #a_l = (-1) ** np.zeros(lmax + 1)
 
-    
+from joblib import Memory
+memory = Memory('joblib')
+
+@memory.cache
+def getroots(l, m):
+    return associated_legendre_roots(lmax + 1, m)
+
+
 if 1:
+#    roots = getroots(lmax + 1, m)
+    roots = get_ring_thetas(Nside)[2*Nside-1:]
+    P = compute_normalized_associated_legendre(m, roots, lmax)
+    SPeven = split_butterfly(P[::2])
+    SPodd = split_butterfly(P[1::2])
+    print 'Compression', SPeven.size() / Dense(P[::2]).size()
+    print 'Compression', SPodd.size() / Dense(P[1::2]).size()
+
+if 0:
+    x = np.cos(get_ring_thetas(Nside))
+    x[np.abs(x) < 1e-10] = 0
+    xneg = x[x < 0]
+    xpos = x[x > 0]
+    assert np.allclose(-xneg[::-1], xpos)
+    InnerSumPerM(m, x[x >= 0], lmax)
+    
+if 0:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

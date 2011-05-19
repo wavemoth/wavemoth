@@ -1,5 +1,6 @@
 cdef extern from "ylmgen_c.h":
     ctypedef struct Ylmgen_C:
+        int *firstl
         double *ylm
     
     void Ylmgen_init(Ylmgen_C *gen, int l_max, int m_max, int s_max,
@@ -15,6 +16,9 @@ cimport numpy as np
 import numpy as np
 from libc.string cimport memcpy
 
+cimport cython
+
+@cython.wraparound(False)
 def compute_normalized_associated_legendre(int m, theta,
                                            int lmax, double epsilon=1e-30,
                                            out=None):
@@ -27,6 +31,7 @@ def compute_normalized_associated_legendre(int m, theta,
     cdef Py_ssize_t col, row
     cdef np.ndarray[double, mode='c'] theta_ = np.ascontiguousarray(theta, dtype=np.double)
     cdef np.ndarray[double, ndim=2] out_
+    cdef int firstl
     if out is None:
         out = np.empty((theta_.shape[0], lmax - m + 1), np.double)
     out_ = out
@@ -38,7 +43,10 @@ def compute_normalized_associated_legendre(int m, theta,
         for row in range(theta_.shape[0]):
             Ylmgen_prepare(&ctx, row, m)
             Ylmgen_recalc_Ylm(&ctx)
-            for col in range(m, lmax + 1):
+            firstl = ctx.firstl[0] # argument: spin
+            for col in range(m, min(firstl, lmax + 1)):
+                out[row, col - m] = 0
+            for col in range(max(m, firstl), lmax + 1):
                 out[row, col - m] = ctx.ylm[col]
     finally:
         Ylmgen_destroy(&ctx)

@@ -38,7 +38,7 @@ def compute_normalized_associated_legendre(int m, theta,
         for row in range(theta_.shape[0]):
             Ylmgen_prepare(&ctx, row, m)
             Ylmgen_recalc_Ylm(&ctx)
-            for col in range(lmax + 1):
+            for col in range(m, lmax + 1):
                 out[row, col - m] = ctx.ylm[col]
     finally:
         Ylmgen_destroy(&ctx)

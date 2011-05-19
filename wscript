@@ -40,6 +40,10 @@ def configure(conf):
     conf.check_cython_version(minver=(0,11,1))
     conf.check_tool('inplace', tooldir='tools')
 
+    conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core'.split()
+    conf.env.LINKFLAGS_BLAS = ['-L/opt/intel/mkl/lib/intel64', '-Wl,-R/opt/intel/mkl/lib/intel64/']
+
+
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +
                 bld.srcnode.ant_glob(incl=['libpshtlight/*.c'])),
@@ -59,4 +63,12 @@ def build(bld):
         target='matvec',
         use='NUMPY',
         features='c pyext cshlib')
+
+
+    bld(source=(['spherew/butterfly.pyx', 'src/butterfly.c']),
+        includes=['src'],
+        target='butterfly',
+        use='NUMPY BLAS',
+        features='c pyext cshlib')
+    
 # vim:ft=python

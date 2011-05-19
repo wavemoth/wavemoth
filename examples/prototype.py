@@ -61,7 +61,13 @@ class Butterfly(object):
         return np.hstack([a, b])
 
     def size(self):
-        return (sum(np.prod(x.shape) for x in
+        # We fake the computation here *as if* we were doing permutation
+        # of identity matrix
+        def ip_size(A_p):
+            k, n = A_p.shape
+            return k * (n - k) + k
+        
+        return (sum(ip_size(x) for x in
                    [self.T_p, self.B_p, self.L_p, self.R_p]) +
                 self.T_obj.size() + self.B_obj.size())
 
@@ -86,27 +92,28 @@ class HStack:
 #
 
 def butterfly(A):
-    def decomp(m):
+    def decomp(m, msg):
         s, ip = interpolative_decomposition(m, eps)
-        print 'Rank: (%.2f) %d / %d ' % (s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1])
+        print 'ID %s: (%.2f) %d / %d' % (
+            msg, s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1])
         return s, ip
     
     hmid = A.shape[1] // 2
     if hmid <= 40:
         return Dense(A)        
     L = A[:, :hmid]
-    L_subset, L_p = decomp(L)
+    L_subset, L_p = decomp(L, 'L')
     
     R = A[:, hmid:]
-    R_subset, R_p = decomp(R)
+    R_subset, R_p = decomp(R, 'R')
         
     S = np.hstack([L_subset, R_subset])
     del L_subset
     del R_subset
     
     vmid = S.shape[0] // 2
-    T_subset, T_p = decomp(S[:vmid, :])
-    B_subset, B_p = decomp(S[vmid:, :])
+    T_subset, T_p = decomp(S[:vmid, :], 'T')
+    B_subset, B_p = decomp(S[vmid:, :], 'B')
 
     T_obj = butterfly(T_subset)
     B_obj = butterfly(B_subset)
@@ -219,8 +226,8 @@ def getroots(l, m):
 
 
 if 1:
-#    roots = getroots(lmax + 1, m)
-    roots = get_ring_thetas(Nside)[2*Nside-1:]
+    roots = getroots(lmax + 1, m)
+#    roots = get_ring_thetas(Nside)[2*Nside-1:]
     P = compute_normalized_associated_legendre(m, roots, lmax)
     SPeven = split_butterfly(P[::2])
     SPodd = split_butterfly(P[1::2])

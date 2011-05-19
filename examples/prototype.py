@@ -78,7 +78,7 @@ class HStack:
         return y
     
     def size(self):
-        return (sum(np.prod(x.shape) for x in self.lst))
+        return sum(x.size() for x in self.lst)
 
 
 #

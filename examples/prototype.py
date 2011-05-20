@@ -288,10 +288,10 @@ if 1:
     roots = getroots(lmax + 1, m)
 #    roots = get_ring_thetas(Nside)[2*Nside-1:]
     P = compute_normalized_associated_legendre(m, roots, lmax)
-    SPeven = butterfly_horz(P[::2])
-    SPodd = butterfly_horz(P[1::2])
-    #SPeven = split_butterfly(P[::2])
-    #SPodd = split_butterfly(P[1::2])
+    #SPeven = butterfly_horz(P[::2])
+    #SPodd = butterfly_horz(P[1::2])
+    SPeven = split_butterfly(P[::2])
+    SPodd = split_butterfly(P[1::2])
     print 'Compression', SPeven.size() / Dense(P[::2]).size()
     print 'Compression', SPodd.size() / Dense(P[1::2]).size()
 

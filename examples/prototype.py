@@ -34,6 +34,9 @@ class Dense(object):
     def apply(self, x):
         return np.dot(self.A, x)
 
+    def apply_left(self, x):
+        return np.dot(x, self.A)
+
     def size(self):
         return np.prod(self.A.shape)
 
@@ -87,20 +90,53 @@ class HStack:
         return sum(x.size() for x in self.lst)
 
 
+class SimpleButterfly:
+    def __init__(self, Ak_obj, Ap):
+        self.Ak_obj = Ak_obj
+        self.Ap = Ap
+        self.k = Ak_obj.shape[1]
+        self.n = Ap.shape[1]
+        self.shape = (Ak_obj.shape[0], self.n)
+
+    def apply(self, x):
+        a = np.dot(self.Ap, x)
+        return self.Ak_obj.apply(a)
+
+    def apply_left(self, x):
+        y = self.ak_obj.apply_left(x)
+        y = np.dot(y, self.Ap)
+        return y
+
+    def size(self):
+        return k * (n - k) + self.Ak.size()
+
+class Transposed:
+    def __init__(self, A):
+        self.A = A
+        self.shape = A.shape
+    def apply(self, x):
+        return self.A.apply_left(x)
+    def apply_left(self, x):
+        return self.A.apply(x)
+    def size(self):
+        return self.A.size
+
 #
 # The butterfly algorithm
 #
 
-def butterfly(A):
-    def decomp(m, msg):
-        s, ip = interpolative_decomposition(m, eps)
-        print 'ID %s: (%.2f) %d / %d' % (
-            msg, s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1])
-        return s, ip
-    
-    hmid = A.shape[1] // 2
-    if hmid <= 40:
+limit = 40
+
+def decomp(m, msg):
+    s, ip = interpolative_decomposition(m, eps)
+    print 'ID %s: (%.2f) %d / %d' % (
+        msg, s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1])
+    return s, ip
+
+def butterfly(A):    
+    if A.shape[1] <= limit:
         return Dense(A)        
+    hmid = A.shape[1] // 2
     L = A[:, :hmid]
     L_subset, L_p = decomp(L, 'L')
     
@@ -119,6 +155,27 @@ def butterfly(A):
     B_obj = butterfly(B_subset)
     
     return Butterfly(T_p, B_p, L_p, R_p, T_obj, B_obj)
+
+def butterfly_horz(A):
+    if A.shape[1] <= 40:
+        return Dense(A)
+
+    Ak, Ap = decomp(A, 'H')
+    Ak_obj = Transposed(butterfly_horz(Ak.T))
+    return SimpleButterfly(Ak_obj, Ap)
+
+def butterfly_vert(A):
+    if A.shape[1] <= 40:
+        return Dense(A)
+
+    Ak, Ap = decomp(A, 'V')
+    Ak_obj = butterfly_vert(Ak)
+    return SimpleButterfly(Ak_obj, Ap)
+    
+    
+    mid = A.shape[1] // 2
+    L, R = A[:, :mid], A[:, mid:]
+    
 
 def split_butterfly(A):
     lst = []
@@ -141,8 +198,10 @@ class InnerSumPerM:
         P_even_arr = P[:-1, ::2]
         P_odd_arr = P[:-1, 1::2]
         if compress:
-            self.P_even = split_butterfly(P_even_arr)
-            self.P_odd = split_butterfly(P_odd_arr)
+            self.P_even = butterfly_horz(P_even_arr)
+ #split_butterfly(P_even_arr)
+            self.P_odd = butterfly_horz(P_odd_arr)
+#split_butterfly(P_odd_arr)
             print self.P_even.size(), self.P_odd.size()
             print Dense(P_even_arr).size(), Dense(P_odd_arr).size()
             print 'Compression:', ((self.P_even.size() + self.P_odd.size()) / 
@@ -229,8 +288,10 @@ if 1:
     roots = getroots(lmax + 1, m)
 #    roots = get_ring_thetas(Nside)[2*Nside-1:]
     P = compute_normalized_associated_legendre(m, roots, lmax)
-    SPeven = split_butterfly(P[::2])
-    SPodd = split_butterfly(P[1::2])
+    SPeven = butterfly_horz(P[::2])
+    SPodd = butterfly_horz(P[1::2])
+    #SPeven = split_butterfly(P[::2])
+    #SPodd = split_butterfly(P[1::2])
     print 'Compression', SPeven.size() / Dense(P[::2]).size()
     print 'Compression', SPodd.size() / Dense(P[1::2]).size()
 

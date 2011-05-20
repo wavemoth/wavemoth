@@ -32,19 +32,19 @@ beginning of the block (including type id) of corresponding matrix
 data blocks.
 
 \c BUTTERFLY: Consists of 4 dense interpolation matrices + associated
-permuted identity matrices, dubbed L_p, R_p, T_p, B_p, as well as
+permuted identity matrices, dubbed L_ip, R_ip, T_ip, B_ip, as well as
 two sub-matrices of generic type, T_k and B_k. Storage format:
 
  - BFM_ButterflyHeader
  - LR_split * 1 byte: Filter: 1 if column is part of identity matrix, 0 otherwise
  - Padding to next 128-bit aligned address using the char 0xFF.
- - Contents of L_p in col-major order
+ - Contents of L_ip in col-major order
  - (ncol - LR_split) * 1 byte + padding: Filter for R
- - Contents of R_p in row-major order
- - T_p: First filter, padding, T_p in row-major order, padding to next 128 bit.
+ - Contents of R_ip in row-major order
+ - T_ip: First filter, padding, T_ip in row-major order, padding to next 128 bit.
  - T_k: Generic sub-matrix
  - Padding
- - B: Filter, padding, B_p, padding, B_k
+ - B: Filter, padding, B_ip, padding, B_k
 
 */
 
@@ -64,16 +64,16 @@ typedef enum {
 } BFM_MatrixBlockType;
 
 /*
- - int32: ncol(L_p), this also yields ncol(R_p) through ncol([L_p R_p]) - ncol(L_P)
- - int32: nrow(L_p)
- - int32: nrow(R_p)
- - int32: max(ncol(L_p), ncol(R_p)): Useful for memory allocation purposes
+ - int32: ncol(L_ip), this also yields ncol(R_ip) through ncol([L_ip R_ip]) - ncol(L_ip)
+ - int32: nrow(L_ip)
+ - int32: nrow(R_ip)
+ - int32: max(ncol(L_ip), ncol(R_ip)): Useful for memory allocation purposes
 
-ncol(T_p) = nrow(L_p) + nrow(R_p)
+ncol(T_ip) = nrow(L_ip) + nrow(R_ip)
 */
 typedef struct {
   int32_t type_id;
-  int32_t ncol_L_p, nrow_L_p, nrow_R_p, nrow_buf;
+  int32_t nrow_L_ip, ncol_L_ip, nrow_R_ip, nrow_buf;
 } BFM_ButterflyHeader;
 
 

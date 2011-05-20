@@ -10,7 +10,12 @@ cdef extern:
                                       int *krank,
                                       double *proj,
                                       double *p)
-    
+
+def inverse_permutation(perm):
+    invp = np.empty_like(perm)
+    invp[perm] = np.arange(len(perm))
+    return invp
+
 def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
                                        double eps=1e-10):
     """ Compute the interpolative decomposition of a matrix.
@@ -57,14 +62,18 @@ def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
         # ``A_ip P x``, i.e., ipol_list specifies P as a reordering of
         # rows of ``x``. To permute columns of ``A_ip`` instead, we need
         # to transpose/invert the permutation.
-        order = np.argsort(ipol_list)
-        inverse_order = np.empty_like(order)
-        inverse_order[order] = np.arange(order.shape[0])
-        A_ip[:, inverse_order] = out
+        perm = np.argsort(ipol_list)
+        A_ip[:, inverse_permutation(perm)] = out
         ipol_list.sort()
-        
-    return iden_list, ipol_list, A_ip
-    
+    # Produce the columns in A_k by embedding the permutation
+    # as well.
+    A_k = np.empty((m, krank), np.double)
+    if krank > 0:
+        perm = np.argsort(iden_list)
+        iperm = inverse_permutation(perm)
+        A_k[:, iperm] = A[:, iden_list]
+        iden_list.sort()
+    return iden_list, ipol_list, A_k, A_ip
 
 def interpolative_decomposition(A, eps=1e-10):
     """ Compute the interpolative decomposition of a matrix.
@@ -74,10 +83,9 @@ def interpolative_decomposition(A, eps=1e-10):
 
     ilist, 
     """
-    iden_list, ipol_list, A_ip = sparse_interpolative_decomposition(A, eps)
+    iden_list, ipol_list, A_k, A_ip = sparse_interpolative_decomposition(A, eps)
     k = iden_list.shape[0]
     n = A.shape[1]
-    A_k = A[:, iden_list]
     A_ip_full = np.empty((k, n), np.double)
     A_ip_full[:, iden_list] = np.eye(k)
     A_ip_full[:, ipol_list] = A_ip

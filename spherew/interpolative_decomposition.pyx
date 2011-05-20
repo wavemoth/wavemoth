@@ -66,12 +66,15 @@ def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
         A_ip[:, inverse_permutation(perm)] = out
         ipol_list.sort()
     # Produce the columns in A_k by embedding the permutation
-    # as well.
+    # as well. This means making a reordering permutation to
+    # the columns of A_k as well as the inverse permutation to
+    # the rows of A_ip.
     A_k = np.empty((m, krank), np.double)
     if krank > 0:
         perm = np.argsort(iden_list)
         iperm = inverse_permutation(perm)
         A_k[:, iperm] = A[:, iden_list]
+        A_ip = A_ip[perm, :]
         iden_list.sort()
     return iden_list, ipol_list, A_k, A_ip
 

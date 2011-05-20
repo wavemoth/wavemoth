@@ -18,6 +18,19 @@ def test_rank_1():
     B = np.dot(A_k, A_ip)
     yield assert_almost_equal, A, B
 
+def test_rank_3():
+    x, y = np.ogrid[1:2:5j, 0:2:20j]
+    # Here I played around until the matrix managed to produce
+    # reordering permutations that were not their own inverse.
+    A = x**2 * np.sin(y) # first rank
+    A[:, 8] = 4 # second rank
+    A[:, 3] = 1
+    A[3:, 3] = 2 # third rank
+    A_k, A_ip = interpolative_decomposition(A)
+    yield eq_, A_k.shape[1], 3
+    B = np.dot(A_k[:, :], A_ip)
+    yield assert_almost_equal, A, B
+
 def test_full_rank():
     A = np.diagflat(np.arange(1, 11, dtype=np.double))
     A_k, A_ip = interpolative_decomposition(A)

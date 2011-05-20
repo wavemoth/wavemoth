@@ -73,7 +73,7 @@ ncol(T_ip) = nrow(L_ip) + nrow(R_ip)
 */
 typedef struct {
   int32_t type_id;
-  int32_t nrow_L_ip, ncol_L_ip, nrow_R_ip, nrow_buf;
+  int32_t k_L, n_L, k_R;
 } BFM_ButterflyHeader;
 
 

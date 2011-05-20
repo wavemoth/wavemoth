@@ -72,7 +72,6 @@ static char *filter_vectors(char *filter, double *x, double *a, double *b,
   int j;
   char group;
   char *end = filter + alen + blen;
-  printf("%d %d %d\n", alen, blen, nvec);
   while (filter != end) {
     switch (*filter++) {
     case 0:
@@ -114,17 +113,12 @@ static char *apply_interpolation(char *data, double *input, double *output,
 static int butterfly_right_d(char *data, double *x, double *y,
                              bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec) { 
   BFM_ButterflyHeader info = *(BFM_ButterflyHeader*)data;
-  double buf[info.nrow_buf * nvec];
-  double LR_out[(info.nrow_L_ip + info.nrow_R_ip) * nvec];
+  double LR_out[(info.k_L + info.k_R) * nvec];
   int i; 
   data += sizeof(BFM_ButterflyHeader);
-  printf("%d %d %d %d\n", info.nrow_L_ip, info.ncol_L_ip, info.nrow_buf, nvec);
-  data = apply_interpolation(data, x, LR_out, info.nrow_L_ip, 
-                             info.nrow_L_ip + info.ncol_L_ip, nvec);
+  data = apply_interpolation(data, x, LR_out, info.k_L, info.n_L, nvec);
   /* early debug return */ 
-  printf("adsf\n");
-  for (i = 0; i != info.nrow_L_ip * nvec; ++i) {//info.nrow_L_ip * nvec
-    printf("%d\n", i);
+  for (i = 0; i != info.k_L * nvec; ++i) {
     y[i] = LR_out[i];
   }
   return 0;

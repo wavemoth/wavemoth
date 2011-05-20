@@ -17,7 +17,7 @@ cdef extern from "butterfly.h":
 
     ctypedef struct BFM_ButterflyHeader:
         int32_t type_id
-        int32_t ncol_L_ip, nrow_L_ip, nrow_R_ip, nrow_buf
+        int32_t k_L, n_L, k_R
     
     int bfm_apply_right_d(char *matrixdata, double *x, double *y,
                           bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec)
@@ -76,7 +76,6 @@ cdef class SerializedMatrix:
 cdef write_bin(stream, char *buf, Py_ssize_t size):
     n = stream.write(PyBytes_FromStringAndSize(buf, size))
     assert n == size
-    print n
 
 cdef write_int32(stream, int32_t i):
     write_bin(stream, <char*>&i, sizeof(i))
@@ -112,13 +111,11 @@ class ButterflyMatrix:
     def serialize(self, stream):
         cdef BFM_ButterflyHeader header
         header.type_id = BFM_BLOCK_BUTTERFLY
-        header.nrow_L_ip = self.L_ip.shape[0]
-        header.ncol_L_ip = self.L_ip.shape[1]
-        header.nrow_R_ip = 1
-        header.nrow_buf = header.ncol_L_ip
+        header.k_L = self.L_ip.shape[0]
+        header.n_L = self.L_ip.shape[1] + self.L_ip.shape[0]
+        header.k_R = 0
         write_bin(stream, <char*>&header, sizeof(header))
         write_array(stream, self.L_filter)
-        print self.L_filter
         pad128(stream)
         write_array(stream, self.L_ip)
 

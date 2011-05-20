@@ -50,12 +50,12 @@ def test_butterfly_matrix():
 
     A_k, A_ip = interpolative_decomposition(A, eps=1e-15)
     iden, ipol, A_ks, A_ips = sparse_interpolative_decomposition(A, eps=1e-15)
-    print iden
-    print ipol
+#    print iden
+#    print ipol
 #    print A_ip
     print np.dot(A_ip, x)
 #    as_matrix(A_ips).plot()
-    plt.show()
+#    plt.show()
 #    print A_k
 #    print A_ip
 #    as_matrix(np.dot(A_k, A_ip)).plot()

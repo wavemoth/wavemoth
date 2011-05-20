@@ -19,9 +19,6 @@ Some matrix types are recursive, but that's defined by the block type.
 Matrix dimensions are always passed to code from the caller and
 is not part of the matrix data.
 
-Wherever offsets are mentioned, they refer to offsets w.r.t.  the
-beginning of the data block including the block type header.
-
 \c ZERO: Fills the output vector with zeros. Only contains 12 bytes of
 padding.
 
@@ -29,10 +26,25 @@ padding.
 data in row-major ordering.
 
 \c HSTACK: Matrix blocked horizontally. First an int32 \c n with the
-number of blocks, then comes an \c n-length array of type BFM_StackedBlock
-with the column widths and offsets of corresponding matrix data blocks
+number of blocks, then comes an \c n-length array of type
+BFM_StackedBlock with the column widths and offsets w.r.t the
+beginning of the block (including type id) of corresponding matrix
+data blocks.
 
+\c BUTTERFLY: Consists of 4 dense interpolation matrices + associated
+permuted identity matrices, dubbed L_p, R_p, T_p, B_p, as well as
+two sub-matrices of generic type, T_k and B_k. Storage format:
 
+ - BFM_ButterflyHeader
+ - LR_split * 1 byte: Filter: 1 if column is part of identity matrix, 0 otherwise
+ - Padding to next 128-bit aligned address using the char 0xFF.
+ - Contents of L_p in col-major order
+ - (ncol - LR_split) * 1 byte + padding: Filter for R
+ - Contents of R_p in row-major order
+ - T_p: First filter, padding, T_p in row-major order, padding to next 128 bit.
+ - T_k: Generic sub-matrix
+ - Padding
+ - B: Filter, padding, B_p, padding, B_k
 
 */
 
@@ -51,11 +63,21 @@ typedef enum {
   BFM_MAX_TYPE = 3
 } BFM_MatrixBlockType;
 
+/*
+ - int32: ncol(L_p), this also yields ncol(R_p) through ncol([L_p R_p]) - ncol(L_P)
+ - int32: nrow(L_p)
+ - int32: nrow(R_p)
+ - int32: max(ncol(L_p), ncol(R_p)): Useful for memory allocation purposes
 
+ncol(T_p) = nrow(L_p) + nrow(R_p)
+*/
 typedef struct {
-  int32_t type;
-  int32_t padding[3];
-} BFM_MatrixBlockHeader;
+  int32_t type_id;
+  int32_t ncol_L_p, nrow_L_p, nrow_R_p, nrow_buf;
+} BFM_ButterflyHeader;
+
+
+
 
 /*typedef struct {
   bfm_index_t num_cols_or_rows;

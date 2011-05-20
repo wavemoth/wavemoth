@@ -93,6 +93,24 @@ static char *filter_vectors(char *filter, double *x, double *a, double *b,
   return filter;
 }
 
+/*
+  Filter input x into two parts: Those hit with identity matrix which goes
+  to y, and those going to a set of temporary vectors tmp_vecs which
+  will be multiplied with the interpolation matrix and then added to y.
+  
+  input is n-by-nvec, output is k-by-nvec
+*/
+static char *apply_interpolation(char *data, double *input, double *output,
+                                int32_t k, int32_t n, int32_t nvec) {
+  int i;
+  double tmp_vecs[nvec * (n - k)];
+  data = filter_vectors(data, input, output, tmp_vecs, k, n - k, nvec);
+  data = aligned(data);
+  dgemm_crr((double*)data, tmp_vecs, output, k, nvec, n - k);
+  data += k * (n - k) * sizeof(double);
+  return data;
+}
+
 static int butterfly_right_d(char *data, double *x, double *y,
                              bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec) { 
   BFM_ButterflyHeader info = *(BFM_ButterflyHeader*)data;
@@ -101,26 +119,12 @@ static int butterfly_right_d(char *data, double *x, double *y,
   int i; 
   data += sizeof(BFM_ButterflyHeader);
   printf("%d %d %d %d\n", info.nrow_L_ip, info.ncol_L_ip, info.nrow_buf, nvec);
-  /* Filter x into LR_out, which is the part hit by the identity matrix,
-     and buf, which is the input to the interpolation matrix. */
-  data = filter_vectors(data, x, buf, LR_out, info.ncol_L_ip, info.nrow_L_ip, nvec);
-  data = aligned(data);
-  //  for (i = 0; i != 6; ++i) printf("%f ", LR_out[i]);
-  //printf("\n");
-  //for (i = 0; i != 3*18; ++i) printf("%f ", buf[i]);
-  //printf("\n");
-  //for (i = 0; i != 2*18; ++i) printf("%f ", ((double*)data)[i]);
-  //printf("\n");
-  /* LR_out <- L_ip * buf + LR_out */
-  dgemm_crr((double*)data, buf, LR_out, info.nrow_L_ip, nvec, info.ncol_L_ip);
-  data = aligned(data + info.nrow_L_ip * info.ncol_L_ip * sizeof(double));
-
+  data = apply_interpolation(data, x, LR_out, info.nrow_L_ip, 
+                             info.nrow_L_ip + info.ncol_L_ip, nvec);
   /* early debug return */ 
   printf("adsf\n");
   for (i = 0; i != info.nrow_L_ip * nvec; ++i) {//info.nrow_L_ip * nvec
     printf("%d\n", i);
-
-    
     y[i] = LR_out[i];
   }
   return 0;

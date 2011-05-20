@@ -153,7 +153,7 @@ def permutations_to_filter(alst, blst):
 
 def butterfly_compress(A, eps=1e-10):
     iden_list, ipol_list, A_k, A_ip = sparse_interpolative_decomposition(A, eps)
-    filter = permutations_to_filter(ipol_list, iden_list)
+    filter = permutations_to_filter(iden_list, ipol_list)
     return ButterflyMatrix(A_k, A_ip, filter)
         
     

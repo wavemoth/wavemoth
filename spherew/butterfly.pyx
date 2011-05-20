@@ -100,24 +100,47 @@ class DenseMatrix:
         pad128(stream)
         write_array(stream, self.A)
 
+    def apply(self, x):
+        return np.dot(self.A, x)
+
+class InterpolationMatrix:
+    def __init__(self, filter, interpolant):
+        self.filter = np.ascontiguousarray(filter, dtype=np.int8)
+        self.interpolant = np.asfortranarray(interpolant, dtype=np.double)
+        self.shape = (self.interpolant.shape[0], self.filter.shape[0])
         
+    def write_to_stream(self, stream):
+        write_array(stream, self.filter)
+        pad128(stream)
+        write_array(stream, self.interpolant)
+
+    def apply(self, x):
+        y = x[self.filter == 0, :]
+        y += np.dot(self.interpolant, x[self.filter == 1, :])
+        return y
+
 class ButterflyMatrix:
-    def __init__(self, L_k, L_ip, L_filter):
-        self.L_k = L_k 
-        self.L_ip = np.asfortranarray(L_ip, dtype=np.double)
-        self.L_filter = np.ascontiguousarray(L_filter, dtype=np.int8)
-        self.shape = (L_k.shape[0], L_k.shape[1] + L_ip.shape[1])
+    def __init__(self, shape, L_ip, R_ip):
+        assert isinstance(L_ip, InterpolationMatrix)
+        assert isinstance(R_ip, InterpolationMatrix)
+        self.L_ip = L_ip
+        self.R_ip = R_ip
+        self.shape = shape #(L_ip.shape[0], L_k.shape[1] + L_ip.shape[1])
 
     def serialize(self, stream):
         cdef BFM_ButterflyHeader header
         header.type_id = BFM_BLOCK_BUTTERFLY
         header.k_L = self.L_ip.shape[0]
-        header.n_L = self.L_ip.shape[1] + self.L_ip.shape[0]
-        header.k_R = 0
+        header.n_L = self.L_ip.shape[1]
+        header.k_R = self.R_ip.shape[0]
         write_bin(stream, <char*>&header, sizeof(header))
-        write_array(stream, self.L_filter)
-        pad128(stream)
-        write_array(stream, self.L_ip)
+        self.L_ip.write_to_stream(stream)
+        self.R_ip.write_to_stream(stream)
+
+    def apply(self, x):
+        u = self.L_ip.apply(x[:self.L_ip.shape[1]])
+        v = self.R_ip.apply(x[:self.R_ip.shape[1]])
+        return np.vstack([u, v])
 
 def permutations_to_filter(alst, blst):
     n_a = len(alst)
@@ -148,10 +171,19 @@ def permutations_to_filter(alst, blst):
             raise ValueError("An element is present in both lists")
     return filter
 
-def butterfly_compress(A, eps=1e-10):
+def matrix_interpolative_decomposition(A, eps):
     iden_list, ipol_list, A_k, A_ip = sparse_interpolative_decomposition(A, eps)
     filter = permutations_to_filter(iden_list, ipol_list)
-    return ButterflyMatrix(A_k, A_ip, filter)
+    return A_k, InterpolationMatrix(filter, A_ip)
+
+def butterfly_compress(A, min_rows=20, eps=1e-10):
+    if A.shape[0] <= min_rows:
+        return DenseMatrix(A)        
+    hmid = A.shape[1] // 2
+    L, R = A[:, :hmid], A[:, hmid:]
+    L_k, L_ip = matrix_interpolative_decomposition(L, eps)
+    R_k, R_ip = matrix_interpolative_decomposition(R, eps)
+    return ButterflyMatrix(A.shape, L_ip, R_ip)
         
     
     

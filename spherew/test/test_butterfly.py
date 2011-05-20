@@ -40,20 +40,27 @@ def test_butterfly_matrix():
     x, y = np.ogrid[1:2:5j, 0:2:20j]
     A = x**2 * np.sin(y)
     A[:, 2] = 1
+    A[:, 15] = 1
 
     # A is 5-by-20, rank 2
     
     x = np.ones((20, 3), np.double)
     x[:, 1] = 2
-    M = serialize(butterfly_compress(A))
+    M = butterfly_compress(A, min_rows=0)
+    M_c = serialize(M)
+    
+#    print M.L_ip.interpolant
+#    print M.R_ip.interpolant
+    print '---'
     print M.apply(x)
+    print M_c.apply(x)
 
-    A_k, A_ip = interpolative_decomposition(A, eps=1e-15)
-    iden, ipol, A_ks, A_ips = sparse_interpolative_decomposition(A, eps=1e-15)
+#    A_k, A_ip = interpolative_decomposition(A, eps=1e-15)
+#    iden, ipol, A_ks, A_ips = sparse_interpolative_decomposition(A, eps=1e-15)
 #    print iden
 #    print ipol
 #    print A_ip
-    print np.dot(A_ip, x)
+#    print np.dot(A_ip, x)
 #    as_matrix(A_ips).plot()
 #    plt.show()
 #    print A_k

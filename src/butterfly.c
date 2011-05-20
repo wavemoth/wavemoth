@@ -10,7 +10,7 @@ typedef int (*apply_dz_func_t)(char *matrixdata,
                                double *x, double *y,
                                bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec);
 
-static INLINE char *aligned(char *ptr) {
+static INLINE char *skip_padding(char *ptr) {
   size_t m = (size_t)ptr % 16;
   if (m == 0) {
     return ptr;
@@ -85,7 +85,7 @@ static char *filter_vectors(char *filter, double *x, double *a, double *b,
       }
       break;
     default:
-      assert(0);
+      assert(1 ? 0 : "Filter contained values besides 0 and 1");
       break;
     }
   }
@@ -99,26 +99,31 @@ static char *filter_vectors(char *filter, double *x, double *a, double *b,
   
   input is n-by-nvec, output is k-by-nvec
 */
-static char *apply_interpolation(char *data, double *input, double *output,
+static char *apply_interpolation(char *head, double *input, double *output,
                                 int32_t k, int32_t n, int32_t nvec) {
   int i;
   double tmp_vecs[nvec * (n - k)];
-  data = filter_vectors(data, input, output, tmp_vecs, k, n - k, nvec);
-  data = aligned(data);
-  dgemm_crr((double*)data, tmp_vecs, output, k, nvec, n - k);
-  data += k * (n - k) * sizeof(double);
-  return data;
+  head = filter_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
+  head = skip_padding(head);
+  dgemm_crr((double*)head, tmp_vecs, output, k, nvec, n - k);
+  head += k * (n - k) * sizeof(double);
+  return head;
 }
 
-static int butterfly_right_d(char *data, double *x, double *y,
+static int butterfly_right_d(char *head, double *x, double *y,
                              bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec) { 
-  BFM_ButterflyHeader info = *(BFM_ButterflyHeader*)data;
+  BFM_ButterflyHeader info = *(BFM_ButterflyHeader*)head;
   double LR_out[(info.k_L + info.k_R) * nvec];
   int i; 
-  data += sizeof(BFM_ButterflyHeader);
-  data = apply_interpolation(data, x, LR_out, info.k_L, info.n_L, nvec);
+  head += sizeof(BFM_ButterflyHeader);
+  /* LR_out[:, :info.k_L] = L_ip * x[:info.k_L] */
+  head = apply_interpolation(head, x, LR_out, info.k_L, info.n_L, nvec);
+  /* LR_out[:, info.k_L:] = R_ip * x[info.n_L:] */
+  head = apply_interpolation(head, x + info.n_L * nvec,
+                             LR_out + info.k_L * nvec,
+                             info.k_R, ncol - info.n_L, nvec);
   /* early debug return */ 
-  for (i = 0; i != info.k_L * nvec; ++i) {
+  for (i = 0; i != (info.k_L + info.k_R) * nvec; ++i) {
     y[i] = LR_out[i];
   }
   return 0;
@@ -135,11 +140,11 @@ static apply_dz_func_t dispatch_table_dz[BFM_MAX_TYPE + 1] = {
   butterfly_right_d
 };
 
-int bfm_apply_right_d(char *matrixdata, double *x, double *y,
+int bfm_apply_right_d(char *head, double *x, double *y,
                        bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec) {
-  int32_t type = ((int32_t*)matrixdata)[0];
-  assert((size_t)matrixdata % 16 == 0);
-  return (*dispatch_table_dz[type])(matrixdata, x, y, nrow, ncol, nvec);
+  int32_t type = ((int32_t*)head)[0];
+  assert((size_t)head % 16 == 0);
+  return (*dispatch_table_dz[type])(head, x, y, nrow, ncol, nvec);
 }
 
 

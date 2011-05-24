@@ -40,86 +40,49 @@ class Dense(object):
     def size(self):
         return np.prod(self.A.shape)
 
-class Butterfly(object):
-    def __init__(self, T_p, B_p, L_p, R_p, T_obj, B_obj):
-        self.T_p = T_p
-        self.B_p = B_p
-        self.L_p = L_p
-        self.R_p = R_p
-        self.T_obj = T_obj
-        self.B_obj = B_obj
-        self.hmid = L_p.shape[1]
-        self.shape = (T_obj.shape[0] + B_obj.shape[0], L_p.shape[1] + R_p.shape[1])
+class ButterflyInterpolation(object):
+    """
+    A matrix that is block-diagonal, each block consisting of (T, B).
+    Also, does a proper permutation for the level on the input vectors.
+    """
+    def __init__(self, level, blocks, partition):
+        # blocks: List of tuples (k_L, T_ip, B_ip), each a block
+        # partition: The partitioning of the factored matrix (column index)
+        if 2**int(np.log2(len(blocks))) != len(blocks):
+            raise ValueError("len(blocks) not a power of 2")
+        self.block_stride = 2**level
+        self.blocks = blocks
+        self.nrow = sum([T_ip.shape[0] + B_ip.shape[0] for k, T_ip, B_ip in blocks])
+        self.partition = partition
 
     def apply(self, x):
-        a = np.dot(self.L_p, x[:self.hmid])
-        b = np.dot(self.R_p, x[self.hmid:])
-        x = np.hstack([a, b])
+        y = self.zeros(self.nrow, np.double)
+        i_y = 0
+        for i in range(len(self.blocks) // self.block_stride):
+            for j in range(self.block_stride):
+                idx_L = self.partition[i * self.block_stride + j]
+                idx_R = self.partition[(i + 1) * self.block_stride + j]
+                
+                k_L, T_ip, B_ip = self.blocks[i * self.block_stride + j]
+                tmp = np.empty(T_ip.shape[0], np.double)
+                k_L = self.k_L_list[block_col]
+                k_R = T_ip.shape[0] - k_L
+                i_x = self.partition[i * self.block_stride + j]
+                tmp[:k_L] = x[i_x:i_x + k_L]
+                i_x = self.col_indices[block_col + block_stride]
+            
 
-        a = np.dot(self.T_p, x)
-        a = self.T_obj.apply(a)
-        
-        b = np.dot(self.B_p, x)
-        b = self.B_obj.apply(b)
-        return np.hstack([a, b])
 
+                     
+            
+            
     def size(self):
-        # We fake the computation here *as if* we were doing permutation
-        # of identity matrix
-        def ip_size(A_p):
-            k, n = A_p.shape
-            return k * (n - k) + k
-        
-        return (sum(ip_size(x) for x in
-                   [self.T_p, self.B_p, self.L_p, self.R_p]) +
-                self.T_obj.size() + self.B_obj.size())
-
-class HStack:
-    def __init__(self, lst):
-        self.lst = lst
-        self.m = lst[0].shape[0]
-    def apply(self, x):
-        y = np.zeros(self.m)
-        ix = 0
-        for A in self.lst:
-            y += A.apply(x[ix:ix + A.shape[1]])
-            ix += A.shape[1]
-        return y
-    
-    def size(self):
-        return sum(x.size() for x in self.lst)
-
-
-class SimpleButterfly:
-    def __init__(self, Ak_obj, Ap):
-        self.Ak_obj = Ak_obj
-        self.Ap = Ap
-        self.k = Ak_obj.shape[1]
-        self.n = Ap.shape[1]
-        self.shape = (Ak_obj.shape[0], self.n)
-
-    def apply(self, x):
-        a = np.dot(self.Ap, x)
-        return self.Ak_obj.apply(a)
-
-    def apply_left(self, x):
-        y = self.ak_obj.apply_left(x)
-        y = np.dot(y, self.Ap)
-        return y
-
-    def size(self):
-        return k * (n - k) + self.Ak.size()
-
-class Transposed:
-    def __init__(self, A):
-        self.A = A
-        self.shape = A.shape
-    def apply(self, x):
-        return self.A.apply_left(x)
-    def apply_left(self, x):
-        return self.A.apply(x)
-    def size(self):
-        return self.A.size
+        size = 0
+        for k_L, T_ip, B_ip in self.blocks:
+            for M in (T_ip, B_ip):
+                k, n = M.shape
+                size += k * (n - k)
+        return size
 
 #
 # The butterfly algorithm
@@ -156,34 +119,114 @@ def butterfly(A):
     
     return Butterfly(T_p, B_p, L_p, R_p, T_obj, B_obj)
 
-def butterfly_horz(A):
-    if A.shape[1] <= 40:
-        return Dense(A)
 
-    Ak, Ap = decomp(A, 'H')
-    Ak_obj = Transposed(butterfly_horz(Ak.T))
-    return SimpleButterfly(Ak_obj, Ap)
+def butterfly2(A): 
+    hmid = A.shape[1] // 2 
+    if A.shape[1] <= 200:
+        A_k, A_ip = decomp(A, '0')
+        return [(A_k, A_ip)]
+    left_blocks = butterfly2(A[:, :hmid])
+    right_blocks = butterfly2(A[:, hmid:])
+    
+    result_blocks = []
+    for (L_k, L_ip), (R_k, R_ip) in zip(left_blocks, right_blocks):
+        S = np.hstack([L_k, R_k])
+        vmid = S.shape[0] // 2
+        T_k, T_ip = decomp(S[:vmid, :], 'T')
+        B_k, B_ip = decomp(S[vmid:, :], 'B')
+        result_blocks.append((T_k, T_ip))
+        result_blocks.append((B_k, B_ip))
+    return result_blocks
 
-def butterfly_vert(A):
-    if A.shape[1] <= 40:
-        return Dense(A)
 
-    Ak, Ap = decomp(A, 'V')
-    Ak_obj = butterfly_vert(Ak)
-    return SimpleButterfly(Ak_obj, Ap)
-    
-    
-    mid = A.shape[1] // 2
-    L, R = A[:, :mid], A[:, mid:]
+def process_horizontal_block_diagonal(level, diagonal_list):
+    # Input: A matrix with many block-diagonal matrices
+    # stacked horizontally. Blocks is a list of lists
+    # of the diagonals.
+
+    # 1) Create a similar structure containing column indices
+    permutations_list = []
+    col = 0
+    for diag in diagonal_list:
+        permutations = []
+        for block in diag:
+            print block.shape
+            permutations.append(np.arange(col, col + block.shape[1]))
+            col += block.shape[1]
+        permutations_list.append(permutations)
+
+    # 2) Zip across 2 and 2 diagonals, joining and splitting on each row
+    S_diagonal = []
+    next_level_diagonal_list = []
+    permutation_list = []
+    for i in range(0, len(diagonal_list), 2):
+        L_diagonal = diagonal_list[i]
+        L_permutations = permutations_list[i]
+        R_diagonal = diagonal_list[i + 1]
+        R_permutations = permutations_list[i + 1]
+        next_level_diagonal = []
+        for L, R in zip(L_diagonal, R_diagonal):
+            # Horizontal join
+            LR = np.hstack([L, R])
+            # Vertical split & compress
+            vmid = LR.shape[0] // 2
+            T_k, T_ip = decomp(LR[:vmid, :], 'T')
+            B_k, B_ip = decomp(LR[vmid:, :], 'B')
+            S_diagonal.append((vmid, T_ip, B_ip))
+            next_level_diagonal.append(T_k)
+            next_level_diagonal.append(B_k)
+        for L_perm, R_perm in zip(L_permutations, R_permutations):
+            permutation_list.append(L_perm)
+            permutation_list.append(R_perm)
+        next_level_diagonal_list.append(next_level_diagonal)
+
+    # Figure out partition we used (is this backwards?)
+    partition = np.cumsum(sum([[D.shape[1] for D in diagonal] for diagonal in diagonal_list], []))
+
+    permutation = np.hstack(permutation_list)
+    # Return three resulting matrices: The updated (more diagonal) matrix,
+    # the permutation matrix, and the interpolation matrix
+    return next_level_diagonal_list, permutation, ButterflyInterpolation(level, S_diagonal, partition)
+#    print locals()
     
 
-def split_butterfly(A):
-    lst = []
-    for i in range(0, A.shape[1], C):
-        X = A[:, i:i + C] 
-        lst.append(butterfly(X))
-    return HStack(lst)
-    
+def butterfly3(A, limit=60):
+    def partition(X, result):
+        hmid = X.shape[1] // 2
+        if hmid <= limit:
+            result.append(X)
+            return 0
+        else:
+            partition(X[:, :hmid], result)
+            levels = partition(X[:, hmid:], result)
+        return levels + 1 
+        
+    B_list = []
+    numlevels = partition(A, B_list)
+
+    S_list = []
+    P_list = []
+    X = []
+    # First level: Initial compression of columns
+    # Does help!
+    for B in B_list:
+        B_k, B_ip = decomp(B, 'root')
+        X.append([B_k])
+
+    # The rest
+    for level in range(numlevels):
+        X, P, S = process_horizontal_block_diagonal(level, X)
+        P_list.append(P)
+        S_list.append(S)
+
+    # Compute size
+    size = 0
+    for S in S_list:
+        size += S.size()
+    final_diag, = X
+    for Xmat in final_diag:
+        size += np.prod(Xmat.shape)
+    print size / np.prod(A.shape)
 
 #
 # Spherical harmonic transform for a single l,

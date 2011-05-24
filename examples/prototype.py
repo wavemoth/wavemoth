@@ -107,7 +107,7 @@ class SNode(object):
         self.ncols = sum(child.ncols for child in children)
         self.children = children
         block_widths = sum([[T_ip.shape[0], B_ip.shape[0]]
-                            for k_T, T_ip, B_ip in blocks], [])
+                            for T_ip, B_ip in blocks], [])
         self.partition = np.cumsum([0] + block_widths)
         self.nrows = self.partition[-1]
 
@@ -119,13 +119,14 @@ class SNode(object):
         LS, RS = self.children
         assert x.shape[0] == self.ncols
         assert x.shape[0] == LS.ncols + RS.ncols
+        print len(self.blocks)
         z_left = LS.apply(x[:LS.ncols])
         z_right = RS.apply(x[LS.ncols:])
 
         # Apply this butterfly, permuting the input as we go
         y = np.empty(self.nrows, np.double)
         i_y = 0
-        for i_block, (k_T, T_ip, B_ip) in enumerate(self.blocks):
+        for i_block, (T_ip, B_ip) in enumerate(self.blocks):
             buf = np.empty(T_ip.shape[1])
             assert T_ip.shape[1] == B_ip.shape[1]
             # Merge together input
@@ -144,7 +145,7 @@ class SNode(object):
 
     def size(self):
         size = 0
-        for k_L, T_ip, B_ip in self.blocks:
+        for T_ip, B_ip in self.blocks:
             for M in (T_ip, B_ip):
                 k, n = M.shape
                 size += k * (n - k)
@@ -174,7 +175,7 @@ def butterfly_core(A_k_blocks):
         T_k, T_ip = decomp(T, None)
         B_k, B_ip = decomp(B, None)
         assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
-        out_interpolants.append((T_k.shape[1], T_ip, B_ip))
+        out_interpolants.append((T_ip, B_ip))
         out_blocks.append(T_k)
         out_blocks.append(B_k)
     return out_blocks, SNode(out_interpolants, [left_interpolant, right_interpolant])
@@ -283,8 +284,10 @@ def alm2map(m, a_l, Nside):
 #lmax = 200
 #Nside = 64
 #m = 2
-lmax = 2000
-Nside = 1024
+#lmax = 2000
+#Nside = 1024
+lmax = 1000
+Nside = 512
 m = 2
 a_l = np.zeros(lmax + 1 - m)
 a_l[3 - m] = 1
@@ -313,7 +316,7 @@ if 0:
     print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
     print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
 
-if 0:
+if 1:
     x = np.cos(get_ring_thetas(Nside))
     x[np.abs(x) < 1e-10] = 0
     xneg = x[x < 0]
@@ -321,7 +324,7 @@ if 0:
     assert np.allclose(-xneg[::-1], xpos)
     InnerSumPerM(m, x[x >= 0], lmax)
     
-if 1:
+if 0:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

@@ -250,7 +250,7 @@ def alm2map(m, a_l, Nside):
     g = al2gmtheta(m, a_l, theta)
     Npix = 12 * Nside**2
     map = np.zeros(Npix)
-    g_m_theta = np.zeros((4 * Nside - 1, 4 * Npix), dtype=np.complex)
+    g_m_theta = np.zeros((4 * Nside - 1, 4 * Nside), dtype=np.complex)
     print g_m_theta.shape, g.shape
 #    plt.clf()
 #    plt.plot(g.real)

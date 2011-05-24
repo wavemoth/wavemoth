@@ -127,21 +127,23 @@ class SNode(object):
         i_y = 0
         i_l = i_r = 0
         for i_block, (T_ip, B_ip) in enumerate(self.blocks):
-            buf = np.empty(T_ip.shape[1])
-            assert T_ip.shape[1] == B_ip.shape[1]
             # Merge together input
             lw = LS.block_heights[i_block]
             rw = RS.block_heights[i_block]
-            assert T_ip.shape[1] == lw + rw
+            assert T_ip.shape[1] == B_ip.shape[1] == lw + rw
+            buf = np.empty(lw + rw)
             buf[:lw] = z_left[i_l:i_l + lw]
-            buf[lw:] = z_right[i_r:i_r + rw]
             i_l += lw
+            buf[lw:] = z_right[i_r:i_r + rw]
             i_r += rw
             # Do computation
-            y[i_y:i_y + T_ip.shape[0]] = np.dot(T_ip, buf)
-            i_y += T_ip.shape[0]
-            y[i_y:i_y + B_ip.shape[0]] = np.dot(B_ip, buf)
-            i_y += B_ip.shape[0]
+            th = self.block_heights[2 * i_block]
+            bh = self.block_heights[2 * i_block + 1]
+            assert T_ip.shape[0] == th and B_ip.shape[0] == bh
+            y[i_y:i_y + th] = np.dot(T_ip, buf)
+            i_y += th
+            y[i_y:i_y + bh] = np.dot(B_ip, buf)
+            i_y += bh
         return y
 
     def size(self):

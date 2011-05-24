@@ -16,7 +16,7 @@ from matplotlib import pyplot as plt
 # Some parameters
 #
 C = 200*2
-eps = 1e-10
+eps = 1e-15
 
 #
 # The butterfly algorithm
@@ -32,13 +32,21 @@ class DenseMatrix(object):
 
     def apply_left(self, x):
         return np.dot(x, self.A)
+
+    def size(self):
+        return prod(self.shape)
     
-limit = 10
+limit = 64
 
 def decomp(m, msg):
     s, ip = interpolative_decomposition(m, eps)
-    print 'ID %s: (%.2f) %d / %d' % (
-        msg, s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1])
+    if msg is not None:
+        k, n = ip.shape
+        m = s.shape[0]
+        print 'ID %s: (%.2f) %d / %d -> %f' % (
+            msg, s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1],
+            (k * (n - k) + m * k) / (m * n)
+            )
     return s, ip
 
 class SNode(object):
@@ -138,7 +146,7 @@ class Butterfly(object):
                  
 def butterfly_core(A_k_blocks):
     if len(A_k_blocks) == 1:
-        A_k, A_ip = decomp(A_k_blocks[0], 'leaf')
+        A_k, A_ip = decomp(A_k_blocks[0], None)
         return [A_k], InterpolationLeafNode(A_ip)
     mid = len(A_k_blocks) // 2
     left_blocks, left_interpolant = butterfly_core(A_k_blocks[:mid])
@@ -150,8 +158,8 @@ def butterfly_core(A_k_blocks):
         LR = np.hstack([L, R])
         # Vertical split & compress
         vmid = LR.shape[0] // 2
-        T_k, T_ip = decomp(LR[:vmid, :], 'T')
-        B_k, B_ip = decomp(LR[vmid:, :], 'B')
+        T_k, T_ip = decomp(LR[:vmid, :], None)
+        B_k, B_ip = decomp(LR[vmid:, :], None)
         assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
         out_interpolants.append((T_k.shape[1], T_ip, B_ip))
         out_blocks.append(T_k)
@@ -182,10 +190,10 @@ def butterfly(A):
 
 class InnerSumPerM:
     def __init__(self, m, x_grid, lmax, compress=True):
-        P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax)
+        P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax, epsilon=1e-300)
         assert x_grid[-1] == 0
 
-        P_even_arr = P[:-1, ::2]
+        P_even_arr = P[:-1, ::2] # drop equator
         P_odd_arr = P[:-1, 1::2]
         if compress:
             self.P_even = butterfly(P_even_arr)
@@ -256,8 +264,8 @@ def alm2map(m, a_l, Nside):
 # 8000/4096: 0.0628
 
 
-lmax = 120
-Nside = 64
+lmax = 2500
+Nside = 1024
 m = 3
 a_l = np.zeros(lmax + 1 - m)
 a_l[3 - m] = 1
@@ -273,16 +281,17 @@ def getroots(l, m):
     return associated_legendre_roots(lmax + 1, m)
     
 
-if 0:
+if 1:
 #    roots = getroots(lmax + 1, m)
     roots = get_ring_thetas(Nside)[2*Nside-1:]
     P = compute_normalized_associated_legendre(m, roots, lmax)
     #SPeven = butterfly_horz(P[::2])
     #SPodd = butterfly_horz(P[1::2])
-    SPeven = butterfly(P[::2])
-    SPodd = butterfly(P[1::2])
-    print 'Compression', SPeven.size() / DenseMatrix(P[::2]).size()
-    print 'Compression', SPodd.size() / DenseMatrix(P[1::2]).size()
+    Peven = P[:, ::2]
+    SPeven = butterfly(P[:, ::2])
+    SPodd = butterfly(P[:, 1::2])
+    print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
+    print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
 
 if 0:
     x = np.cos(get_ring_thetas(Nside))
@@ -292,7 +301,7 @@ if 0:
     assert np.allclose(-xneg[::-1], xpos)
     InnerSumPerM(m, x[x >= 0], lmax)
     
-if 1:
+if 0:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

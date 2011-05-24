@@ -10,9 +10,9 @@ from spherew import *
 from spherew.healpix import *
 from cmb import as_matrix
 
-lmax = 300
+lmax = 400
 Nside = 256
-m = 250
+m = 100
 
 nodes = get_ring_thetas(Nside)
 P = compute_normalized_associated_legendre(m, nodes, lmax)

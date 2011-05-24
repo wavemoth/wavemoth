@@ -15,8 +15,9 @@ from matplotlib import pyplot as plt
 #
 # Some parameters
 #
-C = 200*2
 eps = 1e-15
+limit = 16
+
 
 #
 # The butterfly algorithm
@@ -36,7 +37,6 @@ class DenseMatrix(object):
     def size(self):
         return prod(self.shape)
     
-limit = 64
 
 def decomp(m, msg):
     s, ip = interpolative_decomposition(m, eps)
@@ -49,6 +49,54 @@ def decomp(m, msg):
             )
     return s, ip
 
+class IdentityMatrix(object):
+    def __init__(self, n):
+        self.nrows, self.ncols = n, n
+        self.partition = [0, n]
+    def apply(self, x):
+        return x
+    def size(self):
+        return 0
+
+class InterpolationLeafNode(object):
+    """
+    Leaf node: Only ID-compresses a single column without a vertical
+    split.
+    """
+    def __init__(self, A_ip):
+        self.A_ip = A_ip
+        self.nrows, self.ncols = A_ip.shape
+        self.partition = [0, self.nrows]
+
+    def apply(self, x):
+        return np.dot(self.A_ip, x)
+
+    def size(self):
+        k, n = self.A_ip.shape
+        return k * (n - k)  
+
+class Butterfly(object):
+    def __init__(self, final_block_diagonal, S_tree):
+        self.blocks = final_block_diagonal
+        self.S_tree = S_tree
+        self.nrows = sum(block.shape[0] for block in self.blocks)
+
+    def apply(self, x):
+        y = self.S_tree.apply(x)
+        out = np.empty(self.nrows, np.double)
+        i_out = 0
+        i_y = 0
+        for block in self.blocks:
+            m, n = block.shape
+            out[i_out:i_out + m] = np.dot(block, y[i_y:i_y + n])
+            i_out += m
+            i_y += n
+        return out
+
+    def size(self):
+        return (self.S_tree.size() +
+                sum(np.prod(block.shape) for block in self.blocks))
+            
 class SNode(object):
     def __init__(self, blocks, children):
         if 2**int(np.log2(len(blocks))) != len(blocks):
@@ -104,50 +152,13 @@ class SNode(object):
             size += child.size()
         return size
 
-class InterpolationLeafNode(object):
-    """
-    Leaf node: Only ID-compresses a single column without a vertical
-    split.
-    """
-    def __init__(self, A_ip):
-        self.A_ip = A_ip
-        self.nrows, self.ncols = A_ip.shape
-        self.partition = [0, self.nrows]
-
-    def apply(self, x):
-        return np.dot(self.A_ip, x)
-
-    def size(self):
-        k, n = self.A_ip.shape
-        return k * (n - k)  
-
-class Butterfly(object):
-    def __init__(self, final_block_diagonal, S_tree):
-        self.blocks = final_block_diagonal
-        self.S_tree = S_tree
-        self.nrows = sum(block.shape[0] for block in self.blocks)
-
-    def apply(self, x):
-        y = self.S_tree.apply(x)
-        out = np.empty(self.nrows, np.double)
-        i_out = 0
-        i_y = 0
-        for block in self.blocks:
-            m, n = block.shape
-            out[i_out:i_out + m] = np.dot(block, y[i_y:i_y + n])
-            i_out += m
-            i_y += n
-        return out
-
-    def size(self):
-        return (self.S_tree.size() +
-                sum(np.prod(block.shape) for block in self.blocks))
-            
-                 
 def butterfly_core(A_k_blocks):
     if len(A_k_blocks) == 1:
-        A_k, A_ip = decomp(A_k_blocks[0], None)
-        return [A_k], InterpolationLeafNode(A_ip)
+        return A_k_blocks, IdentityMatrix(A_k_blocks[0].shape[1])
+        # No compression achieved when split into odd l/even l,
+        # and it takes a long time.
+        #A_k, A_ip = decomp(A_k_blocks[0], 'leaf')
+        #return [A_k], InterpolationLeafNode(A_ip)
     mid = len(A_k_blocks) // 2
     left_blocks, left_interpolant = butterfly_core(A_k_blocks[:mid])
     right_blocks, right_interpolant = butterfly_core(A_k_blocks[mid:])
@@ -158,8 +169,10 @@ def butterfly_core(A_k_blocks):
         LR = np.hstack([L, R])
         # Vertical split & compress
         vmid = LR.shape[0] // 2
-        T_k, T_ip = decomp(LR[:vmid, :], None)
-        B_k, B_ip = decomp(LR[vmid:, :], None)
+        T = LR[:vmid, :]
+        B = LR[vmid:, :]
+        T_k, T_ip = decomp(T, None)
+        B_k, B_ip = decomp(B, None)
         assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
         out_interpolants.append((T_k.shape[1], T_ip, B_ip))
         out_blocks.append(T_k)
@@ -169,7 +182,7 @@ def butterfly_core(A_k_blocks):
 def butterfly(A):
     def partition(X, result):
         hmid = X.shape[1] // 2
-        if hmid <= limit:
+        if hmid <= limit or X.shape[0] <= 8:
             result.append(X)
             return 0
         else:
@@ -190,7 +203,7 @@ def butterfly(A):
 
 class InnerSumPerM:
     def __init__(self, m, x_grid, lmax, compress=True):
-        P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax, epsilon=1e-300)
+        P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax, epsilon=1e-30)
         assert x_grid[-1] == 0
 
         P_even_arr = P[:-1, ::2] # drop equator
@@ -264,9 +277,12 @@ def alm2map(m, a_l, Nside):
 # 8000/4096: 0.0628
 
 
-lmax = 2500
-Nside = 1024
-m = 3
+lmax = 200
+Nside = 64
+m = 2
+#lmax = 2500
+#Nside = 1024
+#m = 500
 a_l = np.zeros(lmax + 1 - m)
 a_l[3 - m] = 1
 a_l[4 - m] = -1
@@ -281,13 +297,14 @@ def getroots(l, m):
     return associated_legendre_roots(lmax + 1, m)
     
 
-if 1:
+if 0:
 #    roots = getroots(lmax + 1, m)
     roots = get_ring_thetas(Nside)[2*Nside-1:]
     P = compute_normalized_associated_legendre(m, roots, lmax)
     #SPeven = butterfly_horz(P[::2])
     #SPodd = butterfly_horz(P[1::2])
     Peven = P[:, ::2]
+#    as_matrix(np.log(np.abs(Peven))).plot()
     SPeven = butterfly(P[:, ::2])
     SPodd = butterfly(P[:, 1::2])
     print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
@@ -301,7 +318,7 @@ if 0:
     assert np.allclose(-xneg[::-1], xpos)
     InnerSumPerM(m, x[x >= 0], lmax)
     
-if 0:
+if 1:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

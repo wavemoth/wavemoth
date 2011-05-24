@@ -213,6 +213,9 @@ class InnerSumPerM:
             self.P_odd = butterfly(P_odd_arr)
             print 'Compression:', ((self.P_even.size() + self.P_odd.size()) / 
                 (prod(P_even_arr.shape) + prod(P_odd_arr.shape)))
+            print 'Ratio in final blocks:', (
+                (self.P_even.S_tree.size() + self.P_odd.S_tree.size()) /
+                (self.P_even.size() + self.P_odd.size()))
         else:
             self.P_even = DenseMatrix(P_even_arr)
             self.P_odd = DenseMatrix(P_odd_arr)
@@ -277,12 +280,12 @@ def alm2map(m, a_l, Nside):
 # 8000/4096: 0.0628
 
 
-lmax = 200
-Nside = 64
+#lmax = 200
+#Nside = 64
+#m = 2
+lmax = 2000
+Nside = 1024
 m = 2
-#lmax = 2500
-#Nside = 1024
-#m = 500
 a_l = np.zeros(lmax + 1 - m)
 a_l[3 - m] = 1
 a_l[4 - m] = -1

@@ -38,6 +38,24 @@ def test_full_rank():
     B = np.dot(A_k, A_ip)
     yield assert_almost_equal, A, B
 
+def test_nocols():
+    A = np.zeros((100, 0), np.double)
+    A_k, A_ip = interpolative_decomposition(A)
+    yield eq_, A_k.shape, (100, 0)
+    yield eq_, A_ip.shape, (0, 0)
+
+def test_norows():
+    A = np.zeros((0, 100), np.double)
+    A_k, A_ip = interpolative_decomposition(A)
+    yield eq_, A_k.shape, (0, 0)
+    yield eq_, A_ip.shape, (0, 100)
+
+def test_nomatrix():
+    A = np.zeros((0, 0), np.double)
+    A_k, A_ip = interpolative_decomposition(A)
+    yield eq_, A_k.shape, (0, 0)
+    yield eq_, A_ip.shape, (0, 0)
+
 def test_zeromatrix():
     A = np.zeros((10, 20), np.double)
     A_k, A_ip = interpolative_decomposition(A)

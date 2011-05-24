@@ -39,6 +39,14 @@ def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
     cdef np.ndarray[double, ndim=2, mode='fortran'] buf
     cdef np.ndarray[int, mode='fortran'] ilist
     cdef np.ndarray[double, mode='fortran'] rnorms
+
+    if A.shape[1] == 0:
+        return (np.zeros(0, np.intc), np.zeros(0, np.intc),
+                np.zeros((A.shape[0], 0)), np.zeros((0, 0)))
+    elif A.shape[0] == 0:
+        return (np.zeros(0, np.intc), np.arange(A.shape[1]),
+                np.zeros((0, 0)), np.zeros((0, A.shape[1])))
+    
     buf = A.copy('F')
         
     m = buf.shape[0]
@@ -89,6 +97,8 @@ def interpolative_decomposition(A, eps=1e-10):
     iden_list, ipol_list, A_k, A_ip = sparse_interpolative_decomposition(A, eps)
     k = iden_list.shape[0]
     n = A.shape[1]
+    if k == 0 or n == 0:
+        return A_k, A_ip
     A_ip_full = np.empty((k, n), np.double)
     A_ip_full[:, iden_list] = np.eye(k)
     A_ip_full[:, ipol_list] = A_ip

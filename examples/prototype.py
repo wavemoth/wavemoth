@@ -52,7 +52,7 @@ def decomp(m, msg):
 class IdentityMatrix(object):
     def __init__(self, n):
         self.nrows, self.ncols = n, n
-        self.partition = [0, n]
+        self.block_heights = [n]
     def apply(self, x):
         return x
     def size(self):
@@ -66,7 +66,7 @@ class InterpolationLeafNode(object):
     def __init__(self, A_ip):
         self.A_ip = A_ip
         self.nrows, self.ncols = A_ip.shape
-        self.partition = [0, self.nrows]
+        self.block_heights = [self.nrows]
 
     def apply(self, x):
         return np.dot(self.A_ip, x)
@@ -106,10 +106,9 @@ class SNode(object):
         self.blocks = blocks
         self.ncols = sum(child.ncols for child in children)
         self.children = children
-        block_widths = sum([[T_ip.shape[0], B_ip.shape[0]]
-                            for T_ip, B_ip in blocks], [])
-        self.partition = np.cumsum([0] + block_widths)
-        self.nrows = self.partition[-1]
+        self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
+                                 for T_ip, B_ip in blocks], [])
+        self.nrows = sum(self.block_heights)
 
     def apply(self, x):
         # z is the vector containing the contiguous result of the 2 children
@@ -126,16 +125,18 @@ class SNode(object):
         # Apply this butterfly, permuting the input as we go
         y = np.empty(self.nrows, np.double)
         i_y = 0
+        i_l = i_r = 0
         for i_block, (T_ip, B_ip) in enumerate(self.blocks):
             buf = np.empty(T_ip.shape[1])
             assert T_ip.shape[1] == B_ip.shape[1]
             # Merge together input
-            lstart, lstop = LS.partition[i_block], LS.partition[i_block + 1]
-            rstart, rstop = RS.partition[i_block], RS.partition[i_block + 1]
-            assert T_ip.shape[1] == (lstop - lstart) + (rstop - rstart)
-            mid = lstop - lstart
-            buf[:mid] = z_left[lstart:lstop]
-            buf[mid:] = z_right[rstart:rstop]
+            lw = LS.block_heights[i_block]
+            rw = RS.block_heights[i_block]
+            assert T_ip.shape[1] == lw + rw
+            buf[:lw] = z_left[i_l:i_l + lw]
+            buf[lw:] = z_right[i_r:i_r + rw]
+            i_l += lw
+            i_r += rw
             # Do computation
             y[i_y:i_y + T_ip.shape[0]] = np.dot(T_ip, buf)
             i_y += T_ip.shape[0]
@@ -316,7 +317,7 @@ if 0:
     print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
     print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
 
-if 1:
+if 0:
     x = np.cos(get_ring_thetas(Nside))
     x[np.abs(x) < 1e-10] = 0
     xneg = x[x < 0]
@@ -324,7 +325,7 @@ if 1:
     assert np.allclose(-xneg[::-1], xpos)
     InnerSumPerM(m, x[x >= 0], lmax)
     
-if 0:
+if 1:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

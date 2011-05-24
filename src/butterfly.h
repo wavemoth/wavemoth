@@ -7,44 +7,80 @@ recursion.
 
 \section Binary format
 
-A compressed matrix (or matrix sub-block) is represented as a) a
-32-bit type field which designates the matrix type, and then
-block-specific data. Contents should typically be 128-bit aligned, so
-each block should start with 96 bits/12 bytes of padding or
-block-type-specific header fields. The block size should be divisible
-by 16 bytes/128 bits as well.
+Consult the paper for the following discussion to make sense. Very
+briefly, a butterfly matrix consists of "D S_maxlevel S_{maxlevel-1}
+... S_2 S_1", where "D" is a block-diagonal matrix, and "S_l" are
+interpolation matrices.
 
-Some matrix types are recursive, but that's defined by the block type.
+For best temporal and spatial locality, these are best stored in
+depth-first manner, in the order the algorithm will traverse the
+data. Blocks within each matrix are considered nodes in a tree, with,
+e.g., the children of a block of S_3 being in S_2. There are three
+different node types; the root node (containing both D and the
+top-level S), inner nodes, and leaf nodes.
 
-Matrix dimensions are always passed to code from the caller and
-is not part of the matrix data.
+Each node (=matrix block) consists of three parts: a) The heights of
+the sub-blocks it consists of ("row interface"), b) the child nodes
+(matrices to the right of itself whose result we depend on), c)
+payload used for processing in this matrix block. The sub-block widths
+("col interface") is read from the row interface of the children.
 
-\c ZERO: Fills the output vector with zeros. Only contains 12 bytes of
-padding.
+TOP-LEVEL COMPRESSED MATRIX FORMAT (HEADER):
 
-\c DENSE_ROWMAJOR: 12 bytes of padding, then raw double precision matrix
-data in row-major ordering.
+ - bfm_index_t: order == 2**level. This gives number of blocks in D.
+ - The root node
 
-\c HSTACK: Matrix blocked horizontally. First an int32 \c n with the
-number of blocks, then comes an \c n-length array of type
-BFM_StackedBlock with the column widths and offsets w.r.t the
-beginning of the block (including type id) of corresponding matrix
-data blocks.
+INNER INTERPOLATION NODE: "order" is a variable assumed available
+(passed in from the outside and divided by 2 when recursing). Layout:
 
-\c BUTTERFLY: Consists of 4 dense interpolation matrices + associated
-permuted identity matrices, dubbed L_ip, R_ip, T_ip, B_ip, as well as
-two sub-matrices of generic type, T_k and B_k. Storage format:
+ - bfm_index_t block_heights[2 * order]: The height of each vertical
+     block of this matrix. Even entries are the heights of T's and
+     odd entries the heights of B's.
+ - bfm_index_t nrows_first, nrows_second: The number of rows in
+     the first and second child
+ - bfm_index_t col_split: The column where we split between first
+     and second child
+ - char first_child[*]: The data of the first child
+ - char second_child[*]: The data of the second child
+ - Then follows "2 * order" interpolation matrices (pairs of (T, B)),
+     each in the format specified below.
 
- - BFM_ButterflyHeader
- - LR_split * 1 byte: Filter: 1 if column is part of identity matrix, 0 otherwise
- - Padding to next 128-bit aligned address using the char 0xFF.
- - Contents of L_ip in col-major order
- - (ncol - LR_split) * 1 byte + padding: Filter for R
- - Contents of R_ip in row-major order
- - T_ip: First filter, padding, T_ip in row-major order, padding to next 128 bit.
- - T_k: Generic sub-matrix
- - Padding
- - B: Filter, padding, B_ip, padding, B_k
+ROOT NODE: Since there is no permutation between S_maxlevel and the
+blocks of D, each block of D is interleaved between the interpolation
+nodes in S_maxlevel.
+
+ - bfm_index_t block_heights[2 * order]: Sizes of final outputs (number
+     of rows in each block of D)
+ - bfm_index_t nrows_first, nrows_second: The number of rows in
+     the first and second child
+ - bfm_index_t col_split: The column where we split between first
+     and second child
+ - char first_child[*], second_child[*]: See abve
+ - Then follows "order" instances of:
+ -- bfm_index_t k_T: Number of rows in T
+ -- T: Interpolation matrix
+ -- Padding to 128-bit alignment
+ -- D_block: Corresponding block of D in column-major format
+ -- bfm_index_t k_T: Number of rows in B
+ -- B: Interpolation matrix
+ -- Padding to 128-bit alignment
+ -- D_block: Corresponding block of D in column-major format
+
+LEAF NODE: These are essentially "identity matrices", their sole
+purpose is to instruct the parent node how many rows to consume from
+the input vector. Recursion should stop in parent (since order == 1).
+
+ - bfm_index_t n: Number of columns and rows in this identity matrix
+
+INTERPOLATION MATRICES: Assume that number of rows "k" and number of
+columns "n" is passed in from the outside. The data is:
+
+ - char filter[n]: Exactly "k" entries will be 0, indicating the
+   columns that form the identity matrix. The rest are 1.
+ - Padding to 128-bit alignment
+ - double data[(n - k) * k]: The data of the rest of the matrix in
+   column-major order.
+
 
 */
 
@@ -55,51 +91,19 @@ two sub-matrices of generic type, T_k and B_k. Storage format:
 
 typedef int32_t bfm_index_t;
 
-typedef enum {
-  BFM_BLOCK_ZERO = 0,
-  BFM_BLOCK_DENSE_ROWMAJOR = 1,
-  BFM_BLOCK_HSTACK = 2,
-  BFM_BLOCK_BUTTERFLY = 3,
-  BFM_MAX_TYPE = 3
-} BFM_MatrixBlockType;
-
-/*
- - int32: ncol(L_ip), this also yields ncol(R_ip) through ncol([L_ip R_ip]) - ncol(L_ip)
- - int32: nrow(L_ip)
- - int32: nrow(R_ip)
- - int32: max(ncol(L_ip), ncol(R_ip)): Useful for memory allocation purposes
-
-ncol(T_ip) = nrow(L_ip) + nrow(R_ip)
-*/
-typedef struct {
-  int32_t type_id;
-  int32_t k_L, n_L, k_R;
-} BFM_ButterflyHeader;
-
-
-
-
-/*typedef struct {
-  bfm_index_t num_cols_or_rows;
-  size_t data_offset;
-} BFM_StackedBlock;
-
-typedef struct {
-} BFM_Context;*/
 
 /*!
-Multiply a compressed matrix with a vector on the right side.
-The matrix is assumed to be real and is applied to both the real
-and imaginary parts of the input vectors (_dz).
+Multiply a butterfly matrix with a vector on the right side:
 
-\c x is the input vector, and \c y is the output vector. Each has
-the data for \c nvecs vectors interleaved; the matrix operates
-on each one.
+y = A * x
+
+The previous contents of y is erased. Both \c x and \c y has
+\c nvecs vectors interleaved; the matrix operates on each one.
 
 \return 0 if success, an error code otherwise
 */
-int bfm_apply_right_d(char *matrixdata, double *x, double *y,
-                      bfm_index_t nrow, bfm_index_t ncol, bfm_index_t nvec);
+int bfm_apply_d(char *matrixdata, double *x, double *y,
+                bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs);
 
 
 #endif

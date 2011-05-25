@@ -143,32 +143,8 @@ class ButterflyMatrix:
         return np.vstack([u, v])
 
 def permutations_to_filter(alst, blst):
-    n_a = len(alst)
-    n_b = len(blst)
-    filter = np.empty(n_a + n_b, dtype=np.int8)
-    a = alst[0] if n_a > 0 else None
-    b = blst[0] if n_b > 0 else None
-    idx = 0
-    i_a = i_b = 1
-    while not (a == b == None):
-        while a is not None and (b is None or a < b):
-            filter[idx] = 0
-            prev_a = a
-            a = alst[i_a] if i_a < n_a else None
-            if prev_a >= a != None:
-                raise ValueError("Input not strictly ordered")
-            idx += 1
-            i_a += 1
-        while b is not None and (a is None or b < a):
-            filter[idx] = 1
-            prev_b = b
-            b = blst[i_b] if i_b < n_b else None
-            if prev_b >= b != None:
-                raise ValueError("Input not strictly ordered")
-            idx += 1
-            i_b += 1
-        if a == b != None:
-            raise ValueError("An element is present in both lists")
+    filter = np.zeros(len(alst) + len(blst), dtype=np.int8)
+    filter[blst] = 1
     return filter
 
 def matrix_interpolative_decomposition(A, eps):

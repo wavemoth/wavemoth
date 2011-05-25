@@ -9,12 +9,23 @@ from numpy.testing import assert_almost_equal
 
 from ..butterfly import *
 from ..interpolative_decomposition import interpolative_decomposition
+from ..healpix import get_ring_thetas
+from ..legendre import compute_normalized_associated_legendre
 from io import BytesIO
+
+def get_test_matrix():
+    m = 3
+    lmax = 200
+    Nside = 128
+    thetas = get_ring_thetas(Nside)[2*Nside:]
+    P = compute_normalized_associated_legendre(m, thetas, lmax)
+    return P
 
 def serialize(M):
     data = BytesIO()
     M.serialize(data)
     return SerializedMatrix(data.getvalue(), M.shape[0], M.shape[1])
+
 
 def test_permutations_to_filter():
     yield eq_, list(permutations_to_filter([2, 3, 5], [0, 4])), [1, 0, 0, 0, 1]
@@ -23,33 +34,16 @@ def test_permutations_to_filter():
     yield eq_, list(permutations_to_filter([], [])), []
     yield eq_, list(permutations_to_filter([0, 1], [])), [0, 0]
 
-def test_dense_rowmajor():
-    A = np.arange(100).reshape(5, 20).astype(np.double)
-    x = np.ones((20, 3), np.double)
-    x[:, 1] = 2
+def test_butterfly_apply():
+    P = get_test_matrix()
+    a_l = ((-1)**np.arange(P.shape[1])).astype(np.double)
 
-    M = serialize(DenseMatrix(A))
-    C = M.apply(x)
-    yield assert_almost_equal, C, np.dot(A, x)
-  
-def test_butterfly_matrix():
-    x, y = np.ogrid[1:2:5j, 0:2:20j]
-    A = x**2 * np.sin(y)
-    A[:, 2] = 1
-    A[:, 15] = 1
-
-    # A is 5-by-20, rank 2
+    M = butterfly_compress(P)
+    y1 = M.apply(a_l)
+    y2 = np.dot(P, a_l)
+    yield assert_almost_equal, y1, y2
     
-    x = np.ones((20, 3), np.double)
-    x[:, 1] = 2
-    M = butterfly_compress(A, min_rows=0)
-    M_c = serialize(M)
-    
-#    print M.L_ip.interpolant
-#    print M.R_ip.interpolant
-    print '---'
-    print M.apply(x)
-    print M_c.apply(x)
+#    print M_c.apply(x)
 
 #    A_k, A_ip = interpolative_decomposition(A, eps=1e-15)
 #    iden, ipol, A_ks, A_ips = sparse_interpolative_decomposition(A, eps=1e-15)

@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname('__file__'), '..'))
                 
 from spherew import *
 from spherew.healpix import *
+from spherew.butterfly import butterfly_compress
 import numpy as np
 from numpy import pi, prod
 from cmb.oomatrix import as_matrix
@@ -36,169 +37,6 @@ class DenseMatrix(object):
 
     def size(self):
         return prod(self.shape)
-    
-
-def decomp(m, msg):
-    s, ip = interpolative_decomposition(m, eps)
-    if msg is not None:
-        k, n = ip.shape
-        m = s.shape[0]
-        print 'ID %s: (%.2f) %d / %d -> %f' % (
-            msg, s.shape[1] / ip.shape[1], s.shape[1], ip.shape[1],
-            (k * (n - k) + m * k) / (m * n)
-            )
-    return s, ip
-
-class IdentityMatrix(object):
-    def __init__(self, n):
-        self.nrows, self.ncols = n, n
-        self.block_heights = [n]
-    def apply(self, x):
-        return x
-    def size(self):
-        return 0
-
-class InterpolationLeafNode(object):
-    """
-    Leaf node: Only ID-compresses a single column without a vertical
-    split.
-    """
-    def __init__(self, A_ip):
-        self.A_ip = A_ip
-        self.nrows, self.ncols = A_ip.shape
-        self.block_heights = [self.nrows]
-
-    def apply(self, x):
-        return np.dot(self.A_ip, x)
-
-    def size(self):
-        k, n = self.A_ip.shape
-        return k * (n - k)  
-
-class Butterfly(object):
-    def __init__(self, final_block_diagonal, S_tree):
-        self.blocks = final_block_diagonal
-        self.S_tree = S_tree
-        self.nrows = sum(block.shape[0] for block in self.blocks)
-
-    def apply(self, x):
-        y = self.S_tree.apply(x)
-        out = np.empty(self.nrows, np.double)
-        i_out = 0
-        i_y = 0
-        for block in self.blocks:
-            m, n = block.shape
-            out[i_out:i_out + m] = np.dot(block, y[i_y:i_y + n])
-            i_out += m
-            i_y += n
-        return out
-
-    def size(self):
-        return (self.S_tree.size() +
-                sum(np.prod(block.shape) for block in self.blocks))
-            
-class SNode(object):
-    def __init__(self, blocks, children):
-        if 2**int(np.log2(len(blocks))) != len(blocks):
-            raise ValueError("len(blocks) not a power of 2")
-        if len(children) != 2:
-            raise ValueError("len(children) != 2")
-        self.blocks = blocks
-        self.ncols = sum(child.ncols for child in children)
-        self.children = children
-        self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
-                                 for T_ip, B_ip in blocks], [])
-        self.nrows = sum(self.block_heights)
-
-    def apply(self, x):
-        # z is the vector containing the contiguous result of the 2 children
-        # The permutation happens in reading from z in a permuted way; so each
-        # butterfly application permutes its input
-        # Recurse to children butterflies
-        LS, RS = self.children
-        assert x.shape[0] == self.ncols
-        assert x.shape[0] == LS.ncols + RS.ncols
-        print len(self.blocks)
-        z_left = LS.apply(x[:LS.ncols])
-        z_right = RS.apply(x[LS.ncols:])
-
-        # Apply this butterfly, permuting the input as we go
-        y = np.empty(self.nrows, np.double)
-        i_y = 0
-        i_l = i_r = 0
-        for i_block, (T_ip, B_ip) in enumerate(self.blocks):
-            # Merge together input
-            lw = LS.block_heights[i_block]
-            rw = RS.block_heights[i_block]
-            assert T_ip.shape[1] == B_ip.shape[1] == lw + rw
-            buf = np.empty(lw + rw)
-            buf[:lw] = z_left[i_l:i_l + lw]
-            i_l += lw
-            buf[lw:] = z_right[i_r:i_r + rw]
-            i_r += rw
-            # Do computation
-            th = self.block_heights[2 * i_block]
-            bh = self.block_heights[2 * i_block + 1]
-            assert T_ip.shape[0] == th and B_ip.shape[0] == bh
-            y[i_y:i_y + th] = np.dot(T_ip, buf)
-            i_y += th
-            y[i_y:i_y + bh] = np.dot(B_ip, buf)
-            i_y += bh
-        return y
-
-    def size(self):
-        size = 0
-        for T_ip, B_ip in self.blocks:
-            for M in (T_ip, B_ip):
-                k, n = M.shape
-                size += k * (n - k)
-        for child in self.children:
-            size += child.size()
-        return size
-
-def butterfly_core(A_k_blocks):
-    if len(A_k_blocks) == 1:
-        return A_k_blocks, IdentityMatrix(A_k_blocks[0].shape[1])
-        # No compression achieved when split into odd l/even l,
-        # and it takes a long time.
-        #A_k, A_ip = decomp(A_k_blocks[0], 'leaf')
-        #return [A_k], InterpolationLeafNode(A_ip)
-    mid = len(A_k_blocks) // 2
-    left_blocks, left_interpolant = butterfly_core(A_k_blocks[:mid])
-    right_blocks, right_interpolant = butterfly_core(A_k_blocks[mid:])
-    out_blocks = []
-    out_interpolants = []
-    for L, R in zip(left_blocks, right_blocks):
-        # Horizontal join
-        LR = np.hstack([L, R])
-        # Vertical split & compress
-        vmid = LR.shape[0] // 2
-        T = LR[:vmid, :]
-        B = LR[vmid:, :]
-        T_k, T_ip = decomp(T, None)
-        B_k, B_ip = decomp(B, None)
-        assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
-        out_interpolants.append((T_ip, B_ip))
-        out_blocks.append(T_k)
-        out_blocks.append(B_k)
-    return out_blocks, SNode(out_interpolants, [left_interpolant, right_interpolant])
-
-def butterfly(A):
-    def partition(X, result):
-        hmid = X.shape[1] // 2
-        if hmid <= limit or X.shape[0] <= 8:
-            result.append(X)
-            return 0
-        else:
-            partition(X[:, :hmid], result)
-            levels = partition(X[:, hmid:], result)
-        return levels + 1 
-        
-    B_list = []
-    numlevels = partition(A, B_list)
-    diagonal_blocks, S_tree = butterfly_core(B_list)
-    result = Butterfly(diagonal_blocks, S_tree)
-    return result
 
 #
 # Spherical harmonic transform for a single l,
@@ -213,12 +51,12 @@ class InnerSumPerM:
         P_even_arr = P[:-1, ::2] # drop equator
         P_odd_arr = P[:-1, 1::2]
         if compress:
-            self.P_even = butterfly(P_even_arr)
-            self.P_odd = butterfly(P_odd_arr)
+            self.P_even = butterfly_compress(P_even_arr, min_cols=limit)
+            self.P_odd = butterfly_compress(P_odd_arr, min_cols=limit)
             print 'Compression:', ((self.P_even.size() + self.P_odd.size()) / 
                 (prod(P_even_arr.shape) + prod(P_odd_arr.shape)))
             print 'Ratio in final blocks:', (
-                (self.P_even.S_tree.size() + self.P_odd.S_tree.size()) /
+                (self.P_even.S_node.size() + self.P_odd.S_node.size()) /
                 (self.P_even.size() + self.P_odd.size()))
         else:
             self.P_even = DenseMatrix(P_even_arr)

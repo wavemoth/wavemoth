@@ -23,8 +23,8 @@ def get_test_matrix():
 
 def serialize(M):
     data = BytesIO()
-    M.serialize(data)
-    return SerializedMatrix(data.getvalue(), M.shape[0], M.shape[1])
+    M.write_to_stream(data)
+    return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
 
 
 def test_permutations_to_filter():
@@ -43,6 +43,22 @@ def test_butterfly_apply():
     y2 = np.dot(P, a_l)
     yield assert_almost_equal, y1, y2
     
+def test_butterfly_compressed():
+    P = get_test_matrix()
+    a_l = ((-1)**np.arange(P.shape[1])).astype(np.double)
+
+    M = butterfly_compress(P)
+    print M.S_node.children[0].children[0].__dict__
+    MC = serialize(M)
+    y1 = MC.apply(a_l)
+    y2 = M.apply(a_l)
+    y3 = np.dot(P, a_l)
+    print y1[:10]
+    print y2[:10]
+#    yield assert_almost_equal, y1, y2
+#    print y1[:10], y1[-y1.shape[0] // 2:]
+    
+
 #    print M_c.apply(x)
 
 #    A_k, A_ip = interpolative_decomposition(A, eps=1e-15)

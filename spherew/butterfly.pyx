@@ -2,7 +2,7 @@ from cpython cimport PyBytes_FromStringAndSize
 from libc.stdlib cimport free
 from libc.string cimport memcpy
 
-cdef extern from "stdlib.h":
+cdef extern from "malloc.h":
     void *memalign(size_t boundary, size_t size)
 
 cdef extern from "butterfly.h":
@@ -52,7 +52,7 @@ cdef class SerializedMatrix:
     def apply(self, vec, out=None):
         vec = np.ascontiguousarray(vec)
         if vec.ndim == 1:
-            vec = vec[:, None]
+            vec = vec.reshape((vec.shape[0], 1))
         elif vec.ndim > 2:
             raise ValueError()
         if vec.shape[0] != self.ncol:
@@ -109,10 +109,30 @@ class RootNode(object):
         self.D_blocks = D_blocks
         self.S_node = S_node
         self.nrows = sum(block.shape[0] for block in self.D_blocks)
+        self.ncols = S_node.ncols
 
     def write_to_stream(self, stream):
+        print 'writing root'
         # We write both D_blocks and the first S_node interleaved
-        1/0
+        write_index_t(stream, len(self.D_blocks) // 2) # order field
+        block_heights = np.asarray(
+            [D.shape[0] for D in self.D_blocks], dtype=index_dtype)
+        print '2*order', len(block_heights), block_heights, index_dtype
+        write_array(stream, block_heights)
+        L, R = self.S_node.children
+        write_index_t(stream, L.nrows)
+        write_index_t(stream, R.nrows)
+        write_index_t(stream, L.ncols)
+        L.write_to_stream(stream)
+        R.write_to_stream(stream)
+        interpolation_blocks = sum([T_and_B for T_and_B in self.S_node.blocks], ())
+        for D, ip_block in zip(self.D_blocks, interpolation_blocks):
+            print 'Wiring D', D.shape[1]
+            write_index_t(stream, D.shape[1])
+            ip_block.write_to_stream(stream)
+            pad128(stream)
+            write_array(stream, D)
+            print 'checkpoint', stream.tell()
 
     def apply(self, x):
         y = self.S_node.apply(x)
@@ -122,6 +142,7 @@ class RootNode(object):
         for block in self.D_blocks:
             m, n = block.shape
             out[i_out:i_out + m] = np.dot(block, y[i_y:i_y + n])
+            print '>>', y[i_y]
             i_out += m
             i_y += n
         return out
@@ -171,7 +192,9 @@ class InnerNode(object):
         L.write_to_stream(stream)
         R.write_to_stream(stream)
         for T_ip, B_ip in self.blocks:
-            1/0
+            T_ip.write_to_stream(stream)
+            B_ip.write_to_stream(stream)
+        print 'exit S'
 
     def apply(self, x):
         # z is the vector containing the contiguous result of the 2 children

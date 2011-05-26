@@ -115,9 +115,14 @@ class RootNode(object):
     def __init__(self, D_blocks, S_node):
         self.D_blocks = [np.asfortranarray(D, dtype=np.double)
                          for D in D_blocks]
+        if len(self.D_blocks) != 2 * len(S_node.blocks):
+            raise ValueError("Wrong number of diagonal blocks w.r.t. S_node")
         self.S_node = S_node
         self.nrows = sum(block.shape[0] for block in self.D_blocks)
         self.ncols = S_node.ncols
+        for D, ip in zip(self.D_blocks, unroll_pairs(self.S_node.blocks)):
+            if D.shape[1] != ip.shape[0]:
+                raise ValueError('Nonconforming matrices')
 
     def write_to_stream(self, stream):
         print 'writing root'
@@ -135,14 +140,11 @@ class RootNode(object):
         R.write_to_stream(stream)
         
         for D, ip_block in zip(self.D_blocks, unroll_pairs(self.S_node.blocks)):
-            if D.shape[1] != ip_block.shape[0]:
-                raise ValueError('Nonconforming matrices')
             print 'Wiring D', D.shape[1]
             write_index_t(stream, D.shape[1])
             ip_block.write_to_stream(stream)
             pad128(stream)
             write_array(stream, D)
-            print 'checkpoint', stream.tell()
 
     def apply(self, x):
         y = self.S_node.apply(x)
@@ -165,9 +167,13 @@ class InterpolationBlock(object):
     def __init__(self, filter, interpolant):
         self.filter = np.ascontiguousarray(filter, dtype=np.int8)
         self.interpolant = np.asfortranarray(interpolant, dtype=np.double)
-        self.shape = (self.interpolant.shape[0], self.filter.shape[0])
-        if self.interpolant.shape[1] != np.sum(self.filter):
-            raise ValueError("interpolant and filter mismatch")
+        n = self.filter.shape[0]
+        k = n - np.sum(self.filter)
+        self.shape = (self.interpolant.shape[0], n)
+        if self.interpolant.shape[1] != n - k:
+            raise ValueError("interpolant.shape[1] != n - k")
+        if self.interpolant.shape[0] != k:
+            raise ValueError("interpolant.shape[0] != k")
         
     def write_to_stream(self, stream):
         write_array(stream, self.filter)
@@ -207,7 +213,7 @@ class InnerNode(object):
         write_index_t(stream, L.ncols)
         L.write_to_stream(stream)
         R.write_to_stream(stream)
-        for T_ip, B_ip in zip(self.blocks):
+        for T_ip, B_ip in self.blocks:
             T_ip.write_to_stream(stream)
             B_ip.write_to_stream(stream)
         print 'exit S'

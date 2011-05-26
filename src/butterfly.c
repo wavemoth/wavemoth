@@ -93,7 +93,7 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
   double tmp_vecs[nvec * (n - k)];
   head = filter_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
   head = skip_padding(head);
-  dgemm_crr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
+  dgemm_rrr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);
   return head;
 }
@@ -185,7 +185,7 @@ static INLINE char *apply_root_block_d(char *head,
   head += sizeof(bfm_index_t);
   head = apply_interpolation_d(head, input, buf, k, n, nvecs);
   head = skip_padding(head);
-  dgemm_crr((double*)head, buf, output, m, nvecs, k, 0.0);
+  dgemm_rrr((double*)head, buf, output, m, nvecs, k, 0.0);
   head += sizeof(double[m * k]);
   return head;
 }
@@ -200,6 +200,8 @@ int bfm_apply_d(char *head, double *x, double *y,
   buffer = (double*)malloc(sizeof(double[ncols * nvecs * 1000]));
   buffer2 = (double*)malloc(sizeof(double[ncols * nvecs * 1000]));
   assert((size_t)head % 16 == 0); /* Ensure data alignment */
+  assert((size_t)x % 16 == 0); /* Ensure data alignment */
+  assert((size_t)y % 16 == 0); /* Ensure data alignment */
   order = ((bfm_index_t*)head)[0];
   assert(order >= 1);
   head += sizeof(bfm_index_t);

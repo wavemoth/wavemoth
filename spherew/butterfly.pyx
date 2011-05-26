@@ -12,6 +12,14 @@ cdef extern from "butterfly.h":
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
 
+cdef extern from "blas.h":
+    void dgemm_crr(double *A, double *X, double *Y,
+                   int32_t m, int32_t n, int32_t k,
+                   double beta)
+    void dgemm_rrr(double *A, double *X, double *Y,
+                   int32_t m, int32_t n, int32_t k,
+                   double beta)
+
 from io import BytesIO
 import numpy as np
 cimport numpy as np
@@ -117,7 +125,7 @@ def unroll_pairs(pairs):
 
 class RootNode(object):
     def __init__(self, D_blocks, S_node):
-        self.D_blocks = [np.asfortranarray(D, dtype=np.double)
+        self.D_blocks = [np.ascontiguousarray(D, dtype=np.double)
                          for D in D_blocks]
         if len(self.D_blocks) != 2 * len(S_node.blocks):
             raise ValueError("Wrong number of diagonal blocks w.r.t. S_node")
@@ -166,7 +174,7 @@ class RootNode(object):
 class InterpolationBlock(object):
     def __init__(self, filter, interpolant):
         self.filter = np.ascontiguousarray(filter, dtype=np.int8)
-        self.interpolant = np.asfortranarray(interpolant, dtype=np.double)
+        self.interpolant = np.ascontiguousarray(interpolant, dtype=np.double)
         n = self.filter.shape[0]
         k = n - np.sum(self.filter)
         self.shape = (self.interpolant.shape[0], n)

@@ -44,7 +44,22 @@ static INLINE void dgemm_crr(double *A, double *X, double *Y,
                              int32_t m, int32_t n, int32_t k,
                              double beta) {
   /* We compute X^T A^T + Y^T, which Fortran sees as X A^T + Y */
-  dgemm('N', 'T', n, m, k, 1.0, X, n, A, m, beta, Y, n);
+  dgemm('N', 'T', n, m, k, 1.0, X, (n > 0) ? n : 1, A, (m > 0) ? m : 1, beta, Y, n);
+}
+
+/*
+Simplified dgemm interfaces. Computes
+
+Y <- A * X + beta * Y
+
+where A, X and Y are row-major.  Y is m-by-n, A is m-by-k,
+X is k-by-n.
+*/
+static INLINE void dgemm_rrr(double *A, double *X, double *Y,
+                             int32_t m, int32_t n, int32_t k,
+                             double beta) {
+  /* We compute X^T A^T + Y^T, which Fortran sees as X A + Y */
+  dgemm('N', 'N', n, m, k, 1.0, X, (n > 0) ? n : 1, A, (k > 0) ? k : 1, beta, Y, n);
 }
 
 #endif

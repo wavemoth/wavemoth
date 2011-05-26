@@ -43,6 +43,8 @@ def configure(conf):
     conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
     conf.env.LINKFLAGS_BLAS = ['-L/opt/intel/mkl/lib/intel64', '-Wl,-R/opt/intel/mkl/lib/intel64/']
 
+    conf.env.LIB_PERFTOOLS = ['profiler']
+
 
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +

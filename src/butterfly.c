@@ -229,6 +229,8 @@ int bfm_apply_d(char *head, double *x, double *y,
     y += block_heights[2 * i + 1] * nvecs;        
     nrows -= block_heights[2 * i + 1] * nvecs;
   }
+  free(buffer);
+  free(buffer2);
   return 0;
 }
 

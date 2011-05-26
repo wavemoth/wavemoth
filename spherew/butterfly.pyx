@@ -58,7 +58,7 @@ cdef class SerializedMatrix:
             free(self.buf)
             self.owns_data = False
 
-    def apply(self, vec, out=None):
+    def apply(self, vec, out=None, repeats=1):
         vec = np.ascontiguousarray(vec, dtype=np.double)
         orig_ndim = vec.ndim
         if vec.ndim == 1:
@@ -72,9 +72,11 @@ cdef class SerializedMatrix:
 
         cdef np.ndarray[double, ndim=2, mode='c'] vec_ = vec
         cdef np.ndarray[double, ndim=2, mode='c'] out_ = out
-            
-        ret = bfm_apply_d(self.buf, <double*>vec_.data,
-                          <double*>out_.data, self.nrow, self.ncol, vec.shape[1])
+
+        cdef int i
+        for i in range(repeats):
+            ret = bfm_apply_d(self.buf, <double*>vec_.data,
+                              <double*>out_.data, self.nrow, self.ncol, vec.shape[1])
         if ret != 0:
             raise ButterflyMatrixError('Error code %d' % ret)
         if orig_ndim == 1:
@@ -205,6 +207,7 @@ class InnerNode(object):
         L, R = children
         for (T_ip, B_ip), lh, rh in zip(blocks, L.block_heights, R.block_heights):
             if not (T_ip.shape[1] == B_ip.shape[1] == lh + rh):
+                print T_ip.shape, B_ip.shape, lh, rh
                 raise ValueError("Nonconforming matrices")
         self.blocks = blocks
         self.ncols = sum(child.ncols for child in children)
@@ -318,11 +321,19 @@ def partition_columns(X, numlevels):
         return (partition_columns(X[:, :hmid], numlevels - 1) +
                 partition_columns(X[:, hmid:], numlevels - 1))
 
-def butterfly_compress(A, min_rows=32, min_cols=32, eps=1e-10):
-    numlevels = min(get_number_of_levels(A.shape[0], min_rows),
-                    get_number_of_levels(A.shape[1], min_cols))
+def butterfly_compress(A, min_rows=16, eps=1e-10):
+    numlevels = get_number_of_levels(A.shape[0], min_rows)
     B_list = partition_columns(A, numlevels)
     diagonal_blocks, S_tree = butterfly_core(B_list, eps)
+    if isinstance(S_tree, IdentityNode):
+        n = S_tree.ncols
+        filter = np.zeros(S_tree.ncols)
+        IP1 = InterpolationBlock(filter, np.zeros((n, 0)))
+        IP2 = InterpolationBlock(np.ones(n), np.zeros((0, n)))
+        I1 = IdentityNode(n)
+        I2 = IdentityNode(0)
+        S_tree = InnerNode([(IP1, IP2)], (I1, I2))
+        diagonal_blocks.append(np.zeros((0, 0)))
     result = RootNode(diagonal_blocks, S_tree)
     return result
 
@@ -330,3 +341,27 @@ def serialize_butterfly_matrix(M):
     data = BytesIO()
     M.write_to_stream(data)
     return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
+
+def benchmark_dgemm_crr(np.ndarray[double, ndim=2, mode='fortran'] A,
+                        np.ndarray[double, ndim=2, mode='c'] X,
+                        np.ndarray[double, ndim=2, mode='c'] Y,
+                        int repeats=0):
+    assert A.shape[1] == X.shape[0]
+    assert A.shape[0] == Y.shape[0]
+    cdef int i
+    for i in range(repeats):
+        dgemm_crr(<double*>A.data, <double*>X.data, <double*>Y.data,
+                  Y.shape[0], Y.shape[1], A.shape[1], 0.0)
+   
+def benchmark_dgemm_rrr(np.ndarray[double, ndim=2, mode='c'] A,
+                        np.ndarray[double, ndim=2, mode='c'] X,
+                        np.ndarray[double, ndim=2, mode='c'] Y,
+                        int repeats=0):
+    assert A.shape[1] == X.shape[0]
+    assert A.shape[0] == Y.shape[0]
+    cdef int i
+    for i in range(repeats):
+        dgemm_rrr(<double*>A.data, <double*>X.data, <double*>Y.data,
+                  Y.shape[0], Y.shape[1], A.shape[1], 0.0)
+
+    

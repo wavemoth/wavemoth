@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname('__file__'), '..'))
                 
 from spherew import *
 from spherew.healpix import *
-from spherew.butterfly import butterfly_compress
+from spherew.butterfly import butterfly_compress, serialize_butterfly_matrix
 import numpy as np
 from numpy import pi, prod
 from cmb.oomatrix import as_matrix
@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 # Some parameters
 #
 eps = 1e-15
-limit = 16
+limit = 32
 
 
 #
@@ -48,16 +48,18 @@ class InnerSumPerM:
         P = compute_normalized_associated_legendre(m, np.arccos(x_grid), lmax, epsilon=1e-30)
         assert x_grid[-1] == 0
 
-        P_even_arr = P[:-1, ::2] # drop equator
-        P_odd_arr = P[:-1, 1::2]
+        self.P_even_arr = P_even_arr = P[:-1, ::2] # drop equator
+        self.P_odd_arr = P_odd_arr = P[:-1, 1::2]
         if compress:
-            self.P_even = butterfly_compress(P_even_arr, min_cols=limit)
-            self.P_odd = butterfly_compress(P_odd_arr, min_cols=limit)
+            self.P_even = butterfly_compress(P_even_arr, min_rows=limit)
+            self.P_odd = butterfly_compress(P_odd_arr, min_rows=limit)
             print 'Compression:', ((self.P_even.size() + self.P_odd.size()) / 
                 (prod(P_even_arr.shape) + prod(P_odd_arr.shape)))
             print 'Ratio in final blocks:', (
                 (self.P_even.S_node.size() + self.P_odd.S_node.size()) /
                 (self.P_even.size() + self.P_odd.size()))
+            self.P_even = serialize_butterfly_matrix(self.P_even)
+            self.P_odd = serialize_butterfly_matrix(self.P_odd)
         else:
             self.P_even = DenseMatrix(P_even_arr)
             self.P_odd = DenseMatrix(P_odd_arr)
@@ -122,13 +124,16 @@ def alm2map(m, a_l, Nside):
 # 8000/4096: 0.0628
 
 
+Nside = 512
+lmax = 2 * Nside#2000
+
 #lmax = 200
 #Nside = 64
 #m = 2
 #lmax = 2000
 #Nside = 1024
-lmax = 1000
-Nside = 512
+#lmax = 1000
+#Nside = 512
 m = 2
 a_l = np.zeros(lmax + 1 - m)
 a_l[3 - m] = 1
@@ -157,15 +162,19 @@ if 0:
     print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
     print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
 
-if 0:
+if 1:
     x = np.cos(get_ring_thetas(Nside))
     x[np.abs(x) < 1e-10] = 0
     xneg = x[x < 0]
     xpos = x[x > 0]
     assert np.allclose(-xneg[::-1], xpos)
-    InnerSumPerM(m, x[x >= 0], lmax)
+    X = InnerSumPerM(m, x[x >= 0], lmax)
+    P_even_arr = X.P_even_arr.copy('F')
+    P_even = X.P_even
+    a_l_even = a_l[::2].copy()
+
     
-if 1:
+if 0:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

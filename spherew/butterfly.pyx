@@ -50,7 +50,7 @@ cdef class SerializedMatrix:
             self.owns_data = False
 
     def apply(self, vec, out=None):
-        vec = np.ascontiguousarray(vec)
+        vec = np.ascontiguousarray(vec, dtype=np.double)
         if vec.ndim == 1:
             vec = vec.reshape((vec.shape[0], 1))
         elif vec.ndim > 2:
@@ -125,14 +125,21 @@ class RootNode(object):
         write_index_t(stream, L.ncols)
         L.write_to_stream(stream)
         R.write_to_stream(stream)
-        interpolation_blocks = sum([T_and_B for T_and_B in self.S_node.blocks], ())
-        for D, ip_block in zip(self.D_blocks, interpolation_blocks):
-            print 'Wiring D', D.shape[1]
-            write_index_t(stream, D.shape[1])
-            ip_block.write_to_stream(stream)
-            pad128(stream)
-            write_array(stream, D)
-            print 'checkpoint', stream.tell()
+        D_it = iter(self.D_blocks)
+        for (T_ip, B_ip), lh, rh in zip(self.S_node.blocks,
+                                        L.block_heights, R.block_heights):
+            if not (T_ip.shape[1] == B_ip.shape[1] == lh + rh):
+                raise ValueError("Nonconforming matrices")
+            for ip_block in (T_ip, B_ip):
+                D = next(D_it)
+                if D.shape[1] != ip_block.shape[0]:
+                    raise ValueError('Nonconforming matrices')
+                print 'Wiring D', D.shape[1]
+                write_index_t(stream, D.shape[1])
+                ip_block.write_to_stream(stream)
+                pad128(stream)
+                write_array(stream, D)
+                print 'checkpoint', stream.tell()
 
     def apply(self, x):
         y = self.S_node.apply(x)
@@ -156,6 +163,8 @@ class InterpolationBlock(object):
         self.filter = np.ascontiguousarray(filter, dtype=np.int8)
         self.interpolant = np.asfortranarray(interpolant, dtype=np.double)
         self.shape = (self.interpolant.shape[0], self.filter.shape[0])
+        if self.interpolant.shape[1] != np.sum(self.filter):
+            raise ValueError("interpolant and filter mismatch")
         
     def write_to_stream(self, stream):
         write_array(stream, self.filter)
@@ -191,7 +200,9 @@ class InnerNode(object):
         write_index_t(stream, L.ncols)
         L.write_to_stream(stream)
         R.write_to_stream(stream)
-        for T_ip, B_ip in self.blocks:
+        for (T_ip, B_ip), lh, rh in zip(self.blocks, L.block_heights, R.block_heights):
+            if not (T_ip.shape[1] == B_ip.shape[1] == lh + rh):
+                raise ValueError("Nonconforming matrices")
             T_ip.write_to_stream(stream)
             B_ip.write_to_stream(stream)
         print 'exit S'

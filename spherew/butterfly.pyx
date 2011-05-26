@@ -39,10 +39,10 @@ cdef class SerializedMatrix:
     cdef char *buf
     cdef bint owns_data
     cdef object matrixdata
-    cdef int nrow, ncol
+    cdef public int nrows, ncols
     cdef size_t buflen
     
-    def __cinit__(self, bytes matrixdata, bfm_index_t nrow, bfm_index_t ncol):
+    def __cinit__(self, bytes matrixdata, bfm_index_t nrows, bfm_index_t ncols):
         self.owns_data = <Py_ssize_t><char*>matrixdata % 16 != 0
         if self.owns_data:
             self.buf = <char*>memalign(16, len(matrixdata))
@@ -52,8 +52,8 @@ cdef class SerializedMatrix:
             self.buf = <char*>matrixdata
             self.matrixdata = matrixdata
         self.buflen = len(matrixdata)
-        self.nrow = nrow
-        self.ncol = ncol
+        self.nrows = nrows
+        self.ncols = ncols
 
     def __dealloc__(self):
         if self.owns_data:
@@ -62,7 +62,7 @@ cdef class SerializedMatrix:
 
     def __reduce__(self):
         matrixdata = PyBytes_FromStringAndSize(self.buf, self.buflen)
-        return (SerializedMatrix, (matrixdata, self.nrow, self.ncol))
+        return (SerializedMatrix, (matrixdata, self.nrows, self.ncols))
 
     def apply(self, vec, out=None, repeats=1):
         vec = np.ascontiguousarray(vec, dtype=np.double)
@@ -71,10 +71,10 @@ cdef class SerializedMatrix:
             vec = vec.reshape((vec.shape[0], 1))
         elif vec.ndim > 2:
             raise ValueError()
-        if vec.shape[0] != self.ncol:
+        if vec.shape[0] != self.ncols:
             raise ValueError("Matrix does not conform to vector")
         if out is None:
-            out = np.zeros((self.nrow, vec.shape[1]), dtype=np.double)
+            out = np.zeros((self.nrows, vec.shape[1]), dtype=np.double)
 
         cdef np.ndarray[double, ndim=2, mode='c'] vec_ = vec
         cdef np.ndarray[double, ndim=2, mode='c'] out_ = out
@@ -82,7 +82,7 @@ cdef class SerializedMatrix:
         cdef int i
         for i in range(repeats):
             ret = bfm_apply_d(self.buf, <double*>vec_.data,
-                              <double*>out_.data, self.nrow, self.ncol, vec.shape[1])
+                              <double*>out_.data, self.nrows, self.ncols, vec.shape[1])
         if ret != 0:
             raise ButterflyMatrixError('Error code %d' % ret)
         if orig_ndim == 1:

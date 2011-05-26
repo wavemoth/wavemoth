@@ -85,7 +85,6 @@ def test_compressed_application3():
     # k = 4, n = 6
     filter = np.array([False, False, True, False, True, False])
     s = np.arange((4 * 2)).reshape(4, 2)
-    print filter.shape, s.shape
     IP2 = InterpolationBlock(filter, s)
     S2 = InnerNode([(IP2, IP2), (IP2, IP2)], (S1, S1))
     # Root
@@ -96,7 +95,6 @@ def test_compressed_application3():
     x = np.arange(8)
     y = C.apply(x)
     y2 = R.apply(x)
-    print zip(y[:, 0], y2)
     yield assert_almost_equal, y[:, 0], y2
 
 

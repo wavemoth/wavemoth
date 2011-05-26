@@ -125,12 +125,10 @@ class RootNode(object):
                 raise ValueError('Nonconforming matrices')
 
     def write_to_stream(self, stream):
-        print 'writing root'
         # We write both D_blocks and the first S_node interleaved
         write_index_t(stream, len(self.D_blocks) // 2) # order field
         block_heights = np.asarray(
             [D.shape[0] for D in self.D_blocks], dtype=index_dtype)
-        print '2*order', len(block_heights), block_heights, index_dtype
         write_array(stream, block_heights)
         L, R = self.S_node.children
         write_index_t(stream, L.nrows)
@@ -140,7 +138,6 @@ class RootNode(object):
         R.write_to_stream(stream)
         
         for D, ip_block in zip(self.D_blocks, unroll_pairs(self.S_node.blocks)):
-            print 'Wiring D', D.shape[1]
             write_index_t(stream, D.shape[1])
             ip_block.write_to_stream(stream)
             pad128(stream)
@@ -154,7 +151,6 @@ class RootNode(object):
         for block in self.D_blocks:
             m, n = block.shape
             out[i_out:i_out + m] = np.dot(block, y[i_y:i_y + n])
-            print '>>', y[i_y]
             i_out += m
             i_y += n
         return out
@@ -216,7 +212,6 @@ class InnerNode(object):
         for T_ip, B_ip in self.blocks:
             T_ip.write_to_stream(stream)
             B_ip.write_to_stream(stream)
-        print 'exit S'
 
     def apply(self, x):
         # z is the vector containing the contiguous result of the 2 children

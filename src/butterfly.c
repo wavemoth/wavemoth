@@ -11,7 +11,6 @@ static INLINE char *skip_padding(char *ptr) {
   if (m == 0) {
     return ptr;
   } else { 
-    printf("Skipping %d bytes\n", 16 - m);
     return ptr + 16 - m;
   }
 }
@@ -83,7 +82,6 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
   double tmp_vecs[nvec * (n - k)];
   head = filter_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
   head = skip_padding(head);
-  printf("-- %d %d\n", k, n);
   dgemm_crr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);
   return head;
@@ -111,7 +109,6 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
   bfm_index_t nrows_second = ((bfm_index_t*)head)[2 * order + 1];
   bfm_index_t col_split = ((bfm_index_t*)head)[2 * order + 2];
   head += sizeof(bfm_index_t[2 * order + 3]);
-  printf("RECURSE %d \n", order);
   if (order == 1) {
     /* Parse the two leaf node identity matrices */
     *out_block_widths_first = (bfm_index_t*) head;
@@ -121,20 +118,17 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
     *data_from_first = input;
     *data_from_second = *data_from_first + nrows_first * nvecs;
   } else {
-    printf("BODY\n");
     *data_from_first = output;
     /* Recurse to sub-nodes. */
     *out_block_widths_first = (bfm_index_t*) head;
     head = apply_butterfly_node_d(head, order / 2, input, *data_from_first, buffer2, nrows_first,
                                   col_split, nvecs);
-    printf("MID\n");
     input += col_split * nvecs;
     *data_from_second = *data_from_first + nrows_first * nvecs;
     *out_block_widths_second = (bfm_index_t*) head;
     head = apply_butterfly_node_d(head, order / 2, input, *data_from_second, buffer2, nrows_second,
                                   ncols - col_split, nvecs);
   }
-  printf("DONE RECURSE %d \n", order);
   return head;
 }
 
@@ -180,16 +174,13 @@ static INLINE char *apply_root_block_d(char *head,
   head += sizeof(bfm_index_t);
   head = apply_interpolation_d(head, input, buf, k, n, nvecs);
   head = skip_padding(head);
-  printf("> %f %d %d %d\n", buf[0], m, nvecs, k);
   dgemm_crr((double*)head, buf, output, m, nvecs, k, 0.0);
-  printf("++ %f %f\n", output[0], output[1]);
   head += sizeof(double[m * k]);
   return head;
 }
 
 int bfm_apply_d(char *head, double *x, double *y,
                 bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs) {
-  char *data = head;
   bfm_index_t order, *block_heights, *block_widths_first, *block_widths_second;
   double *data_from_first, *data_from_second;
   bfm_index_t i;
@@ -217,14 +208,11 @@ int bfm_apply_d(char *head, double *x, double *y,
     head = apply_root_block_d(head, in_buf, y, block_heights[2 * i], n, nvecs);
     y += block_heights[2 * i] * nvecs;
     nrows -= block_heights[2 * i] * nvecs;
-    printf("checkpoint %ld %d\n", (size_t)(head - data), nrows);
     /* B_ip and B_k */
     head = apply_root_block_d(head, in_buf, y, block_heights[2 * i + 1], n, nvecs);
     y += block_heights[2 * i + 1] * nvecs;        
     nrows -= block_heights[2 * i + 1] * nvecs;
-    printf("checkpoint %ld %d\n", (size_t)(head - data), nrows);
   }
-  printf("DONE\n");
   return 0;
 }
 

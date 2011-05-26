@@ -70,7 +70,34 @@ def test_compressed_application2():
     y3 = R.apply(x)
     yield assert_almost_equal, np.vstack([y2, y2]), y
     yield assert_almost_equal, np.vstack([y2, y2]), y3[:, None]
-    yield assert_almost_equal, np.vstack([y2, y2]), y
+
+def test_compressed_application3():
+    "Deeper tree"
+
+    # Level 1
+    # k = 3, n = 4
+    I = IdentityNode(2)
+    s = np.asarray([[2], [3], [4]])
+    filter = np.array([False, False, True, False])
+    IP1 = InterpolationBlock(filter, s)
+    S1 = InnerNode([(IP1, IP1)], (I, I))
+    # Level 2
+    # k = 4, n = 6
+    filter = np.array([False, False, True, False, True, False])
+    s = np.arange((4 * 2)).reshape(4, 2)
+    print filter.shape, s.shape
+    IP2 = InterpolationBlock(filter, s)
+    S2 = InnerNode([(IP2, IP2), (IP2, IP2)], (S1, S1))
+    # Root
+    d = (np.eye(4) * 2)
+    R = RootNode([d, 2 * d, 3 * d, 4 * d], S2)
+    # Do computation both in Python and C and compare
+    C = serialize(R)
+    x = np.arange(8)
+    y = C.apply(x)
+    y2 = R.apply(x)
+    print zip(y[:, 0], y2)
+    yield assert_almost_equal, y[:, 0], y2
 
 
 def test_butterfly_compressed():

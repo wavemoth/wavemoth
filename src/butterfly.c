@@ -162,10 +162,10 @@ static char *apply_butterfly_node_d(char *head, bfm_index_t order, double *input
     data_from_second += block_widths_second[i] * nvecs;
       
     /* T_ip and T_k */
-    head = apply_interpolation_d(head, data_from_first, output, block_heights[2 * i], n, nvecs);
+    head = apply_interpolation_d(head, in_buf, output, block_heights[2 * i], n, nvecs);
     output += block_heights[2 * i] * nvecs;
     /* B_ip and B_k */
-    head = apply_interpolation_d(head, data_from_first, output, block_heights[2 * i + 1], n, nvecs);
+    head = apply_interpolation_d(head, in_buf, output, block_heights[2 * i + 1], n, nvecs);
     output += block_heights[2 * i + 1] * nvecs;        
   }
   return head;

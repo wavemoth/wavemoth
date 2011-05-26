@@ -34,3 +34,5 @@ dist
 *.o
 joblib
 bin/*
+*.prof
+jobstore

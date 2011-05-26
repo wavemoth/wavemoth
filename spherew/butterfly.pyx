@@ -104,6 +104,13 @@ class IdentityNode(object):
     def size(self):
         return 0
 
+def unroll_pairs(pairs):
+    result = []
+    for a, b in pairs:
+        result.append(a)
+        result.append(b)
+    return result
+
 class RootNode(object):
     def __init__(self, D_blocks, S_node):
         self.D_blocks = [np.asfortranarray(D, dtype=np.double)
@@ -126,21 +133,16 @@ class RootNode(object):
         write_index_t(stream, L.ncols)
         L.write_to_stream(stream)
         R.write_to_stream(stream)
-        D_it = iter(self.D_blocks)
-        for (T_ip, B_ip), lh, rh in zip(self.S_node.blocks,
-                                        L.block_heights, R.block_heights):
-            if not (T_ip.shape[1] == B_ip.shape[1] == lh + rh):
-                raise ValueError("Nonconforming matrices")
-            for ip_block in (T_ip, B_ip):
-                D = next(D_it)
-                if D.shape[1] != ip_block.shape[0]:
-                    raise ValueError('Nonconforming matrices')
-                print 'Wiring D', D.shape[1]
-                write_index_t(stream, D.shape[1])
-                ip_block.write_to_stream(stream)
-                pad128(stream)
-                write_array(stream, D)
-                print 'checkpoint', stream.tell()
+        
+        for D, ip_block in zip(self.D_blocks, unroll_pairs(self.S_node.blocks)):
+            if D.shape[1] != ip_block.shape[0]:
+                raise ValueError('Nonconforming matrices')
+            print 'Wiring D', D.shape[1]
+            write_index_t(stream, D.shape[1])
+            ip_block.write_to_stream(stream)
+            pad128(stream)
+            write_array(stream, D)
+            print 'checkpoint', stream.tell()
 
     def apply(self, x):
         y = self.S_node.apply(x)
@@ -186,6 +188,10 @@ class InnerNode(object):
             raise ValueError("len(blocks) not a power of 2")
         if len(children) != 2:
             raise ValueError("len(children) != 2")
+        L, R = children
+        for (T_ip, B_ip), lh, rh in zip(blocks, L.block_heights, R.block_heights):
+            if not (T_ip.shape[1] == B_ip.shape[1] == lh + rh):
+                raise ValueError("Nonconforming matrices")
         self.blocks = blocks
         self.ncols = sum(child.ncols for child in children)
         self.children = children
@@ -201,9 +207,7 @@ class InnerNode(object):
         write_index_t(stream, L.ncols)
         L.write_to_stream(stream)
         R.write_to_stream(stream)
-        for (T_ip, B_ip), lh, rh in zip(self.blocks, L.block_heights, R.block_heights):
-            if not (T_ip.shape[1] == B_ip.shape[1] == lh + rh):
-                raise ValueError("Nonconforming matrices")
+        for T_ip, B_ip in zip(self.blocks):
             T_ip.write_to_stream(stream)
             B_ip.write_to_stream(stream)
         print 'exit S'

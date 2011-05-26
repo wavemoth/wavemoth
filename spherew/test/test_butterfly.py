@@ -7,6 +7,8 @@ from cmb import as_matrix
 from nose.tools import eq_, ok_, assert_raises
 from numpy.testing import assert_almost_equal
 
+from cPickle import dumps, loads
+
 from ..butterfly import *
 from ..interpolative_decomposition import interpolative_decomposition
 from ..healpix import get_ring_thetas
@@ -19,6 +21,14 @@ def get_test_matrix():
     thetas = get_ring_thetas(Nside)[2*Nside:]
     P = compute_normalized_associated_legendre(m, thetas, lmax)
     return P
+
+def test_pickle_compressed():
+    P = get_test_matrix()
+    M = butterfly_compress(P)
+    C = serialize_butterfly_matrix(M) 
+    a_l = ((-1)**np.arange(P.shape[1])).astype(np.double)
+    yield assert_almost_equal, C.apply(a_l), loads(dumps(C)).apply(a_l)
+    
 
 def test_permutations_to_filter():
     yield eq_, list(permutations_to_filter([2, 3, 5], [0, 4])), [1, 0, 0, 0, 1]

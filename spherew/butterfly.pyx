@@ -40,6 +40,7 @@ cdef class SerializedMatrix:
     cdef bint owns_data
     cdef object matrixdata
     cdef int nrow, ncol
+    cdef size_t buflen
     
     def __cinit__(self, bytes matrixdata, bfm_index_t nrow, bfm_index_t ncol):
         self.owns_data = <Py_ssize_t><char*>matrixdata % 16 != 0
@@ -50,6 +51,7 @@ cdef class SerializedMatrix:
         else:
             self.buf = <char*>matrixdata
             self.matrixdata = matrixdata
+        self.buflen = len(matrixdata)
         self.nrow = nrow
         self.ncol = ncol
 
@@ -57,6 +59,10 @@ cdef class SerializedMatrix:
         if self.owns_data:
             free(self.buf)
             self.owns_data = False
+
+    def __reduce__(self):
+        matrixdata = PyBytes_FromStringAndSize(self.buf, self.buflen)
+        return (SerializedMatrix, (matrixdata, self.nrow, self.ncol))
 
     def apply(self, vec, out=None, repeats=1):
         vec = np.ascontiguousarray(vec, dtype=np.double)

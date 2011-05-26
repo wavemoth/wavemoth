@@ -67,6 +67,9 @@ def test_compressed_application2():
     x = np.ones(4)
     y = C.apply(x)
     y2 = np.dot(np.dot(d, s), x[filter][:, None]) + np.dot(d, x[~filter][:, None])
+    y3 = R.apply(x)
+    yield assert_almost_equal, np.vstack([y2, y2]), y
+    yield assert_almost_equal, np.vstack([y2, y2]), y3[:, None]
     yield assert_almost_equal, np.vstack([y2, y2]), y
 
 

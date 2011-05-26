@@ -12,6 +12,7 @@ cdef extern from "butterfly.h":
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
 
+from io import BytesIO
 import numpy as np
 cimport numpy as np
 from interpolative_decomposition import sparse_interpolative_decomposition
@@ -51,6 +52,7 @@ cdef class SerializedMatrix:
 
     def apply(self, vec, out=None):
         vec = np.ascontiguousarray(vec, dtype=np.double)
+        orig_ndim = vec.ndim
         if vec.ndim == 1:
             vec = vec.reshape((vec.shape[0], 1))
         elif vec.ndim > 2:
@@ -67,6 +69,8 @@ cdef class SerializedMatrix:
                           <double*>out_.data, self.nrow, self.ncol, vec.shape[1])
         if ret != 0:
             raise ButterflyMatrixError('Error code %d' % ret)
+        if orig_ndim == 1:
+            out = out[:, 0]
         return out
 
 
@@ -313,3 +317,8 @@ def butterfly_compress(A, min_rows=32, min_cols=32, eps=1e-10):
     diagonal_blocks, S_tree = butterfly_core(B_list, eps)
     result = RootNode(diagonal_blocks, S_tree)
     return result
+
+def serialize_butterfly_matrix(M):
+    data = BytesIO()
+    M.write_to_stream(data)
+    return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)

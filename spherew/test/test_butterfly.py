@@ -11,21 +11,14 @@ from ..butterfly import *
 from ..interpolative_decomposition import interpolative_decomposition
 from ..healpix import get_ring_thetas
 from ..legendre import compute_normalized_associated_legendre
-from io import BytesIO
 
 def get_test_matrix():
     m = 3
     lmax = 200
-    Nside = 128
+    Nside = 512
     thetas = get_ring_thetas(Nside)[2*Nside:]
     P = compute_normalized_associated_legendre(m, thetas, lmax)
     return P
-
-def serialize(M):
-    data = BytesIO()
-    M.write_to_stream(data)
-    return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
-
 
 def test_permutations_to_filter():
     yield eq_, list(permutations_to_filter([2, 3, 5], [0, 4])), [1, 0, 0, 0, 1]
@@ -49,9 +42,9 @@ def test_compressed_application():
     IP = InterpolationBlock([0, 0, 0, 0], np.zeros((4, 0)))
     S = InnerNode([(IP, IP)], (I, I))
     R = RootNode([np.eye(4) * 2, np.eye(4) * 3], S)
-    C = serialize(R)
+    C = serialize_butterfly_matrix(R)
     y = C.apply(np.arange(4))
-    yield assert_almost_equal, y[:, 0], [0, 2, 4, 6, 0, 3, 6, 9]
+    yield assert_almost_equal, y, [0, 2, 4, 6, 0, 3, 6, 9]
 
 def test_compressed_application2():
     "Manually constructed data, one interpolation matrix"
@@ -63,13 +56,13 @@ def test_compressed_application2():
     S = InnerNode([(IP, IP)], (I, I))
     d = (np.eye(4) * 2)[:, :3]
     R = RootNode([d, d], S)
-    C = serialize(R)
+    C = serialize_butterfly_matrix(R)
     x = np.ones(4)
     y = C.apply(x)
-    y2 = np.dot(np.dot(d, s), x[filter][:, None]) + np.dot(d, x[~filter][:, None])
+    y2 = np.dot(np.dot(d, s), x[filter]) + np.dot(d, x[~filter])
     y3 = R.apply(x)
-    yield assert_almost_equal, np.vstack([y2, y2]), y
-    yield assert_almost_equal, np.vstack([y2, y2]), y3[:, None]
+    yield assert_almost_equal, np.hstack([y2, y2]), y
+    yield assert_almost_equal, np.hstack([y2, y2]), y3
 
 def test_compressed_application3():
     "Deeper tree"
@@ -91,11 +84,11 @@ def test_compressed_application3():
     d = (np.eye(4) * 2)
     R = RootNode([d, 2 * d, 3 * d, 4 * d], S2)
     # Do computation both in Python and C and compare
-    C = serialize(R)
+    C = serialize_butterfly_matrix(R)
     x = np.arange(8)
     y = C.apply(x)
     y2 = R.apply(x)
-    yield assert_almost_equal, y[:, 0], y2
+    yield assert_almost_equal, y, y2
 
 
 def test_butterfly_compressed():
@@ -104,8 +97,8 @@ def test_butterfly_compressed():
     a_l = ((-1)**np.arange(P.shape[1])).astype(np.double)
 
     M = butterfly_compress(P)
-    MC = serialize(M)
+    MC = serialize_butterfly_matrix(M)
     y1 = MC.apply(a_l)
     y2 = M.apply(a_l)
     y3 = np.dot(P, a_l)
-    yield assert_almost_equal, y1[:, 0], y2
+    yield assert_almost_equal, y1, y2

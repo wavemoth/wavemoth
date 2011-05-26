@@ -1,9 +1,11 @@
+#include <stdlib.h>
+#include <stdio.h>
+#undef NDEBUG
+#include <assert.h>
+
 #include "butterfly.h"
-#include "stdio.h"
 #include "blas.h"
 
-#undef NDEBUG
-#include "assert.h"
 
 static void print_array(char *msg, double* arr, bfm_index_t len) {
   bfm_index_t i;
@@ -193,7 +195,10 @@ int bfm_apply_d(char *head, double *x, double *y,
   bfm_index_t order, *block_heights, *block_widths_first, *block_widths_second;
   double *data_from_first, *data_from_second;
   bfm_index_t i;
-  double buffer[nrows * nvecs * 1000], buffer2[nrows * nvecs * 1000]; /* TODO: Make sure this is sufficient. */
+  double *buffer, *buffer2;
+ /* TODO: Make sure this is sufficient. */
+  buffer = (double*)malloc(sizeof(double[ncols * nvecs * 1000]));
+  buffer2 = (double*)malloc(sizeof(double[ncols * nvecs * 1000]));
   assert((size_t)head % 16 == 0); /* Ensure data alignment */
   order = ((bfm_index_t*)head)[0];
   assert(order >= 1);

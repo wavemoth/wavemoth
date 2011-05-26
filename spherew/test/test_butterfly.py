@@ -43,6 +43,33 @@ def test_butterfly_apply():
     y2 = np.dot(P, a_l)
     yield assert_almost_equal, y1, y2
     
+def test_compressed_application():
+    "Manually constructed data, no interpolation matrix"
+    I = IdentityNode(2)
+    IP = InterpolationBlock([0, 0, 0, 0], np.zeros((4, 0)))
+    S = InnerNode([(IP, IP)], (I, I))
+    R = RootNode([np.eye(4) * 2, np.eye(4) * 3], S)
+    C = serialize(R)
+    y = C.apply(np.arange(4))
+    yield assert_almost_equal, y[:, 0], [0, 2, 4, 6, 0, 3, 6, 9]
+
+def test_compressed_application2():
+    "Manually constructed data, one interpolation matrix"
+    # k = 3, n = 4
+    I = IdentityNode(2)
+    s = np.asarray([[2], [3], [4]])
+    filter = np.array([False, False, True, False])
+    IP = InterpolationBlock(filter, s)
+    S = InnerNode([(IP, IP)], (I, I))
+    d = (np.eye(4) * 2)[:, :3]
+    R = RootNode([d, d], S)
+    C = serialize(R)
+    x = np.ones(4)
+    y = C.apply(x)
+    y2 = np.dot(np.dot(d, s), x[filter][:, None]) + np.dot(d, x[~filter][:, None])
+    yield assert_almost_equal, np.vstack([y2, y2]), y
+
+
 def test_butterfly_compressed():
     P = get_test_matrix()
     a_l = ((-1)**np.arange(P.shape[1])).astype(np.double)

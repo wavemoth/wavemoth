@@ -66,7 +66,7 @@ static void stack_vectors_d(double *a, bfm_index_t alen, double *b, bfm_index_t 
     output[i] = a[i];
   }
   for (i = 0; i != blen; ++i) {
-    output[i] = b[i];
+    output[alen + i] = b[i];
   }
 }
 
@@ -83,7 +83,8 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
   double tmp_vecs[nvec * (n - k)];
   head = filter_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
   head = skip_padding(head);
-  dgemm_crr((double*)head, tmp_vecs, output, k, nvec, n - k, 0.0);
+  printf("-- %d %d\n", k, n);
+  dgemm_crr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);
   return head;
 }
@@ -179,8 +180,9 @@ static INLINE char *apply_root_block_d(char *head,
   head += sizeof(bfm_index_t);
   head = apply_interpolation_d(head, input, buf, k, n, nvecs);
   head = skip_padding(head);
-  printf("> %f \n", buf[0]);
+  printf("> %f %d %d %d\n", buf[0], m, nvecs, k);
   dgemm_crr((double*)head, buf, output, m, nvecs, k, 0.0);
+  printf("++ %f %f\n", output[0], output[1]);
   head += sizeof(double[m * k]);
   return head;
 }
@@ -194,7 +196,7 @@ int bfm_apply_d(char *head, double *x, double *y,
   double buffer[nrows * nvecs * 1000], buffer2[nrows * nvecs * 1000]; /* TODO: Make sure this is sufficient. */
   assert((size_t)head % 16 == 0); /* Ensure data alignment */
   order = ((bfm_index_t*)head)[0];
-  assert(order > 1);
+  assert(order >= 1);
   head += sizeof(bfm_index_t);
   head = recurse_d(head, order, x, ncols, nvecs, buffer, buffer2,
                    &data_from_first, &data_from_second, 

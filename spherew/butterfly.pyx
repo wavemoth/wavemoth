@@ -56,7 +56,7 @@ cdef class SerializedMatrix:
         elif vec.ndim > 2:
             raise ValueError()
         if vec.shape[0] != self.ncol:
-            raise ValueError()
+            raise ValueError("Matrix does not conform to vector")
         if out is None:
             out = np.zeros((self.nrow, vec.shape[1]), dtype=np.double)
 
@@ -106,7 +106,8 @@ class IdentityNode(object):
 
 class RootNode(object):
     def __init__(self, D_blocks, S_node):
-        self.D_blocks = D_blocks
+        self.D_blocks = [np.asfortranarray(D, dtype=np.double)
+                         for D in D_blocks]
         self.S_node = S_node
         self.nrows = sum(block.shape[0] for block in self.D_blocks)
         self.ncols = S_node.ncols

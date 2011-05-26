@@ -92,6 +92,7 @@ columns "n" is passed in from the outside. The data is:
 typedef int32_t bfm_index_t;
 
 
+
 /*!
 Multiply a butterfly matrix with a vector on the right side:
 
@@ -104,6 +105,26 @@ The previous contents of y is erased. Both \c x and \c y has
 */
 int bfm_apply_d(char *matrixdata, double *x, double *y,
                 bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs);
+
+
+/*
+PRIVATE ROUTINES
+
+These routines are exposed for benchmarking and testing purposes;
+they should be considered private and subject to change. They
+prioritize speed over a safe interface.
+*/
+
+/*!
+Split one vector into two vectors, using the filter.
+The filter is in a compressed format, and contains a termination
+signal to indicate the lengths of the vectors.
+
+Returns the pointer after the last character consumed from the
+filter.
+*/
+char *bfm_filter_vector_d(char *filter, double *input,
+                          double *output_a, double *output_b);
 
 
 #endif

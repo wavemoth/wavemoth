@@ -5,6 +5,15 @@
 #undef NDEBUG
 #include "assert.h"
 
+static void print_array(char *msg, double* arr, bfm_index_t len) {
+  bfm_index_t i;
+  printf("%s ", msg);
+  for (i = 0; i != len; ++i) {
+    printf("%e ", arr[i]);
+  }
+  printf("\n");
+}
+
 
 static INLINE char *skip_padding(char *ptr) {
   size_t m = (size_t)ptr % 16;

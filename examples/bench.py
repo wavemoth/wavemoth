@@ -11,13 +11,14 @@ from spherew.butterfly import *
 from spherew.healpix import *
 from spherew.benchmark_utils import *
 from spherew import *
+from cPickle import dumps, loads
 
 memory = Memory('jobstore')
 
-Nside = 512
+Nside = 1024
 min_rows = 32
 lmax = 2 * Nside
-mstride = 10
+mstride = 100
 
 @memory.cache
 def get_MC_M(mmax, lmax, Nside, stride=1):
@@ -42,17 +43,37 @@ for MC in MC_list:
     a_l_list.append((-1)**np.arange(2 * MC.ncols).reshape((MC.ncols, 2)).astype(np.double))
     out_list.append(np.zeros((MC.nrows, 2)))
 
-J = 1
+J = 10
 
-with benchmark('MC', J):
-    for a_l, MC, out in zip(a_l_list, MC_list, out_list):
-        MC.apply(a_l, out=out)
+nvecs = 1000
+MC = MC_list[0]
+a_l = np.zeros((MC.ncols, nvecs))
+out = np.zeros((MC.nrows, nvecs))
 
-with benchmark('M', J):
-    for a_l, M, out in zip(a_l_list, M_list, out_list):
-        M.apply(a_l, out=out)
+with benchmark('MCmulti', J):
+    MC.apply(a_l, out, repeats=J)
 
-#print 'Difference', np.linalg.norm(MC.apply(a_l) - M.apply(a_l))
+J = 1000
+
+a_l = np.zeros((MC.ncols, 2))
+out = np.zeros((MC.nrows, 2))
+with benchmark('MCdual', J):
+    MC.apply(a_l, out, repeats=J)
+
+if 0:
+    with benchmark('MC', J):
+        for i in range(J * mstride):
+            for a_l, MC, out in zip(a_l_list, MC_list, out_list):
+                    MC.apply(a_l, out=out)
+
+    with benchmark('M', J):
+        for j in range(J * mstride):
+            for a_l, M, out in zip(a_l_list, M_list, out_list):
+                M.apply(a_l, out=out)
+
+    y0 = M_list[0].apply(a_l_list[0])
+    y1 = MC_list[0].apply(a_l_list[0])
+    print 'Difference', np.linalg.norm(y1 - y0) / np.linalg.norm(y0)
 
 
 #J = 1000

@@ -45,6 +45,7 @@ def configure(conf):
 
     conf.env.LIB_PERFTOOLS = ['profiler']
 
+    conf.env.LIB_FFTW3 = ['fftw3']
 
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +
@@ -66,11 +67,16 @@ def build(bld):
         use='NUMPY',
         features='c pyext cshlib')
 
-
     bld(source=(['spherew/butterfly.pyx', 'src/butterfly.c']),
         includes=['src'],
         target='butterfly',
         use='NUMPY BLAS',
+        features='c pyext cshlib')
+
+    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c']),
+        includes=['src'],
+        target='fastsht',
+        use='NUMPY BLAS FFTW3',
         features='c pyext cshlib')
 
     bld(source=(['bench/matmulbench.c']),
@@ -80,5 +86,7 @@ def build(bld):
         libs=['math'],
         use='LIBC BLAS',
         features='c cprogram')
+
+
 
 # vim:ft=python

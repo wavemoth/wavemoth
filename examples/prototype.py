@@ -94,27 +94,33 @@ def alm2map(m, a_l, Nside):
     g = al2gmtheta(m, a_l, theta)
     Npix = 12 * Nside**2
     map = np.zeros(Npix)
-    g_m_theta = np.zeros((4 * Nside - 1, 4 * Nside), dtype=np.complex)
+    g_m_theta = np.zeros((4 * Nside - 1, lmax + 1), dtype=np.complex)
     print g_m_theta.shape, g.shape
 #    plt.clf()
 #    plt.plot(g.real)
     g_m_theta[:, m] = g
 
-    idx = 0
-
-    phi0_arr = get_ring_phi0(Nside)
-
-    for i, (rn, phi0) in enumerate(zip(get_ring_pixel_counts(Nside), phi0_arr)):
-        g_m = g_m_theta[i, :rn // 2 + 1]
-        # Phase-shift to phi_0
-        g_m = g_m * np.exp(1j * m * phi0)
-        ring = np.fft.irfft(g_m, rn)
-        ring *= rn # see np.fft convention
-    #    print ring
-        map[idx:idx + rn] = ring
-        idx += rn
-
+    from spherew.fastsht import ShtPlan
+    fake_input = np.zeros(1, dtype=np.double)
+    g_m_theta = g_m_theta.reshape((4 * Nside - 1) * (lmax + 1)).view(np.double)
+    plan = ShtPlan(Nside, lmax, lmax, fake_input, map, g_m_theta, 'mmajor')
+    plan.perform_backward_ffts(0, 4 * Nside - 1)
     return map
+
+##     else:
+##         idx = 0
+##         phi0_arr = get_ring_phi0(Nside)
+##         for i, (rn, phi0) in enumerate(zip(get_ring_pixel_counts(Nside), phi0_arr)):
+##             g_m = g_m_theta[i, :rn // 2 + 1]
+##             # Phase-shift to phi_0
+## #            g_m = g_m * np.exp(1j * m * phi0)
+##             ring = np.fft.irfft(g_m, rn)
+##             ring *= rn # see np.fft convention
+##         #    print ring
+##             map[idx:idx + rn] = ring
+##             idx += rn
+
+##     return map
 
 
 #
@@ -124,7 +130,7 @@ def alm2map(m, a_l, Nside):
 # 8000/4096: 0.0628
 
 
-Nside = 512
+Nside = 8
 lmax = 2 * Nside#2000
 
 #lmax = 200
@@ -134,10 +140,10 @@ lmax = 2 * Nside#2000
 #Nside = 1024
 #lmax = 1000
 #Nside = 512
-m = 2
+m = 1
 a_l = np.zeros(lmax + 1 - m)
-a_l[3 - m] = 1
-a_l[4 - m] = -1
+a_l[1 - m] = 1
+#a_l[4 - m] = -1
 #a_l[15] = 0.1
 #a_l = (-1) ** np.zeros(lmax + 1)
 
@@ -162,7 +168,7 @@ if 0:
     print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
     print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
 
-if 1:
+if 0:
     x = np.cos(get_ring_thetas(Nside))
     x[np.abs(x) < 1e-10] = 0
     xneg = x[x < 0]
@@ -174,16 +180,16 @@ if 1:
     a_l_even = a_l[::2].copy()
 
     
-if 0:
+if 1:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map
-    #pixel_sphere_map(map).plot(title='fast')
+    pixel_sphere_map(map).plot(title='fast')
 
     alm_fid = harmonic_sphere_map(0, lmin=0, lmax=lmax, is_complex=False)
     assert m != 0
     for l in range(m, lmax + 1):
         alm_fid[l**2 + l + m] = np.sqrt(2) * a_l[l - m] # real is repacked
     print 'Diff', np.linalg.norm(map - alm_fid.to_pixel(Nside))
-    #alm_fid.to_pixel(Nside).plot(title='fiducial')
+    alm_fid.to_pixel(Nside).plot(title='fiducial')
     #(map - alm_fid.to_pixel(Nside)).plot(title='diff')

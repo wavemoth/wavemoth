@@ -90,6 +90,15 @@ cdef class SerializedMatrix:
             out = out[:, 0]
         return out
 
+    def digest(self):
+        import hashlib
+        d = hashlib.sha1()
+        d.update(self.get_data())
+        return d.hexdigest()
+
+    def get_data(self):
+        return PyBytes_FromStringAndSize(self.buf, self.buflen)
+
 
 cdef write_bin(stream, char *buf, Py_ssize_t size):
     stream.write(PyBytes_FromStringAndSize(buf, size))

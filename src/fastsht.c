@@ -4,11 +4,13 @@
 #include "complex.h"
 #include <assert.h>
 #include <stdlib.h>
+#include <malloc.h>
+#include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include <fftw3.h>
 
 #define PLANTYPE_HEALPIX 0x0
-
 
 struct _fastsht_plan {
   int type;
@@ -24,6 +26,25 @@ struct _fastsht_plan_healpix {
 };
 typedef struct _fastsht_plan_healpix *fastsht_plan_healpix;
 
+
+/*
+Global storage
+*/
+
+/*
+The precomputed data, per m. For now we only support a single Nside
+at the time, this will definitely change.
+*/
+typedef struct {
+  char *even_matrix;
+  char *odd_matrix;
+} precomputation_t;
+
+
+static precomputation_t *precomputed_data;
+
+
+
 /*
 Private
 */
@@ -35,10 +56,58 @@ static void phase_shift_ring_inplace(int mmax, complex double *g_m, double phi0)
   }
 }
 
+static int read_int64(FILE *fd, int64_t *p_out, size_t n) {
+  return fread(p_out, sizeof(int64_t), n, fd) == n;
+}
 
 /*
 Public
 */
+
+
+int fastsht_add_precomputation_file(char *filename) {
+  FILE *fd = NULL;
+  int64_t mmax, m, len;
+  int64_t *offsets = NULL;
+  int retcode;
+  fd = fopen(filename, "rb");
+  if (fd == NULL) goto ERROR;
+  /* Read mmax, allocate arrays, read offsets */
+  if (!read_int64(fd, &mmax, 1)) goto ERROR;
+  precomputed_data = malloc(sizeof(precomputation_t) * (mmax + 1));
+  memset(precomputed_data, 0, sizeof(precomputation_t) * (mmax + 1));
+  offsets = malloc(sizeof(int64_t[4 * (mmax + 1)]));
+  if (precomputed_data == NULL || offsets == NULL) goto ERROR;
+  for (m = 0; m != mmax + 1; ++m) {
+    if (!read_int64(fd, offsets + 4 * m, 4)) goto ERROR;
+  }
+  /* Read compressed matrices */
+  for (m = 0; m != mmax + 1; ++m) {
+    if (fseek(fd, offsets[4 * m], SEEK_SET) != 0) goto ERROR;
+    len = offsets[4 * m + 1];
+    precomputed_data[m].even_matrix = memalign(16, len);
+    if (fread(precomputed_data[m].even_matrix, len, 1, fd) != 1) goto ERROR;
+    if (fseek(fd, offsets[4 * m + 2], SEEK_SET) != 0) goto ERROR;
+    len = offsets[4 * m + 3];
+    precomputed_data[m].odd_matrix = memalign(16, len);
+    if (fread(precomputed_data[m].odd_matrix, len, 1, fd) != 1) goto ERROR;
+  }
+  retcode = 0;
+  goto FINALLY;
+ ERROR:
+  retcode = -1;
+  if (precomputed_data != NULL) {
+    for (m = 0; m != mmax + 1; ++m) {
+      free(precomputed_data[m].even_matrix);
+      free(precomputed_data[m].odd_matrix);
+    }
+  }
+  free(precomputed_data);
+ FINALLY:
+  if (fd != NULL) fclose(fd);
+  free(offsets);
+  return retcode;
+}
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *input,
                                      double *output, double *work, int ordering) {

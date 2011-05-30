@@ -19,6 +19,7 @@ cdef extern from "fastsht.h":
 
     void fastsht_destroy_plan(fastsht_plan plan)
     void fastsht_execute(fastsht_plan plan)
+    int fastsht_add_precomputation_file(char *filename)
 
 cdef extern from "fastsht_private.h":
     ctypedef struct fastsht_grid_info:
@@ -30,6 +31,9 @@ cdef extern from "fastsht_private.h":
     fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
     void fastsht_free_grid_info(fastsht_grid_info *info)
 
+_precomputation_loaded = False
+_precomputation_file = b"/home/dagss/code/spherew/precomputed.dat"
+
 cdef class ShtPlan:
     cdef fastsht_plan plan
     cdef object input, output, work
@@ -39,6 +43,7 @@ cdef class ShtPlan:
                   np.ndarray[double, mode='c'] output,
                   np.ndarray[double, mode='c'] work,
                   ordering):
+        global _precomputation_loaded
         cdef int flags
         if ordering == 'mmajor':
             flags = FASTSHT_MMAJOR
@@ -47,6 +52,11 @@ cdef class ShtPlan:
         self.input = input
         self.output = output
         self.work = work
+
+        if not _precomputation_loaded:
+            if fastsht_add_precomputation_file(_precomputation_file) != 0:
+                raise RuntimeError()
+            _precomputation_loaded = True
         
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax,
                                             <double*>input.data, <double*>output.data,

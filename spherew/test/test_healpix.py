@@ -19,6 +19,10 @@ def test_ring_thetas():
     htheta = np.arccos(hz)[::-1]
     yield assert_almost_equal, theta, htheta
 
+    thetapos = get_ring_thetas(Nside, positive_only=True)
+    yield eq_, thetapos[0], np.arccos(0)
+    yield assert_almost_equal, thetapos, theta[2 * Nside - 1:]
+
 def test_ring_pixel_counts():
     counts = get_ring_pixel_counts(Nside)
     yield eq_, 4 * Nside - 1, len(counts)

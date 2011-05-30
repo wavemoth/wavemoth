@@ -1,4 +1,5 @@
 cimport numpy as np
+import numpy as np
 
 cdef extern from "fastsht.h":
     cdef enum:
@@ -7,6 +8,8 @@ cdef extern from "fastsht.h":
     cdef struct _fastsht_plan:
         pass
     ctypedef _fastsht_plan *fastsht_plan
+
+    ctypedef int bfm_index_t
     
     fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax,
                                          double *input,
@@ -16,9 +19,16 @@ cdef extern from "fastsht.h":
 
     void fastsht_destroy_plan(fastsht_plan plan)
     void fastsht_execute(fastsht_plan plan)
+
+cdef extern from "fastsht_private.h":
+    ctypedef struct fastsht_grid_info:
+        double *phi0s
+        bfm_index_t *ring_offsets
+        bfm_index_t nrings
+
     void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end)
-
-
+    fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
+    void fastsht_free_grid_info(fastsht_grid_info *info)
 
 cdef class ShtPlan:
     cdef fastsht_plan plan
@@ -51,3 +61,16 @@ cdef class ShtPlan:
 
     def perform_backward_ffts(self, int ring_start, int ring_end):
         fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)
+
+def _get_healpix_phi0s(Nside):
+    " Expose fastsht_create_healpix_grid_info for unit tests. "
+
+    cdef fastsht_grid_info *info = fastsht_create_healpix_grid_info(Nside)
+    try:
+        phi0s = np.zeros(info.nrings)
+        for i in range(info.nrings):
+            phi0s[i] = info.phi0s[i]
+    finally:
+        fastsht_free_grid_info(info)
+    return phi0s
+    

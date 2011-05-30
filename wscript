@@ -76,7 +76,7 @@ def build(bld):
     bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c']),
         includes=['src'],
         target='fastsht',
-        use='NUMPY BLAS FFTW3',
+        use='NUMPY BLAS', # PS collision between MKL and FFTW..
         features='c pyext cshlib')
 
     bld(source=(['bench/matmulbench.c']),

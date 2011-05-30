@@ -10,6 +10,7 @@ from numpy.testing import assert_almost_equal
 from cPickle import dumps, loads
 
 from ..fastsht import *
+from .. import fastsht, healpix
 from cmb.maps import *
 
 Nside = 64
@@ -25,6 +26,11 @@ def test_basic():
 #    work[100] = 100
     
     plan.perform_backward_ffts(0, 4 * Nside - 1)
-
+    1/0 # todo test this
     pixel_sphere_map(output, pixel_order='ring').plot()
     plt.show()
+
+def test_healpix_phi0():
+    phi0s = fastsht._get_healpix_phi0s(16)
+    yield assert_almost_equal, phi0s, healpix.get_ring_phi0(16)
+

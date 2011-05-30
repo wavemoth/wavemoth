@@ -203,8 +203,11 @@ int bfm_apply_d(char *head, double *x, double *y,
   assert((size_t)x % 16 == 0); /* Ensure data alignment */
   assert((size_t)y % 16 == 0); /* Ensure data alignment */
   order = ((bfm_index_t*)head)[0];
+  printf("%d %d\n", ((bfm_index_t*)head)[1], nrows);
+  assert(((bfm_index_t*)head)[1] == nrows);
+  assert(((bfm_index_t*)head)[2] == ncols);
+  head += sizeof(bfm_index_t[3]);
   assert(order >= 1);
-  head += sizeof(bfm_index_t);
   head = recurse_d(head, order, x, ncols, nvecs, buffer, buffer2,
                    &data_from_first, &data_from_second, 
                    &block_heights, &block_widths_first, &block_widths_second);

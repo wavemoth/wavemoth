@@ -28,6 +28,8 @@ payload used for processing in this matrix block. The sub-block widths
 TOP-LEVEL COMPRESSED MATRIX FORMAT (HEADER):
 
  - bfm_index_t: order == 2**level. This gives number of blocks in D.
+ - bfm_index_t nrows, ncols: Size of matrix. Stored primarily for error
+     checking purposes.
  - The root node
 
 INNER INTERPOLATION NODE: "order" is a variable assumed available

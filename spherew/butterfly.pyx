@@ -149,7 +149,11 @@ class RootNode(object):
 
     def write_to_stream(self, stream):
         # We write both D_blocks and the first S_node interleaved
+        # HEADER
         write_index_t(stream, len(self.D_blocks) // 2) # order field
+        write_index_t(stream, self.nrows)
+        write_index_t(stream, self.ncols)
+        # ROOT NODE
         block_heights = np.asarray(
             [D.shape[0] for D in self.D_blocks], dtype=index_dtype)
         write_array(stream, block_heights)

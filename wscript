@@ -44,8 +44,11 @@ def configure(conf):
     conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/opt/intel/mkl/lib/intel64']
 
     conf.env.LIB_PERFTOOLS = ['profiler']
-
     conf.env.LIB_FFTW3 = ['fftw3']
+
+    conf.env.LIB_PSHT = ['psht', 'fftpack', 'c_utils']
+    conf.env.LIBPATH_PSHT = ['/home/dagss/code/libpsht/generic_gcc/lib']
+    conf.env.INCLUDES_PSHT = ['/home/dagss/code/libpsht/generic_gcc/include']
 
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +
@@ -79,13 +82,10 @@ def build(bld):
         use='NUMPY BLAS', # PS collision between MKL and FFTW..
         features='c pyext cshlib')
 
-    bld(source=(['bench/matmulbench.c']),
-        includes=['src'],
-        target='matmulbench',
-        install_path='bin',
-        libs=['math'],
-        use='LIBC BLAS',
-        features='c cprogram')
+    bld(source=(['spherew/psht.pyx']),
+        target='psht',
+        use='NUMPY PSHT',
+        features='c pyext cshlib')
 
 
 

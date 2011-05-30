@@ -8,6 +8,7 @@ cdef extern from "malloc.h":
 cdef extern from "butterfly.h":
     ctypedef int bfm_index_t
     ctypedef int int32_t
+    ctypedef int int64_t
 
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
@@ -91,20 +92,22 @@ cdef class SerializedMatrix:
 
 
 cdef write_bin(stream, char *buf, Py_ssize_t size):
-    n = stream.write(PyBytes_FromStringAndSize(buf, size))
-    assert n == size
+    stream.write(PyBytes_FromStringAndSize(buf, size))
 
-cdef write_int32(stream, int32_t i):
+def write_int32(stream, int32_t i):
     write_bin(stream, <char*>&i, sizeof(i))
 
-cdef write_index_t(stream, bfm_index_t i):
+def write_int64(stream, int64_t i):
     write_bin(stream, <char*>&i, sizeof(i))
 
-cdef write_array(stream, arr):
+def write_index_t(stream, bfm_index_t i):
+    write_bin(stream, <char*>&i, sizeof(i))
+
+def write_array(stream, arr):
     n = stream.write(bytes(arr.data))
-    assert n == np.prod(arr.shape) * arr.itemsize
+    #assert n == np.prod(arr.shape) * arr.itemsize
 
-cdef pad128(stream):
+def pad128(stream):
     i = stream.tell()
     m = i % 16
     if m != 0:

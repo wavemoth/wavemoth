@@ -36,3 +36,4 @@ joblib
 bin/*
 *.prof
 jobstore
+precomputed.dat

@@ -60,6 +60,17 @@ static int read_int64(FILE *fd, int64_t *p_out, size_t n) {
   return fread(p_out, sizeof(int64_t), n, fd) == n;
 }
 
+
+
+static void print_array(char *msg, double* arr, bfm_index_t len) {
+  bfm_index_t i;
+  printf("%s ", msg);
+  for (i = 0; i != len; ++i) {
+    printf("%e ", arr[i]);
+  }
+  printf("\n");
+}
+
 /*
 Public
 */
@@ -150,28 +161,46 @@ void fastsht_destroy_plan(fastsht_plan plan) {
 }
 
 void fastsht_execute(fastsht_plan plan) {
+  bfm_index_t m, lmax, mmax, nrows, ncols, iring;
+  double *input_m;
+  double *work2, *work2_m; /* TODO */
 
+  mmax = plan->mmax;
+  lmax = plan->lmax;
+  nrows = plan->grid->nrings;
+  work2 = memalign(16, sizeof(double[2 * (mmax + 1) * nrows]));
+  /*
+    Compte g_m(theta_i) in work2
+  */
+  for (m = 0; m != mmax + 1; ++m) {
+    input_m = plan->input + 2 * (m * (lmax + 1) - (m * (m - 1)) / 2);
+    work2_m = work2 + 2 * m * nrows;
+    ncols = lmax - m + 1;
+    bfm_apply_d(precomputed_data[m].even_matrix, input_m, work2_m,
+                nrows, ncols, 2);
+  }
+  /* Transpose it -> plan->work */
+  for (iring = 0; iring != nrows; ++iring) {
+    for (m = 0; m != mmax + 1; ++m) {
+      plan->work[2 * (iring * (mmax + 1) + m)] = work2[2 * (m * nrows + iring)];
+      plan->work[2 * (iring * (mmax + 1) + m) + 1] = work2[2 * (m * nrows + iring) + 1];
+    }
+  }
+  free(work2);
+  /* Backward FFTs */
+  fastsht_perform_backward_ffts(plan, 0, nrows);
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
   int iring, mmax, j, N, offset;
   double *g_m;
   fastsht_grid_info *grid = plan->grid;
-  /*
-    TODO: Phase-shifting
-  */
   mmax = plan->mmax;
   for (iring = ring_start; iring != ring_end; ++iring) {
     g_m = plan->work + 2 * (1 + mmax) * iring;
     N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
-    /*    for (j = 0; j < 2 * (N/2 + 1); ++j) {
-      g_m[j] = 0;
-      }*/
-    phase_shift_ring_inplace(mmax, (complex double*)g_m, grid->phi0s[iring]);
+    /*phase_shift_ring_inplace(mmax, (complex double*)g_m, grid->phi0s[iring]);*/
     fftw_execute(plan->fft_plans[iring]);
-    /*    for (j = (plan->ring_offsets[iring] + plan->ring_offsets[iring + 1]) / 2;
-         j < plan->ring_offsets[iring + 1]; ++j)
-         plan->output[j] = 0;*/
   }
 }
 

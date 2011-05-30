@@ -41,7 +41,7 @@ def configure(conf):
     conf.check_tool('inplace', tooldir='tools')
 
     conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
-    conf.env.LINKFLAGS_BLAS = ['-L/opt/intel/mkl/lib/intel64', '-Wl,-R/opt/intel/mkl/lib/intel64/']
+    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/opt/intel/mkl/lib/intel64']
 
     conf.env.LIB_PERFTOOLS = ['profiler']
 
@@ -73,7 +73,7 @@ def build(bld):
         use='NUMPY BLAS',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c']),
+    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c']),
         includes=['src'],
         target='fastsht',
         use='NUMPY BLAS', # PS collision between MKL and FFTW..

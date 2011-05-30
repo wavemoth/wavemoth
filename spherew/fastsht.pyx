@@ -66,8 +66,9 @@ cdef class ShtPlan:
         if self.plan != NULL:
             fastsht_destroy_plan(self.plan)
 
-    def execute(self):
-        fastsht_execute(self.plan)
+    def execute(self, int repeat=1):
+        for i in range(repeat):
+            fastsht_execute(self.plan)
 
     def perform_backward_ffts(self, int ring_start, int ring_end):
         fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)

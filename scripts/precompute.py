@@ -53,7 +53,7 @@ def compute(stream, mmax, lmax, Nside, min_rows):
 ##                    const=sum, default=max,
 ##                    help='sum the integers (default: find the max)')
 
-Nside = 128
+Nside = 512
 lmax = mmax = 2 * Nside
 with file('precomputed.dat', 'wb') as f:
     compute(f, mmax, lmax, Nside, min_rows=32)

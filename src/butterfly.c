@@ -5,7 +5,7 @@
 
 #include "butterfly.h"
 #include "blas.h"
-
+#include "fastsht_error.h"
 
 static void print_array(char *msg, double* arr, bfm_index_t len) {
   bfm_index_t i;
@@ -190,21 +190,26 @@ static INLINE char *apply_root_block_d(char *head,
   return head;
 }
 
+
+
 int bfm_apply_d(char *head, double *x, double *y,
                 bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs) {
   bfm_index_t order, *block_heights, *block_widths_first, *block_widths_second;
   double *data_from_first, *data_from_second;
   bfm_index_t i;
-  double *buffer, *buffer2;
+  double *buffer = NULL, *buffer2 = NULL;
  /* TODO: Make sure this is sufficient. */
   buffer = (double*)malloc(sizeof(double[ncols * nvecs * 1000]));
   buffer2 = (double*)malloc(sizeof(double[ncols * nvecs * 1000]));
-  assert((size_t)head % 16 == 0); /* Ensure data alignment */
-  assert((size_t)x % 16 == 0); /* Ensure data alignment */
-  assert((size_t)y % 16 == 0); /* Ensure data alignment */
+  check((size_t)head % 16 == 0, "'head'is unaligned");
+  check((size_t)x % 16 == 0, "'x' is unaligned");
+  check((size_t)y % 16 == 0, "'y' is unaligned");
+  checkf(((bfm_index_t*)head)[1] == nrows, "Expected nrows==%d but got %d", 
+         ((bfm_index_t*)head)[1], nrows);
+  checkf(((bfm_index_t*)head)[2] == ncols, "Expected ncols==%d but got %d", 
+         ((bfm_index_t*)head)[2], ncols);
+
   order = ((bfm_index_t*)head)[0];
-  assert(((bfm_index_t*)head)[1] == nrows);
-  assert(((bfm_index_t*)head)[2] == ncols);
   head += sizeof(bfm_index_t[3]);
   assert(order >= 1);
   head = recurse_d(head, order, x, ncols, nvecs, buffer, buffer2,

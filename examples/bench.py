@@ -19,7 +19,7 @@ Nside = 256
 lmax = 2 * Nside
 
 
-J = 20
+J = 100
 
 input = np.zeros((lmax + 1)**2, dtype=np.complex128)
 output = np.zeros(12*Nside**2)
@@ -30,12 +30,12 @@ plan = ShtPlan(Nside, lmax, lmax, input.view(np.double), output,
 
 from cmb.maps import harmonic_sphere_map
 
-with benchmark('MC', J):
+with benchmark('MC', J, profile=True):
     plan.execute(repeat=J)
 
-T = PshtMmajorHealpix(lmax=lmax, Nside=Nside)
-with benchmark('healpix', J):
-    T.alm2map(input, output, repeat=J)
+#T = PshtMmajorHealpix(lmax=lmax, Nside=Nside)
+#with benchmark('healpix', J):
+#    T.alm2map(input, output, repeat=J)
 
 #    with benchmark('M', J):
 #        for j in range(J * mstride):

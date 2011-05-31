@@ -23,7 +23,10 @@ def configure(conf):
     conf.add_os_flags('STLIB')
     conf.add_os_flags('STLIBPATH')
     conf.add_os_flags('FWRAPFLAGS')
+    conf.add_os_flags('CFLAGS')
 
+    if not conf.env.CFLAGS:
+        raise RuntimeError("Set CFLAGS while developing")
     conf.load('compiler_c')
     conf.load('compiler_fc')
     conf.check_fortran()

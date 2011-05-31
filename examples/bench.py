@@ -13,11 +13,13 @@ from spherew.psht import PshtMmajorHealpix
 from spherew import *
 from cPickle import dumps, loads
 
-Nside = 512
+assert os.environ['OMP_NUM_THREADS'] == '1'
+
+Nside = 256
 lmax = 2 * Nside
 
 
-J = 10
+J = 20
 
 input = np.zeros((lmax + 1)**2, dtype=np.complex128)
 output = np.zeros(12*Nside**2)

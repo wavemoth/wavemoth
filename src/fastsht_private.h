@@ -25,7 +25,8 @@ typedef struct {
    */
   double *phi0s;
   bfm_index_t *ring_offsets;
-  bfm_index_t nrings;
+  bfm_index_t nrings, mid_ring;
+  int has_equator;
 } fastsht_grid_info;
 
 

@@ -1,3 +1,4 @@
+from __future__ import division
 import healpix
 import numpy as np
 from matplotlib import pyplot as plt
@@ -10,10 +11,10 @@ from numpy.testing import assert_almost_equal
 from cPickle import dumps, loads
 
 from ..fastsht import *
-from .. import fastsht, healpix
+from .. import fastsht, healpix, psht
 from cmb.maps import *
 
-Nside = 128
+Nside = 256
 lmax = 2 * Nside
 
 def lm_to_idx_mmajor(l, m):
@@ -30,20 +31,19 @@ def test_basic():
                    work.view(np.double), 'mmajor')
 
     input[0] = 10
-#    print lm_to_idx_mmajor(1, 0)
     input[lm_to_idx_mmajor(1, 0)] = 10
     input[lm_to_idx_mmajor(2, 1)] = 10 + 5j
 
-#    work[:] = np.sin(np.arange(work.shape[0]))
-#    work[100] = 100
     plan.execute()
- #   print work[:lmax + 1]
- #   print work[2 * (lmax + 1):3 * (lmax + 1)]
- #   print work[3 * (lmax + 1):4 * (lmax + 1)]
-#    plan.perform_backward_ffts(0, 4 * Nside - 1)
-#    1/0 # todo test this
+
+    y2 = psht.alm2map_mmajor(input, Nside=Nside)
+    pixel_sphere_map(y2, pixel_order='ring').plot(title='FID')
     pixel_sphere_map(output, pixel_order='ring').plot()
     plt.show()
+
+    print np.linalg.norm(y2 - output) / np.linalg.norm(y2)
+    yield assert_almost_equal, y2, output
+
 
 def test_healpix_phi0():
     phi0s = fastsht._get_healpix_phi0s(16)

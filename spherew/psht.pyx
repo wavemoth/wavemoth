@@ -56,6 +56,7 @@ cdef class PshtMmajorHealpix:
     cdef psht_alm_info *alm_info
     cdef psht_geom_info *geom_info
     cdef pshtd_joblist *joblist
+    cdef int Nside
     
     def __cinit__(self, lmax, Nside):
         # fill in alm_info
@@ -70,6 +71,7 @@ cdef class PshtMmajorHealpix:
                                    &self.alm_info)
         psht_make_healpix_geom_info(Nside, 1, &self.geom_info)
         pshtd_make_joblist(&self.joblist)
+        self.Nside = Nside
         
     def __dealloc__(self):
         if self.alm_info != NULL:
@@ -82,13 +84,22 @@ cdef class PshtMmajorHealpix:
 
     def alm2map(self,
                 np.ndarray[double complex, mode='c'] alm,
-                np.ndarray[double, mode='c'] map,
+                np.ndarray[double, mode='c'] map=None,
                 int repeat=1):
+        if map is None:
+            map = np.zeros(12 * self.Nside**2, np.double)
         pshtd_add_job_alm2map(self.joblist, <pshtd_cmplx*>alm.data,
                               <double*>map.data, 0)
         for i in range(repeat):
             pshtd_execute_jobs(self.joblist, self.geom_info, self.alm_info)
         pshtd_clear_joblist(self.joblist)
+        return map
 
+def alm2map_mmajor(alm, map=None, Nside=None, repeat=1):
+    lmax = int(np.sqrt(alm.shape[0])) - 1
+    if map is not None:
+        assert Nside is None
+        Nside = int(np.sqrt(map.shape[0] // 12))
+    return PshtMmajorHealpix(lmax, Nside).alm2map(alm, map, repeat)
 
         

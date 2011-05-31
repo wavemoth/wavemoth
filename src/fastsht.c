@@ -1,4 +1,5 @@
 #include "fastsht_private.h"
+#include "fastsht_error.h"
 
 #undef NDEBUG
 #include "complex.h"
@@ -161,34 +162,61 @@ void fastsht_destroy_plan(fastsht_plan plan) {
 }
 
 void fastsht_execute(fastsht_plan plan) {
-  bfm_index_t m, lmax, mmax, nrows, ncols, iring;
-  double *input_m;
-  double *work2, *work2_m; /* TODO */
-
+  bfm_index_t m, lmax, mmax, nrows, nrings, ncols, iring, l, mid_ring, j;
+  complex double *input_m;
+  complex double *work_input, *work_even, *work_odd, *work;
+  assert(plan->grid->has_equator);
   mmax = plan->mmax;
   lmax = plan->lmax;
-  nrows = plan->grid->nrings;
-  work2 = memalign(16, sizeof(double[2 * (mmax + 1) * nrows]));
-  /*
-    Compte g_m(theta_i) in work2
-  */
+  mid_ring = plan->grid->mid_ring;
+  nrings = plan->grid->nrings;
+  nrows = nrings - mid_ring;
+  work_input = memalign(16, sizeof(complex double[2 * (lmax + 1)]));
+  work_even = memalign(16, sizeof(complex double[mid_ring + 1]));
+  work_odd = memalign(16, sizeof(complex double[mid_ring + 1]));
+  work = (complex double*)plan->work;
+  /* Compute g_m(theta_i), including transpose step for now */
   for (m = 0; m != mmax + 1; ++m) {
-    input_m = plan->input + 2 * (m * (lmax + 1) - (m * (m - 1)) / 2);
-    work2_m = work2 + 2 * m * nrows;
+    input_m = (complex double*)plan->input + (m * (lmax + 1) - (m * (m - 1)) / 2);
     ncols = lmax - m + 1;
-    bfm_apply_d(precomputed_data[m].even_matrix, input_m, work2_m,
+
+    /* Copy in even parts */
+    ncols = 0;
+    for (l = m + (m % 2); l <= lmax; l += 2) {
+      work_input[ncols] = input_m[l];
+      ++ncols;
+    }
+    /* Apply even matrix */
+    bfm_apply_d(precomputed_data[m].even_matrix, (double*)work_input, (double*)work_even,
                 nrows, ncols, 2);
-  }
-  /* Transpose it -> plan->work */
-  for (iring = 0; iring != nrows; ++iring) {
-    for (m = 0; m != mmax + 1; ++m) {
-      plan->work[2 * (iring * (mmax + 1) + m)] = work2[2 * (m * nrows + iring)];
-      plan->work[2 * (iring * (mmax + 1) + m) + 1] = work2[2 * (m * nrows + iring) + 1];
+    /* Odd part */
+    ncols = 0;
+    for (l = m + ((m + 1) % 2); l <= lmax; l += 2) {
+      work_input[ncols] = input_m[l];
+      ++ncols;
+    }
+    /* Apply odd matrix */
+    bfm_apply_d(precomputed_data[m].odd_matrix, (double*)work_input, (double*)work_odd,
+                nrows, ncols, 2);
+
+    /* Add together parts and distribute/transpose to plan->work */
+    /* Equator */
+    work[mid_ring * (mmax + 1) + m] = work_even[0];
+    /* Ring-pairs */
+    for (iring = 1; iring < mid_ring + 1; ++iring) {
+      /* Top ring -- switch odd sign */
+      work[(mid_ring - iring) * (mmax + 1) + m] = 
+        work_even[iring] - work_odd[iring]; /* sign! */
+      /* Bottom ring */
+      work[(mid_ring + iring) * (mmax + 1) + m] =
+        work_even[iring] + work_odd[iring];
     }
   }
-  free(work2);
-  /* Backward FFTs */
-  fastsht_perform_backward_ffts(plan, 0, nrows);
+  free(work_input);
+  free(work_even);
+  free(work_odd);
+  /* Backward FFTs from plan->work to plan->output */
+  fastsht_perform_backward_ffts(plan, 0, nrings);
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
@@ -199,7 +227,7 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
   for (iring = ring_start; iring != ring_end; ++iring) {
     g_m = plan->work + 2 * (1 + mmax) * iring;
     N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
-    /*phase_shift_ring_inplace(mmax, (complex double*)g_m, grid->phi0s[iring]);*/
+    phase_shift_ring_inplace(mmax, (complex double*)g_m, grid->phi0s[iring]);
     fftw_execute(plan->fft_plans[iring]);
   }
 }
@@ -216,8 +244,9 @@ fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside) {
   result->phi0s = (double*)buf;
   buf += sizeof(double[nrings]);
   result->ring_offsets = (bfm_index_t*)buf;
-
+  result->has_equator = 1;
   result->nrings = nrings;
+  result->mid_ring = 2 * Nside - 1;
   ring_npix = 0;
   ipix = 0;
   for (iring = 0; iring != nrings; ++iring) {

@@ -15,11 +15,11 @@ from cPickle import dumps, loads
 
 assert os.environ['OMP_NUM_THREADS'] == '1'
 
-Nside = 1024
+Nside = 256#1024
 lmax = 2 * Nside
 
 
-J = 1
+J = 10
 
 input = np.zeros((lmax + 1)**2, dtype=np.complex128)
 output = np.zeros(12*Nside**2)
@@ -30,7 +30,7 @@ plan = ShtPlan(Nside, lmax, lmax, input.view(np.double), output,
 
 from cmb.maps import harmonic_sphere_map
 
-with benchmark('MC', J, profile=True):
+with benchmark('MC', J, profile=False):
     plan.execute(repeat=J)
 
 T = PshtMmajorHealpix(lmax=lmax, Nside=Nside)

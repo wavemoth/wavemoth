@@ -5,7 +5,7 @@
 static char current_error[ERRMAXLEN];
 static char error_buf[ERRMAXLEN];
 #define _exception(file, line, msg) do { \
-    fprintf(stderr, current_error, ERRMAXLEN, "%s:%d %s", file, line, msg); \
+    fprintf(stderr, "%s:%d %s\n", file, line, msg); \
     abort(); \
   } while (0)
 #define _exceptionf(file, line, msg, ...) do { \

@@ -1,6 +1,5 @@
 from time import clock
 from contextlib import contextmanager
-import yep
 
 __all__ = ['ftime', 'benchmark']
 
@@ -21,6 +20,7 @@ def ftime(t):
 @contextmanager
 def benchmark(name, divisor, profile=False):
     if profile:
+        import yep
         yep.start("%s.prof" % name)
     t0 = clock()
     yield

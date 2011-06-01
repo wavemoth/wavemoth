@@ -44,7 +44,7 @@ def compute(stream, mmax, lmax, Nside, min_rows):
         write_int64(stream, 0)
     thetas = get_ring_thetas(Nside, positive_only=True)
     futures = []
-    with ProcessPoolExecutor(max_workers=8) as proc:
+    with ProcessPoolExecutor(max_workers=4) as proc:
         for m in range(0, mmax + 1):
             futures.append(proc.submit(compute_m, m, lmax, thetas, min_rows))
 
@@ -67,7 +67,7 @@ def compute(stream, mmax, lmax, Nside, min_rows):
 ##                    const=sum, default=max,
 ##                    help='sum the integers (default: find the max)')
 
-Nside = 2048
+Nside = 1024
 lmax = mmax = 2 * Nside
 with file('precomputed.dat', 'wb') as f:
     compute(f, mmax, lmax, Nside, min_rows=32)

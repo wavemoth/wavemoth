@@ -90,6 +90,12 @@ def build(bld):
         use='NUMPY PSHT',
         features='c pyext cshlib')
 
+    bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
+        target='fmm',
+        includes=['src'],
+        use='NUMPY',
+        features='c pyext cshlib')
+
 
 
 # vim:ft=python

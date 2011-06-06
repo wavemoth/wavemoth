@@ -3,6 +3,7 @@
 #include "math.h"
 #include "malloc.h"
 #include "assert.h"
+#include "unistd.h"
 
 
 #define NQUAD 28
@@ -36,7 +37,7 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
      element past the last grid point of the far field
    */
   double max_dist, s, r, x_far, dx, y, acc;
-  size_t i, j, k, ix, iy, ix_far;
+  ssize_t i, j, k, ix, iy, ix_far;
 
   double *restrict quad_weights, *restrict quad_points, *restrict alpha;
   /* Corner cases */
@@ -98,22 +99,23 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
     output_y[iy] = acc;
   }
   /* Leftwards pass for far-field. This is the same, but now we rescale
-     the quadrature by -1, which changes some signs. */
+     the quadrature by -1, which changes some signs. Note the use
+     of ssize_t to make loop logic more readable. */
   for (k = 0; k != NQUAD; ++k) {
     alpha[k] = 0;
   }
   ix_far = nx - 1;
   x_far = fmax(x_grid[nx - 1], y_grid[ny - 1]);
-  for (iy = ny; iy-- > 0; ) {
+  for (iy = ny - 1; iy != -1; iy--) {
     y = y_grid[iy];
     /* Translate & update right far-field expansion*/
-    while (x_grid[ix_far] > y + r) {
+    while (ix_far > -1 && x_grid[ix_far] > y + r) {
       dx = x_grid[ix_far] - x_far;
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
         alpha[k] = alpha[k] * exp(dx * quad_points[k]) + input_x[ix_far];
       }
-      if (ix_far-- == 0) break;
+      --ix_far;
     }
     /* Evaluate expansion and add contribution */
     dx = y - x_far;

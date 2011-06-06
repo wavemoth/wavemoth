@@ -56,7 +56,7 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
   /* Find maximum distance between grid points in order to rescale
      quadrature to safe range. */
   max_dist = fmax(x_grid[nx - 1], y_grid[ny - 1]) - fmin(x_grid[0], y_grid[ny]);
-  s = 501. / max_dist; /* Rescale factor */
+  s = 500. / max_dist; /* Rescale factor */
   r = 1. / s; /* Range of near-field */
   /* Initialize rescaled quadrature weights and expansion */
   for (k = 0; k != NQUAD; ++k) {
@@ -64,7 +64,6 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
     quad_points[k] = QUAD_POINTS[k] * s;
     alpha[k] = 0.;
   }
-  //  printf("r=%f", r);
   /* Do rightwards pass. */
   ix_far = 0;
   /* Note: The initial value for x_far does not matter in principle, because
@@ -87,10 +86,11 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
     output_y[iy] = 0;
     dx = x_far - y_grid[iy];
     for (k = 0; k != NQUAD; ++k) {
-      output_y[iy] += quad_weights[k] * exp(dx * quad_points[k]);
+      output_y[iy] += quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
     }
     /* Brute-force computation of near-field contribution (both
        to left and right of evaluation point, while we're at it). */
+
     for (ix = ix_far; ix < nx && x_grid[ix] <= y_grid[iy] + r; ++ix) {
       output_y[iy] += input_x[ix] / (y_grid[iy] - x_grid[ix]);
     }
@@ -100,10 +100,9 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
   for (k = 0; k != NQUAD; ++k) {
     alpha[k] = 0;
   }
-  iy = ny - 1;
   ix_far = nx - 1;
   x_far = x_grid[ix_far];
-  do {
+  for (iy = ny; iy-- > 0; ) {
     /* Translate & update right far-field expansion*/
     while (x_grid[ix_far] > y_grid[iy] + r) {
       dx = x_grid[ix_far] - x_far;
@@ -116,10 +115,9 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
     /* Evaluate expansion and add contribution */
     dx = y_grid[iy] - x_far;
     for (k = 0; k != NQUAD; ++k) {
-      output_y[iy] -= quad_weights[k] * exp(dx * quad_points[k]);
+      output_y[iy] -= quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
     }
-  } while (iy-- > 0);
-  
+  }
   free(quad_weights); /* Others are in same buffer! */
 }
 

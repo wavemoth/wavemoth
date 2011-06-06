@@ -9,8 +9,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 np.seterr(all='raise')
 np.seterr(under='warn')
-Nx = 2000
-Ny = 3000
+Nx = 20
+Ny = 30
 
 from spherew.fmm import fmm1d
 
@@ -89,17 +89,16 @@ for i_y in range(Ny - 1, -1, -1):
     dx = y_grid[i_y] - x_far
     phi[i_y] -= np.dot(w_arr, alpha * np.exp(dx * t_arr))
 
-plt.clf()
-#plt.plot(both_grid, phi0)
-#plt.plot(both_grid, phi)
-N = 100
+phi_c = phi.copy()
+fmm1d(x_grid, qx, y_grid, phi_c)
 
-plt.plot(y_grid[:N], phi[:N])
-plt.plot(y_grid[:N], phi_y0[:N])
-plt.gca().set_ylim((-.1e5, .1e5))
-#print np.max(np.abs(phi0 - phi) / np.max(np.abs(phi0)))
 print np.max(np.abs(phi_y0 - phi) / np.max(np.abs(phi_y0)))
+print np.max(np.abs(phi_y0 - phi_c) / np.max(np.abs(phi_y0)))
 
-fmm1d(x_grid, qx, y_grid, phi)
-plt.plot(y_grid[:N], phi[:N])
-print np.max(np.abs(phi_y0 - phi) / np.max(np.abs(phi_y0)))
+if 0:
+    plt.clf()
+    N = 100
+    plt.plot(y_grid[:N], phi[:N])
+    plt.plot(y_grid[:N], phi_y0[:N])
+    plt.gca().set_ylim((-.1e5, .1e5))
+    plt.plot(y_grid[:N], phi[:N])

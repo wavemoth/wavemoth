@@ -11,6 +11,9 @@
 #include <math.h>
 #include <fftw3.h>
 
+
+#define PI 3.14159265358979323846
+
 #define PLANTYPE_HEALPIX 0x0
 
 struct _fastsht_plan {
@@ -252,12 +255,12 @@ fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside) {
   for (iring = 0; iring != nrings; ++iring) {
     if (iring <= Nside - 1) {
       ring_npix += 4;
-      result->phi0s[iring] = M_PI / (4.0 * (iring + 1));
+      result->phi0s[iring] = PI / (4.0 * (iring + 1));
     } else if (iring > 3 * Nside - 1) {
       ring_npix -= 4;
-      result->phi0s[iring] = M_PI / (4.0 * (nrings - iring));
+      result->phi0s[iring] = PI / (4.0 * (nrings - iring));
     } else {
-      result->phi0s[iring] = (M_PI / (4.0 * Nside)) * (iring  % 2);
+      result->phi0s[iring] = (PI / (4.0 * Nside)) * (iring  % 2);
     }
     result->ring_offsets[iring] = ipix;
     ipix += ring_npix;

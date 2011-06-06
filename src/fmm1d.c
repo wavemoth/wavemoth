@@ -117,7 +117,7 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
     }
     /* Evaluate expansion and add contribution */
     dx = y - x_far;
-    acc = 0;
+    acc = output_y[iy];
     for (k = 0; k != NQUAD; ++k) {
       acc -= quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
     }

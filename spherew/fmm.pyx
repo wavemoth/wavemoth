@@ -22,14 +22,17 @@ cdef extern from "mkl_vml.h":
 def fmm1d(np.ndarray[double, mode='c'] x_grid,
           np.ndarray[double, mode='c'] input_x,
           np.ndarray[double, mode='c'] y_grid,
-          np.ndarray[double, mode='c'] output_y,
+          np.ndarray[double, mode='c'] output_y=None,
           int repeat=1):
     cdef int i
+    if output_y is None:
+        output_y = y_grid * 0
     if x_grid.shape[0] != input_x.shape[0] or y_grid.shape[0] != output_y.shape[0]:
         raise ValueError("Shapes do not conform")
     for i in range(repeat):
         fastsht_fmm1d(<double*>x_grid.data, <double*>input_x.data, x_grid.shape[0],
                       <double*>y_grid.data, <double*>output_y.data, y_grid.shape[0])
+    return output_y
 
                   
 @cython.boundscheck(False)

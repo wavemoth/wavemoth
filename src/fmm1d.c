@@ -55,7 +55,7 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
 
   /* Find maximum distance between grid points in order to rescale
      quadrature to safe range. */
-  max_dist = fmax(x_grid[nx - 1], y_grid[ny - 1]) - fmin(x_grid[0], y_grid[ny]);
+  max_dist = fmax(x_grid[nx - 1], y_grid[ny - 1]) - fmin(x_grid[0], y_grid[0]);
   s = 500. / max_dist; /* Rescale factor */
   r = 1. / s; /* Range of near-field */
   /* Initialize rescaled quadrature weights and expansion */
@@ -67,10 +67,10 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
   /* Do rightwards pass. */
   ix_far = 0;
   /* Note: The initial value for x_far does not matter in principle, because
-     alpha[k] == 0. However we at least want to avoid exp(...) to become inf.
+     alpha[k] == 0. However we at least want to avoid exp(...) to over/underflow.
      So we set x_far so that dx == 0 in the first iteration.
   */
-  x_far = x_grid[0];
+  x_far = fmin(x_grid[0], y_grid[0]);
   for (iy = 0; iy != ny; ++iy) {
     y = y_grid[iy];
     /* Translate and update far-field expansion of input values until
@@ -103,7 +103,7 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
     alpha[k] = 0;
   }
   ix_far = nx - 1;
-  x_far = x_grid[ix_far];
+  x_far = fmax(x_grid[nx - 1], y_grid[ny - 1]);
   for (iy = ny; iy-- > 0; ) {
     y = y_grid[iy];
     /* Translate & update right far-field expansion*/

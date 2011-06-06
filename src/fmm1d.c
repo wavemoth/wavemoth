@@ -28,17 +28,17 @@ static double QUAD_WEIGHTS[28] SSE_ALIGNED;
 /*   free(info); */
 /* } */
 
-void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
-                   double *y_grid, double *output_y, size_t ny) {
+void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x, size_t nx,
+                   const double *restrict y_grid, double *restrict output_y, size_t ny) {
   /*
     x_far - The position of the far-field expansion
     ix_far - Index (in x_grid) for far-field expansion, positioned one
      element past the last grid point of the far field
    */
-  double max_dist, s, r, x_far, dx;
+  double max_dist, s, r, x_far, dx, y;
   size_t i, j, k, ix, iy, ix_far;
 
-  double *quad_weights, *quad_points, *alpha;
+  double *restrict quad_weights, *restrict quad_points, *restrict alpha;
   /* Corner cases */
   if (ny == 0) return;
   if (nx == 0) {
@@ -72,9 +72,10 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
   */
   x_far = x_grid[0];
   for (iy = 0; iy != ny; ++iy) {
+    y = y_grid[iy];
     /* Translate and update far-field expansion of input values until
        it is within r of our output evaluation point. */
-    while (ix_far < nx && x_grid[ix_far] < y_grid[iy] - r) {
+    while (ix_far < nx && x_grid[ix_far] < y - r) {
       dx = x_far - x_grid[ix_far];
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
@@ -84,15 +85,15 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
     }
     /* Evaluate far-field expansion at output point. */
     output_y[iy] = 0;
-    dx = x_far - y_grid[iy];
+    dx = x_far - y;
     for (k = 0; k != NQUAD; ++k) {
       output_y[iy] += quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
     }
     /* Brute-force computation of near-field contribution (both
        to left and right of evaluation point, while we're at it). */
 
-    for (ix = ix_far; ix < nx && x_grid[ix] <= y_grid[iy] + r; ++ix) {
-      output_y[iy] += input_x[ix] / (y_grid[iy] - x_grid[ix]);
+    for (ix = ix_far; ix < nx && x_grid[ix] <= y + r; ++ix) {
+      output_y[iy] += input_x[ix] / (y - x_grid[ix]);
     }
   }
   /* Leftwards pass for far-field. This is the same, but now we rescale
@@ -103,8 +104,9 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
   ix_far = nx - 1;
   x_far = x_grid[ix_far];
   for (iy = ny; iy-- > 0; ) {
+    y = y_grid[iy];
     /* Translate & update right far-field expansion*/
-    while (x_grid[ix_far] > y_grid[iy] + r) {
+    while (x_grid[ix_far] > y + r) {
       dx = x_grid[ix_far] - x_far;
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
@@ -113,7 +115,7 @@ void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
       if (ix_far-- == 0) break;
     }
     /* Evaluate expansion and add contribution */
-    dx = y_grid[iy] - x_far;
+    dx = y - x_far;
     for (k = 0; k != NQUAD; ++k) {
       output_y[iy] -= quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
     }

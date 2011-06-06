@@ -19,8 +19,8 @@ void fmm1d_destroy_plan(fmm1d_plan plan);
 void fmm1d_execute(fmm1d_plan plan, double *input_x, double *output_y);
 */
 
-void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
-                   double *y_grid, double *output_y, size_t ny);
+void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x, size_t nx,
+                   const double *restrict y_grid, double *restrict output_y, size_t ny);
 
 
 #endif

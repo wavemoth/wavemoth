@@ -54,8 +54,8 @@ def configure(conf):
     conf.env.INCLUDES_PSHT = ['/home/dagss/code/libpsht/generic_gcc/include']
 
     conf.env.LIB_MKL = ['mkl_rt']
-    conf.env.LIBPATH_PSHT = ['/opt/intel/mkl/lib/intel64']
-    conf.env.INCLUDES_PSHT = ['/opt/intel/mkl/include']
+    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
+    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
 
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +

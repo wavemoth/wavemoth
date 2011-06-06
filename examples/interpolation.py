@@ -16,6 +16,7 @@ z_grid = np.linspace(0, 1, 200)
 # Set up data
 from spherew.roots import associated_legendre_roots
 from spherew.legendre import compute_normalized_associated_legendre
+from spherew.fmm import fmm1d
 m = 5
 n = 6
 #f_n = np.asarray([0.2, 0.4, 0.5, -0.3, 1, 1.3])#, 0.8, -.3, .3, .4])
@@ -56,12 +57,7 @@ def get_c(l, m):
 l = m + 2 * n - 2
 c = get_c(m + 2 * n - 2, m)
 
-
-K = 1 / np.subtract.outer(y_grid**2, x_grid**2)
-
-#K *= P_m_2n_y[:, None]
-
-f_ip = np.dot(K, P_m_2n_sub_2_at_x_n * rho_n * f_x)
+f_ip = fmm1d(x_grid ** 2, P_m_2n_sub_2_at_x_n * rho_n * f_x, y_grid ** 2)
 f_ip *= c * P_m_2n_y
 
 plt.clf()

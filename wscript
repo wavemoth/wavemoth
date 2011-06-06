@@ -53,6 +53,10 @@ def configure(conf):
     conf.env.LIBPATH_PSHT = ['/home/dagss/code/libpsht/generic_gcc/lib']
     conf.env.INCLUDES_PSHT = ['/home/dagss/code/libpsht/generic_gcc/include']
 
+    conf.env.LIB_MKL = ['mkl_rt']
+    conf.env.LIBPATH_PSHT = ['/opt/intel/mkl/lib/intel64']
+    conf.env.INCLUDES_PSHT = ['/opt/intel/mkl/include']
+
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +
                 bld.srcnode.ant_glob(incl=['libpshtlight/*.c'])),
@@ -93,7 +97,7 @@ def build(bld):
     bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
         target='fmm',
         includes=['src'],
-        use='NUMPY',
+        use='NUMPY MKL',
         features='c pyext cshlib')
 
 

@@ -10,21 +10,6 @@ from spherew.benchmark_utils import *
 from spherew import *
 from io import BytesIO
 
-class RealignedStream(object):
-    """
-    Redirects to a wrapped stream, but lies about tell()
-    so that the stream starts at the initialization point.
-    """
-    def __init__(self, wrapped):
-        self.wrapped = wrapped
-        self.pos0 = wrapped.tell()
-
-    def tell(self):
-        return self.wrapped.tell() - self.pos0
-
-    def write(self, arg):
-        self.wrapped.write(arg)
-
 def compute_m(m, lmax, thetas, min_rows):
     print 'Precomputing m=%d of %d' % (m, mmax)
     stream_even, stream_odd = BytesIO(), BytesIO()
@@ -49,16 +34,16 @@ def compute(stream, mmax, lmax, Nside, min_rows):
             futures.append(proc.submit(compute_m, m, lmax, thetas, min_rows))
 
         for m, fut in enumerate(futures):
-            for s, odd in zip(fut.result(), [0, 1]):
-                print 'Saving %d, %d' % (m, odd)
+            for recvstream, odd in zip(fut.result(), [0, 1]):
+                pad128(stream)
                 start_pos = stream.tell()
-                stream.write(s.getvalue())
+                stream.write(recvstream.getvalue())
                 end_pos = stream.tell()
                 stream.seek(header_pos + (4 * m + 2 * odd) * 8)
                 write_int64(stream, start_pos)
                 write_int64(stream, end_pos - start_pos)
                 stream.seek(end_pos)
-            del s
+            del recvstream
 
 ## parser = argparse.ArgumentParser(description='Process some integers.')
 ## parser.add_argument('integers', metavar='N', type=int, nargs='+',
@@ -67,7 +52,7 @@ def compute(stream, mmax, lmax, Nside, min_rows):
 ##                    const=sum, default=max,
 ##                    help='sum the integers (default: find the max)')
 
-Nside = 1024
+Nside = 256
 lmax = mmax = 2 * Nside
-with file('precomputed.dat', 'wb') as f:
-    compute(f, mmax, lmax, Nside, min_rows=32)
+with file('precomputed2.dat', 'wb') as f:
+    compute(f, mmax, lmax, Nside, min_rows=64)

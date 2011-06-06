@@ -11,6 +11,13 @@
 #include <math.h>
 #include <fftw3.h>
 
+/* For memory mapping */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
+
 
 #define PI 3.14159265358979323846
 
@@ -45,6 +52,8 @@ typedef struct {
 } precomputation_t;
 
 
+static char *mmapped_buffer;
+static size_t mmap_len;
 static precomputation_t *precomputed_data;
 
 
@@ -81,46 +90,47 @@ Public
 
 
 int fastsht_add_precomputation_file(char *filename) {
-  FILE *fd = NULL;
+  int fd;
+  struct stat fileinfo;
   int64_t mmax, m, len;
   int64_t *offsets = NULL;
   int retcode;
-  fd = fopen(filename, "rb");
-  if (fd == NULL) goto ERROR;
+  char *head;
+  /*
+    Memory map buffer
+   */
+  mmapped_buffer = MAP_FAILED;
+  fd = open(filename, O_RDONLY);
+  if (fd == -1) goto ERROR;
+  if (fstat(fd, &fileinfo) == -1) goto ERROR;
+  mmap_len = fileinfo.st_size;
+  mmapped_buffer = mmap(NULL, mmap_len, PROT_READ, MAP_SHARED,
+                        fd, 0);
+  if (mmapped_buffer == MAP_FAILED) goto ERROR;
+  head = mmapped_buffer;
   /* Read mmax, allocate arrays, read offsets */
-  if (!read_int64(fd, &mmax, 1)) goto ERROR;
-  precomputed_data = malloc(sizeof(precomputation_t) * (mmax + 1));
-  memset(precomputed_data, 0, sizeof(precomputation_t) * (mmax + 1));
-  offsets = malloc(sizeof(int64_t[4 * (mmax + 1)]));
-  if (precomputed_data == NULL || offsets == NULL) goto ERROR;
-  for (m = 0; m != mmax + 1; ++m) {
-    if (!read_int64(fd, offsets + 4 * m, 4)) goto ERROR;
-  }
+  mmax = ((int64_t*)head)[0];
+  head += sizeof(int64_t);
+  precomputed_data = malloc(sizeof(precomputation_t[mmax + 1]));
+  memset(precomputed_data, 0, sizeof(precomputation_t[mmax + 1]));
+  if (precomputed_data == NULL) goto ERROR;
+  offsets = (int64_t*)head;
   /* Read compressed matrices */
   for (m = 0; m != mmax + 1; ++m) {
-    if (fseek(fd, offsets[4 * m], SEEK_SET) != 0) goto ERROR;
-    len = offsets[4 * m + 1];
-    precomputed_data[m].even_matrix = memalign(16, len);
-    if (fread(precomputed_data[m].even_matrix, len, 1, fd) != 1) goto ERROR;
-    if (fseek(fd, offsets[4 * m + 2], SEEK_SET) != 0) goto ERROR;
-    len = offsets[4 * m + 3];
-    precomputed_data[m].odd_matrix = memalign(16, len);
-    if (fread(precomputed_data[m].odd_matrix, len, 1, fd) != 1) goto ERROR;
+    precomputed_data[m].even_matrix = mmapped_buffer + offsets[4 * m];
+    precomputed_data[m].odd_matrix = mmapped_buffer + offsets[4 * m + 2];
   }
   retcode = 0;
   goto FINALLY;
  ERROR:
   retcode = -1;
-  if (precomputed_data != NULL) {
-    for (m = 0; m != mmax + 1; ++m) {
-      free(precomputed_data[m].even_matrix);
-      free(precomputed_data[m].odd_matrix);
-    }
-  }
   free(precomputed_data);
+  if (fd != -1) close(fd);
+  if (mmapped_buffer == MAP_FAILED) {
+    munmap(mmapped_buffer, mmap_len);
+    mmapped_buffer = NULL;
+  }
  FINALLY:
-  if (fd != NULL) fclose(fd);
-  free(offsets);
   return retcode;
 }
 

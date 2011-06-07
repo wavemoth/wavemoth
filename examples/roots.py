@@ -3,12 +3,15 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname('__file__'), '..'))
 
+import numpy as np
 from spherew.roots import *
+from spherew.legendre import *
 
-l = 30
-m = 7
+m = 3
+n = 40
+l = m + 2 * n
 
-roots = AssociatedLegendreRootFinder(l, m).find_roots()
+roots = associated_legendre_roots(l, m)
 
 grid = np.linspace(0, 0.999, 1000)
 Plm = compute_normalized_associated_legendre(m, np.arccos(grid), l)
@@ -20,8 +23,8 @@ for root in roots:
 plt.axhline(0)
 
 
-for root in roots[-2:-1]:
-    P0 = compute_normalized_associated_legendre(m, [np.arccos(root)], l)[0, -1]
-    print P0
 
-
+err = [compute_normalized_associated_legendre(m, [np.arccos(root)], l)[0, -1]
+       for root in roots]
+print err
+plt.show()

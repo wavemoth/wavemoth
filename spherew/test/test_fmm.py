@@ -12,18 +12,21 @@ def test_basic():
     nx = 20
     ny = 30
     q = np.sin(np.arange(nx) / 2)
+    qq = np.vstack([q, 2 * q, 3 * q]).T.copy('C')
     x_grid = np.linspace(0, 1, nx)
 
     def doit(ymin, ymax, rtol=1e-13):
+
         y_grid = np.linspace(ymin, ymax, ny)
         # Compute direct answer
         inv_K = np.subtract.outer(y_grid, x_grid)
         assert np.all(np.abs(inv_K) > 1e-30), 'colliding grids'
         K = 1 / inv_K
-        phi0 = np.dot(K, q)
-
+        phi0 = np.dot(K, qq)
+        
         # Compute via FMM
-        phi = fmm1d(x_grid, q, y_grid)
+        phi = fmm1d(x_grid, qq, y_grid)
+        
         print np.max(np.abs(phi - phi0))
         return np.allclose(phi, phi0, rtol=rtol)
 

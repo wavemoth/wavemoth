@@ -30,29 +30,32 @@ static double QUAD_WEIGHTS[28] SSE_ALIGNED;
 /* } */
 
 void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x, size_t nx,
-                   const double *restrict y_grid, double *restrict output_y, size_t ny) {
+                   const double *restrict y_grid, double *restrict output_y, size_t ny,
+                   size_t nvecs) {
   /*
     x_far - The position of the far-field expansion
     ix_far - Index (in x_grid) for far-field expansion, positioned one
      element past the last grid point of the far field
    */
-  double max_dist, s, r, x_far, dx, y, acc;
+  double max_dist, s, r, x_far, dx, y, exp_term;
   ssize_t i, j, k, ix, iy, ix_far;
 
-  double *restrict quad_weights, *restrict quad_points, *restrict alpha;
+  double *restrict quad_weights, *restrict quad_points, *restrict alpha,
+         *restrict buf;
   /* Corner cases */
-  if (ny == 0) return;
+  if (ny == 0 || nvecs == 0) return;
   if (nx == 0) {
-    for (i = 0; i != ny; ++i) output_y[i] = 0;
+    for (i = 0; i != ny * nvecs; ++i) output_y[i] = 0;
     return;
   }
 
   /* Allocate aligned buffers for quadrature points, quadrature
      weights, and expansion. */
-  quad_weights = memalign(16, sizeof(double[3 * NQUAD]));
-  quad_points = quad_weights + NQUAD;
-  alpha = quad_points + NQUAD;
   assert((NQUAD * sizeof(double)) % 16 == 0);
+  buf = memalign(16, sizeof(double[(3 + nvecs) * NQUAD]));
+  quad_weights  = buf + NQUAD;
+  quad_points = buf + 2 * NQUAD;
+  alpha = buf + 3 * NQUAD; /* size nvecs * NQUAD */
 
   /* Find maximum distance between grid points in order to rescale
      quadrature to safe range. */
@@ -63,8 +66,11 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
   for (k = 0; k != NQUAD; ++k) {
     quad_weights[k] = QUAD_WEIGHTS[k] * s;
     quad_points[k] = QUAD_POINTS[k] * s;
-    alpha[k] = 0.;
+    for (j = 0; j != nvecs; ++j) {
+      alpha[k * nvecs + j] = 0.;
+    }
   }
+
   /* Do rightwards pass. */
   ix_far = 0;
   /* Note: The initial value for x_far does not matter in principle, because
@@ -80,29 +86,36 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
       dx = x_far - x_grid[ix_far];
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
-        alpha[k] = alpha[k] * exp(dx * quad_points[k]) + input_x[ix_far];
+        exp_term = exp(dx * quad_points[k]);
+        for (j = 0; j != nvecs; ++j) {
+          alpha[k * nvecs + j] = alpha[k * nvecs + j] * exp_term + input_x[ix_far * nvecs + j];
+        }
       }
       ++ix_far;
     }
     /* Evaluate far-field expansion at output point. */
-    acc = 0;
     dx = x_far - y;
+    for (j = 0; j != nvecs; ++j) output_y[iy * nvecs + j] = 0;
     for (k = 0; k != NQUAD; ++k) {
-      acc += quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
+      exp_term = quad_weights[k] * exp(dx * quad_points[k]);
+      for (j = 0; j != nvecs; ++j) {
+        output_y[iy * nvecs + j] += alpha[k * nvecs + j] * exp_term;
+      }
     }
     /* Brute-force computation of near-field contribution (both
        to left and right of evaluation point, while we're at it). */
-
     for (ix = ix_far; ix < nx && x_grid[ix] <= y + r; ++ix) {
-      acc += input_x[ix] / (y - x_grid[ix]);
+      exp_term = 1 / (y - x_grid[ix]);
+      for (j = 0; j != nvecs; ++j) {
+        output_y[iy * nvecs + j] += input_x[ix * nvecs + j] * exp_term;
+      }
     }
-    output_y[iy] = acc;
   }
   /* Leftwards pass for far-field. This is the same, but now we rescale
      the quadrature by -1, which changes some signs. Note the use
      of ssize_t to make loop logic more readable. */
   for (k = 0; k != NQUAD; ++k) {
-    alpha[k] = 0;
+    for (j = 0; j != nvecs; ++j) alpha[k * nvecs + j] = 0;
   }
   ix_far = nx - 1;
   x_far = fmax(x_grid[nx - 1], y_grid[ny - 1]);
@@ -113,19 +126,24 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
       dx = x_grid[ix_far] - x_far;
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
-        alpha[k] = alpha[k] * exp(dx * quad_points[k]) + input_x[ix_far];
+        exp_term = exp(dx * quad_points[k]);
+        for (j = 0; j != nvecs; ++j) {
+          alpha[k * nvecs + j] = alpha[k * nvecs + j] * exp_term + input_x[ix_far * nvecs + j];
+        }
       }
       --ix_far;
     }
     /* Evaluate expansion and add contribution */
     dx = y - x_far;
-    acc = output_y[iy];
     for (k = 0; k != NQUAD; ++k) {
-      acc -= quad_weights[k] * alpha[k] * exp(dx * quad_points[k]);
+      exp_term = quad_weights[k] * exp(dx * quad_points[k]);
+      for (j = 0; j != nvecs; ++j) {
+        output_y[iy * nvecs + j] -= alpha[k * nvecs + j] * exp_term;
+      }
     }
-    output_y[iy] = acc;
+
   }
-  free(quad_weights); /* Others are in same buffer! */
+  free(buf); /* Other temps are in same buffer! */
 }
 
 

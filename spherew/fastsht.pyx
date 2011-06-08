@@ -29,6 +29,7 @@ cdef extern from "fastsht.h":
     void fastsht_execute(fastsht_plan plan)
     int fastsht_add_precomputation_file(char *filename)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
+    void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd)
 
 cdef extern from "fastsht_private.h":
     ctypedef struct fastsht_grid_info:
@@ -94,6 +95,23 @@ cdef class ShtPlan:
         fastsht_perform_matmul(self.plan, m, odd)
         for i in range(n):
             out[i] = self.plan.work_g_m_roots[i]
+        return out
+
+    def perform_interpolation(self, np.ndarray[double complex] values_at_roots,
+                              bfm_index_t m, int odd):
+        cdef int n = 2 * self.plan.Nside, i
+        cdef np.ndarray[double complex] out = np.zeros(n, np.complex128)
+        if values_at_roots.shape[0] != (self.plan.lmax - m) // 2:
+            raise ValueError()
+        for i in range(values_at_roots.shape[0]):
+            self.plan.work_g_m_roots[i] = values_at_roots[i]
+        fastsht_perform_interpolation(self.plan, m, odd)
+        if odd:
+            for i in range(n):
+                out[i] = self.plan.work_g_m_odd[i]
+        else:
+            for i in range(n):
+                out[i] = self.plan.work_g_m_even[i]
         return out
 
 def _get_healpix_phi0s(Nside):

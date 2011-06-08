@@ -215,20 +215,9 @@ void fastsht_execute(fastsht_plan plan) {
     n = (lmax - m) / 2;
     for (odd = 0; odd != 2; ++odd) {
       rec = precomputed_data + 2 * m + odd;
-      ncols = 0;
-      for (l = m + ((m + odd) % 2); l <= lmax; l += 2) {
-        plan->work_a_l[ncols] = input_m[l];
-        ++ncols;
-      }
-      /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
-      bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)plan->work_g_m_roots,
-                  n, ncols, 2);
+      fastsht_perform_matmul(plan, m, odd);
       /* Interpolate with FMM */
-      fastsht_fmm1d(rec->evaluation_grid_squared, rec->gamma, (double*)plan->work_g_m_roots, n,
-                    rec->output_grid_squared, rec->omega,
-                    (double*)(odd ? plan->work_g_m_odd : plan->work_g_m_even),
-                    nrows, 2);
-
+      fastsht_perform_interpolation(plan, m, odd);
     }
 
     /* Add together parts and distribute/transpose to plan->work */
@@ -252,7 +241,6 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
   bfm_index_t ncols, n, l, lmax = plan->lmax;
   double complex *input_m = (double complex*)plan->input + m * (2 * lmax - m + 3) / 2;
   precomputation_t *rec;
-  ncols = lmax - m + 1;
   n = (lmax - m) / 2;
   rec = precomputed_data + 2 * m + odd;
   ncols = 0;
@@ -264,6 +252,19 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
   bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)plan->work_g_m_roots,
               n, ncols, 2);
 }
+
+void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
+  bfm_index_t n;
+  precomputation_t *rec;
+  n = (plan->lmax - m) / 2;
+  rec = precomputed_data + 2 * m + odd;
+  fastsht_fmm1d(rec->evaluation_grid_squared, rec->gamma, (double*)plan->work_g_m_roots, n,
+                rec->output_grid_squared, rec->omega,
+                (double*)(odd ? plan->work_g_m_odd : plan->work_g_m_even),
+                2 * plan->Nside, 2);
+}
+
+
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
   int iring, mmax, j, N, offset;

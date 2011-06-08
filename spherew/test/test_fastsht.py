@@ -13,7 +13,7 @@ from cPickle import dumps, loads
 from ..fastsht import *
 from .. import fastsht, healpix, psht
 from ..roots import associated_legendre_roots
-from ..legendre import compute_normalized_associated_legendre
+from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
 from cmb.maps import *
 
 do_plot = False
@@ -23,7 +23,7 @@ lmax = 2 * Nside
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
-def make_input():
+def make_plan():
     input = np.zeros((lmax + 1)**2, dtype=np.complex128)
     output = np.zeros(12*Nside**2)
     work = np.zeros((lmax + 1) * (4 * Nside - 1), dtype=np.complex128)
@@ -32,22 +32,22 @@ def make_input():
     return plan
 
 def test_basic():
-    plan = make_input()
+    plan = make_plan()
     plan.input[0] = 10
     plan.input[lm_to_idx_mmajor(1, 0)] = 10
     plan.input[lm_to_idx_mmajor(2, 1)] = 10 + 5j
     plan.execute()
 
     y2 = psht.alm2map_mmajor(plan.input, Nside=Nside)
-#    pixel_sphere_map(y2, pixel_order='ring').plot(title='FID')
-#    pixel_sphere_map(output, pixel_order='ring').plot()
+    pixel_sphere_map(y2, pixel_order='ring').plot(title='FID')
+    pixel_sphere_map(plan.output, pixel_order='ring').plot()
 #    plt.show()
 
     print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     yield assert_almost_equal, y2, plan.output
 
 def test_matmul():
-    plan = make_input()
+    plan = make_plan()
     # Zero should make it through
     g_m = plan.perform_matmul(m=0, odd=0)
     yield ok_, np.all(g_m == 0), 'zero1'
@@ -87,6 +87,47 @@ def test_matmul():
                 plt.plot((g_m.real - g_m0.real), '-', color=colors[(2 * m + odd) % len(colors)])
     if do_plot:
         plt.show()
+
+def get_c(l, m):
+    n = (l - m + 1) * (l - m + 2) * (l + m + 1) * (l + m + 2)
+    d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
+    return np.sqrt(n / d)
+
+def test_interpolation():
+    plan = make_plan()
+    m = 4
+    odd = 0
+    n = (lmax - m) // 2
+
+    roots = associated_legendre_roots(m + 2 * n + odd, m)
+    nodes = np.cos(healpix.get_ring_thetas(Nside, positive_only=True))
+    values = np.sin(roots * 5)
+    values = values - 1j*values
+
+    # Run C code
+    result = plan.perform_interpolation(values, m, odd)
+
+    # Brute-force FMM
+    P_m_2n_sub_2_roots, _ = Plm_and_dPlm(m + 2 * n + odd - 2, m, roots)
+    _, dP_roots = Plm_and_dPlm(m + 2 * n + odd, m, roots)
+    rho = 2 * (2 * m + 4 * n + 1 + 2 * odd) / ((1 - roots**2) * (dP_roots)**2)
+    c = get_c(m + 2 * n - 2 + odd, m)
+    P_m_2n_nodes, _ = Plm_and_dPlm(m + 2 * n, m, nodes)
+    K = 1.0 / np.subtract.outer(nodes**2, roots**2)
+    result0 = c * P_m_2n_nodes * np.dot(K, P_m_2n_sub_2_roots * rho * values)
+
+    yield assert_almost_equal, result0, result
+
+    if do_plot:
+        plt.plot(roots, values.real, 'ob')
+        plt.plot(roots, values.imag, 'og')
+        plt.plot(nodes, result.real, '-xb')
+        plt.plot(nodes, result.imag, '-xg')
+        plt.plot(nodes, result0.real, 'r')
+        plt.plot(nodes, result0.imag, 'r:')
+    
+        plt.show()
+    
 
 def test_healpix_phi0():
     phi0s = fastsht._get_healpix_phi0s(16)

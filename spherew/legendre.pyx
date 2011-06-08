@@ -1,3 +1,5 @@
+from __future__ import division
+
 cdef extern from "ylmgen_c.h":
     ctypedef struct Ylmgen_C:
         int *firstl
@@ -53,3 +55,15 @@ def compute_normalized_associated_legendre(int m, theta,
     return out
     
     
+
+def Plm_and_dPlm(l, m, x):
+    assert m >= 0
+    P_matrix = compute_normalized_associated_legendre(
+        m, np.arccos(x), l, epsilon=1e-300)
+    P_x = P_matrix[:, -1]
+    scale = np.sqrt((2 * l + 1) / (2 * l - 1) * (l - abs(m)) / (l + abs(m)))
+    a = l * x * P_matrix[:, -1]
+    b = (l + m) * scale * P_matrix[:, -2]
+    c = x**2 - 1
+    dP_x = (a - b) / c
+    return P_x, dP_x

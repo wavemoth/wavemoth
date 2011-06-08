@@ -46,6 +46,7 @@ Goes from plan->input to plan->work_g_m_roots; that is, evaluate
 g_m(theta) in the Ass. Legendre roots for the given m and odd.
 */
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd);
+void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end);

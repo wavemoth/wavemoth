@@ -14,18 +14,6 @@ from io import BytesIO
 
 np.seterr(all='raise')
 
-def Plm_and_dPlm(l, m, x):
-    assert m >= 0
-    P_matrix = compute_normalized_associated_legendre(
-        m, np.arccos(x), l, epsilon=1e-300)
-    P_x = P_matrix[:, -1]
-    scale = np.sqrt((2 * l + 1) / (2 * l - 1) * (l - abs(m)) / (l + abs(m)))
-    a = l * x * P_matrix[:, -1]
-    b = (l + m) * scale * P_matrix[:, -2]
-    c = x**2 - 1
-    dP_x = (a - b) / c
-    return P_x, dP_x
-
 def get_c(l, m):
     n = (l - m + 1) * (l - m + 2) * (l + m + 1) * (l + m + 2)
     d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
@@ -110,5 +98,5 @@ def compute(stream, mmax, lmax, Nside, min_rows):
 
 Nside = 128
 lmax = mmax = 2 * Nside
-with file('precomputed.dat', 'wb') as f:
+with file('precomputed2.dat', 'wb') as f:
     compute(f, mmax, lmax, Nside, min_rows=64)

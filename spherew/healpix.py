@@ -11,11 +11,11 @@ def get_ring_thetas(Nside, positive_only=False):
     # North equatorial belt
     z[Nside:2 * Nside] = (4/3) - (2 * i[Nside:2 * Nside]) / (3 * Nside)
     if positive_only:
-        z = -z[::-1]
+        return np.arccos(z[::-1])
     else:
-        z[2 * Nside:] = -z[2 * Nside - 2::-1]
-    theta = np.arccos(z)
-    return theta
+        z[2 * Nside:] = -z[2 * Nside - 2::-1]        
+        theta = np.arccos(z)
+        return theta
 
 def get_ring_phi0(Nside):
     counts = get_ring_pixel_counts(Nside)

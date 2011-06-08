@@ -20,7 +20,7 @@ cimport cython
 
 @cython.wraparound(False)
 def compute_normalized_associated_legendre(int m, theta,
-                                           int lmax, double epsilon=1e-30,
+                                           int lmax, double epsilon=1e-300,
                                            out=None):
     """
     Given a value for m, computes the matrix :math:`\tilde{P}_\ell^m(\theta)`,

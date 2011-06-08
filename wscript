@@ -83,7 +83,8 @@ def build(bld):
         use='NUMPY BLAS',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c']),
+    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c',
+                 'src/fmm1d.c']),
         includes=['src'],
         target='fastsht',
         use='NUMPY BLAS', # PS collision between MKL and FFTW..

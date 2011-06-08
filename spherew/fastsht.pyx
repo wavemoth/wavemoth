@@ -1,12 +1,20 @@
 cimport numpy as np
 import numpy as np
 
+cdef extern from "complex.h":
+    pass
+
 cdef extern from "fastsht.h":
     cdef enum:
         FASTSHT_MMAJOR
     
     cdef struct _fastsht_plan:
-        pass
+        int type_ "type"
+        int lmax, mmax
+        double complex *output, *input, *work, \
+                *work_a_l, *work_g_m_roots, *work_g_m_even, *work_g_m_odd
+        int Nside
+
     ctypedef _fastsht_plan *fastsht_plan
 
     ctypedef int bfm_index_t
@@ -20,6 +28,7 @@ cdef extern from "fastsht.h":
     void fastsht_destroy_plan(fastsht_plan plan)
     void fastsht_execute(fastsht_plan plan)
     int fastsht_add_precomputation_file(char *filename)
+    void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
 
 cdef extern from "fastsht_private.h":
     ctypedef struct fastsht_grid_info:
@@ -30,16 +39,22 @@ cdef extern from "fastsht_private.h":
     void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end)
     fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
     void fastsht_free_grid_info(fastsht_grid_info *info)
+    void fastsht_interpolate_legendre(bfm_index_t n, bfm_index_t odd, bfm_index_t m,
+                                      double *roots, double *weights,
+                                      double *samples, bfm_index_t nvecs,
+                                      double *target_grid, bfm_index_t target_grid_len,
+                                      double *target_legendre, double *output)
+    
 
 _precomputation_loaded = False
 _precomputation_file = b"/home/dagss/code/spherew/precomputed.dat"
 
 cdef class ShtPlan:
     cdef fastsht_plan plan
-    cdef object input, output, work
+    cdef readonly object input, output, work
     
     def __cinit__(self, int Nside, int lmax, int mmax,
-                  np.ndarray[double, mode='c'] input,
+                  np.ndarray[double complex, mode='c'] input,
                   np.ndarray[double, mode='c'] output,
                   np.ndarray[double, mode='c'] work,
                   ordering):
@@ -72,6 +87,14 @@ cdef class ShtPlan:
 
     def perform_backward_ffts(self, int ring_start, int ring_end):
         fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)
+
+    def perform_matmul(self, bfm_index_t m, int odd):
+        cdef int n = (self.plan.lmax - m) / 2, i
+        cdef np.ndarray[double complex] out = np.zeros(n, np.complex128)
+        fastsht_perform_matmul(self.plan, m, odd)
+        for i in range(n):
+            out[i] = self.plan.work_g_m_roots[i]
+        return out
 
 def _get_healpix_phi0s(Nside):
     " Expose fastsht_create_healpix_grid_info for unit tests. "

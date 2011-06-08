@@ -1,5 +1,6 @@
 #include "fastsht_private.h"
 #include "fastsht_error.h"
+#include "fmm1d.h"
 
 #undef NDEBUG
 #include "complex.h"
@@ -23,21 +24,6 @@
 
 #define PLANTYPE_HEALPIX 0x0
 
-struct _fastsht_plan {
-  int type;
-  int lmax, mmax;
-  double *output, *input, *work;
-  fastsht_grid_info *grid;
-  fftw_plan *fft_plans;
-};
-
-struct _fastsht_plan_healpix {
-  struct _fastsht_plan base;
-  int Nside;
-};
-typedef struct _fastsht_plan_healpix *fastsht_plan_healpix;
-
-
 /*
 Global storage
 */
@@ -47,14 +33,17 @@ The precomputed data, per m. For now we only support a single Nside
 at the time, this will definitely change.
 */
 typedef struct {
-  char *even_matrix;
-  char *odd_matrix;
+  double *evaluation_grid_squared, *output_grid_squared, *gamma, *omega;
+  char *matrix_data;
 } precomputation_t;
 
 
 static char *mmapped_buffer;
 static size_t mmap_len;
-static precomputation_t *precomputed_data;
+/*
+Helper to access rights part of buffer:
+*/
+static precomputation_t *precomputed_data; /* 2D array [ms, odd ? 1 : 0] */
 
 
 
@@ -88,12 +77,21 @@ static void print_array(char *msg, double* arr, bfm_index_t len) {
 Public
 */
 
+static char *skip_padding(char *ptr) {
+  size_t m = (size_t)ptr % 16;
+  if (m == 0) {
+    return ptr;
+  } else { 
+    return ptr + 16 - m;
+  }
+}
 
 int fastsht_add_precomputation_file(char *filename) {
   int fd;
   struct stat fileinfo;
-  int64_t mmax, m, len;
+  int64_t mmax, lmax, Nside, m, len, n, odd;
   int64_t *offsets = NULL;
+  precomputation_t *rec;
   int retcode;
   char *head;
   /*
@@ -109,16 +107,32 @@ int fastsht_add_precomputation_file(char *filename) {
   if (mmapped_buffer == MAP_FAILED) goto ERROR;
   head = mmapped_buffer;
   /* Read mmax, allocate arrays, read offsets */
-  mmax = ((int64_t*)head)[0];
-  head += sizeof(int64_t);
-  precomputed_data = malloc(sizeof(precomputation_t[mmax + 1]));
-  memset(precomputed_data, 0, sizeof(precomputation_t[mmax + 1]));
+  lmax = ((int64_t*)head)[0];
+  mmax = ((int64_t*)head)[1];
+  Nside = ((int64_t*)head)[2];
+  head += sizeof(int64_t[3]);
+  precomputed_data = malloc(sizeof(precomputation_t[2 * (mmax + 1)]));
   if (precomputed_data == NULL) goto ERROR;
   offsets = (int64_t*)head;
   /* Read compressed matrices */
   for (m = 0; m != mmax + 1; ++m) {
-    precomputed_data[m].even_matrix = mmapped_buffer + offsets[4 * m];
-    precomputed_data[m].odd_matrix = mmapped_buffer + offsets[4 * m + 2];
+    n = (mmax - m) / 2;
+    if (n > 0) {
+      for (odd = 0; odd != 2; ++odd) {
+        rec = precomputed_data + 2 * m + odd;
+        head = mmapped_buffer + offsets[4 * m + 2 * odd];
+        rec->evaluation_grid_squared = (double*)head;
+        head = skip_padding(head + sizeof(double[n]));
+        rec->gamma = (double*)head;
+        head = skip_padding(head + sizeof(double[n]));
+        rec->output_grid_squared = (double*)head;
+        head = skip_padding(head + sizeof(double[2 * Nside]));
+        rec->omega = (double*)head;
+        head = skip_padding(head + sizeof(double[2 * Nside]));
+        rec->matrix_data = head;
+
+      }
+    }
   }
   retcode = 0;
   goto FINALLY;
@@ -136,28 +150,32 @@ int fastsht_add_precomputation_file(char *filename) {
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *input,
                                      double *output, double *work, int ordering) {
-  fastsht_plan_healpix plan = 
-    (fastsht_plan_healpix)malloc(sizeof(struct _fastsht_plan_healpix));
+  fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
   int iring;
   fastsht_grid_info *grid;
   int nrings = 4 * Nside - 1;
   bfm_index_t work_stride = 1 + mmax, start, stop;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_MEASURE;
 
-  plan->base.type = PLANTYPE_HEALPIX;
-  plan->base.input = input;
-  plan->base.output = output;
-  plan->base.work = work;
-  plan->base.grid = grid = fastsht_create_healpix_grid_info(Nside);
+  plan->type = PLANTYPE_HEALPIX;
+  plan->input = input;
+  plan->output = output;
+  plan->work = work;
+  plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
+
+  plan->work_a_l = memalign(16, sizeof(complex double[2 * (lmax + 1)])); /*TODO: 2 x here? */
+  plan->work_g_m_roots = memalign(16, sizeof(complex double[(lmax + 1) / 2]));
+  plan->work_g_m_even = memalign(16, sizeof(complex double[plan->grid->mid_ring + 1]));
+  plan->work_g_m_odd = memalign(16, sizeof(complex double[plan->grid->mid_ring + 1]));
 
   plan->Nside = Nside;
-  plan->base.lmax = lmax;
-  plan->base.mmax = mmax;
-  plan->base.fft_plans = (fftw_plan*)malloc(nrings * sizeof(fftw_plan));
+  plan->lmax = lmax;
+  plan->mmax = mmax;
+  plan->fft_plans = (fftw_plan*)malloc(nrings * sizeof(fftw_plan));
   for (iring = 0; iring != grid->nrings; ++iring) {
     start = grid->ring_offsets[iring];
     stop = grid->ring_offsets[iring + 1];
-    plan->base.fft_plans[iring] = 
+    plan->fft_plans[iring] = 
       fftw_plan_dft_c2r_1d(stop - start, (fftw_complex*)(work + 2 * work_stride * iring),
                            output + start, flags);
   }
@@ -171,65 +189,80 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   }
   fastsht_free_grid_info(plan->grid);
   free(plan->fft_plans);
+  free(plan->work_a_l);
+  free(plan->work_g_m_roots);
+  free(plan->work_g_m_even);
+  free(plan->work_g_m_odd);
   free(plan);
 }
 
 void fastsht_execute(fastsht_plan plan) {
-  bfm_index_t m, lmax, mmax, nrows, nrings, ncols, iring, l, mid_ring, j;
-  complex double *input_m;
-  complex double *work_input, *work_even, *work_odd, *work;
+  bfm_index_t m, lmax, mmax, nrows, nrings, ncols, iring, l, mid_ring, j, n;
+  int odd;
+  precomputation_t *rec;
+  complex double *input_m, *work;
   assert(plan->grid->has_equator);
   mmax = plan->mmax;
   lmax = plan->lmax;
   mid_ring = plan->grid->mid_ring;
   nrings = plan->grid->nrings;
   nrows = nrings - mid_ring;
-  work_input = memalign(16, sizeof(complex double[2 * (lmax + 1)]));
-  work_even = memalign(16, sizeof(complex double[mid_ring + 1]));
-  work_odd = memalign(16, sizeof(complex double[mid_ring + 1]));
   work = (complex double*)plan->work;
   /* Compute g_m(theta_i), including transpose step for now */
-  for (m = 0; m != mmax + 1; ++m) {
+  for (m = 0; m != mmax + 1 - 2; ++m) {
     input_m = (complex double*)plan->input + (m * (lmax + 1) - (m * (m - 1)) / 2);
     ncols = lmax - m + 1;
+    n = (lmax - m) / 2;
+    for (odd = 0; odd != 2; ++odd) {
+      rec = precomputed_data + 2 * m + odd;
+      ncols = 0;
+      for (l = m + ((m + odd) % 2); l <= lmax; l += 2) {
+        plan->work_a_l[ncols] = input_m[l];
+        ++ncols;
+      }
+      /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
+      bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)plan->work_g_m_roots,
+                  n, ncols, 2);
+      /* Interpolate with FMM */
+      fastsht_fmm1d(rec->evaluation_grid_squared, rec->gamma, (double*)plan->work_g_m_roots, n,
+                    rec->output_grid_squared, rec->omega,
+                    (double*)(odd ? plan->work_g_m_odd : plan->work_g_m_even),
+                    nrows, 2);
 
-    /* Copy in even parts */
-    ncols = 0;
-    for (l = m + (m % 2); l <= lmax; l += 2) {
-      work_input[ncols] = input_m[l];
-      ++ncols;
     }
-    /* Apply even matrix */
-    bfm_apply_d(precomputed_data[m].even_matrix, (double*)work_input, (double*)work_even,
-                nrows, ncols, 2);
-    /* Odd part */
-    ncols = 0;
-    for (l = m + ((m + 1) % 2); l <= lmax; l += 2) {
-      work_input[ncols] = input_m[l];
-      ++ncols;
-    }
-    /* Apply odd matrix */
-    bfm_apply_d(precomputed_data[m].odd_matrix, (double*)work_input, (double*)work_odd,
-                nrows, ncols, 2);
 
     /* Add together parts and distribute/transpose to plan->work */
     /* Equator */
-    work[mid_ring * (mmax + 1) + m] = work_even[0];
+    work[mid_ring * (mmax + 1) + m] = plan->work_g_m_even[0];
     /* Ring-pairs */
     for (iring = 1; iring < mid_ring + 1; ++iring) {
       /* Top ring -- switch odd sign */
       work[(mid_ring - iring) * (mmax + 1) + m] = 
-        work_even[iring] - work_odd[iring]; /* sign! */
+        plan->work_g_m_even[iring] - plan->work_g_m_odd[iring]; /* sign! */
       /* Bottom ring */
       work[(mid_ring + iring) * (mmax + 1) + m] =
-        work_even[iring] + work_odd[iring];
+        plan->work_g_m_even[iring] + plan->work_g_m_odd[iring];
     }
   }
-  free(work_input);
-  free(work_even);
-  free(work_odd);
   /* Backward FFTs from plan->work to plan->output */
   fastsht_perform_backward_ffts(plan, 0, nrings);
+}
+
+void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
+  bfm_index_t ncols, n, l, lmax = plan->lmax;
+  double complex *input_m = (double complex*)plan->input + m * (2 * lmax - m + 3) / 2;
+  precomputation_t *rec;
+  ncols = lmax - m + 1;
+  n = (lmax - m) / 2;
+  rec = precomputed_data + 2 * m + odd;
+  ncols = 0;
+  for (l = m + odd; l <= lmax; l += 2) {
+    plan->work_a_l[ncols] = input_m[l - m];
+    ++ncols;
+  }
+  /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
+  bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)plan->work_g_m_roots,
+              n, ncols, 2);
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {

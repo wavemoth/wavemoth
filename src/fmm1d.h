@@ -7,21 +7,23 @@ struct _fmm1d_plan;
 typedef struct fmm1d_plan *fmm1d_plan;
 
 /*
-Fast multipole method -- evaluates
+Fast multipole method. Evaluates
 
-output_x[j] = sum_{i = 1, i != j}^{nx} \frac{input_x[i]}{y_j - x_i}
+\phi_{jk} = sum_{i = 0}^{n-1} (\omega_j \gamma_i q_{ik})/(y_j - x_i),
 
-using [...]
+using [..TODO ref..].
 
+BUGS:
 
-fmm1d_plan fmm1d_plan_simple(double *grid_x, size_t nx, double *grid_y, size_t ny);
-void fmm1d_destroy_plan(fmm1d_plan plan);
-void fmm1d_execute(fmm1d_plan plan, double *input_x, double *output_y);
+The procedure currently aborts the program if a point y_j is too close
+to x_i. Some mechanism for transitioning to a limiting expression
+should be added.
 */
 
-void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x, size_t nx,
-                   const double *restrict y_grid, double *restrict output_y, size_t ny,
-                   size_t nvecs);
+void fastsht_fmm1d(const double *restrict x_grid, const double *restrict gamma,
+                   const double *restrict q, size_t nx,
+                   const double *restrict y_grid, const double *restrict omega,
+                   double *restrict phi, size_t ny, size_t nvecs);
 
 
 #endif

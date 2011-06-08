@@ -29,15 +29,16 @@ static double QUAD_WEIGHTS[28] SSE_ALIGNED;
 /*   free(info); */
 /* } */
 
-void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x, size_t nx,
-                   const double *restrict y_grid, double *restrict output_y, size_t ny,
-                   size_t nvecs) {
+void fastsht_fmm1d(const double *restrict x_grid, const double *restrict gamma,
+                   const double *restrict q, size_t nx,
+                   const double *restrict y_grid, const double *restrict omega,
+                   double *restrict phi, size_t ny, size_t nvecs) {
   /*
     x_far - The position of the far-field expansion
     ix_far - Index (in x_grid) for far-field expansion, positioned one
      element past the last grid point of the far field
    */
-  double max_dist, s, r, x_far, dx, y, exp_term;
+  double max_dist, s, r, x_far, dx, yval, exp_term;
   ssize_t i, j, k, ix, iy, ix_far;
 
   double *restrict quad_weights, *restrict quad_points, *restrict alpha,
@@ -45,10 +46,9 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
   /* Corner cases */
   if (ny == 0 || nvecs == 0) return;
   if (nx == 0) {
-    for (i = 0; i != ny * nvecs; ++i) output_y[i] = 0;
+    for (i = 0; i != ny * nvecs; ++i) phi[i] = 0;
     return;
   }
-
   /* Allocate aligned buffers for quadrature points, quadrature
      weights, and expansion. */
   assert((NQUAD * sizeof(double)) % 16 == 0);
@@ -79,39 +79,40 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
   */
   x_far = fmin(x_grid[0], y_grid[0]);
   for (iy = 0; iy != ny; ++iy) {
-    y = y_grid[iy];
+    yval = y_grid[iy];
     /* Translate and update far-field expansion of input values until
        it is within r of our output evaluation point. */
-    while (ix_far < nx && x_grid[ix_far] < y - r) {
+    while (ix_far < nx && x_grid[ix_far] < yval - r) {
       dx = x_far - x_grid[ix_far];
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
         exp_term = exp(dx * quad_points[k]);
         for (j = 0; j != nvecs; ++j) {
-          alpha[k * nvecs + j] = alpha[k * nvecs + j] * exp_term + input_x[ix_far * nvecs + j];
+          alpha[k * nvecs + j] = alpha[k * nvecs + j] * exp_term + 
+            ((gamma[ix_far] * q[ix_far * nvecs + j]));
         }
       }
       ++ix_far;
     }
     /* Evaluate far-field expansion at output point. */
-    dx = x_far - y;
-    for (j = 0; j != nvecs; ++j) output_y[iy * nvecs + j] = 0;
+    dx = x_far - yval;
+    for (j = 0; j != nvecs; ++j) phi[iy * nvecs + j] = 0;
     for (k = 0; k != NQUAD; ++k) {
       exp_term = quad_weights[k] * exp(dx * quad_points[k]);
       for (j = 0; j != nvecs; ++j) {
-        output_y[iy * nvecs + j] += alpha[k * nvecs + j] * exp_term;
+        phi[iy * nvecs + j] += omega[iy] * alpha[k * nvecs + j] * exp_term;
       }
     }
     /* Brute-force computation of near-field contribution (both
        to left and right of evaluation point, while we're at it). */
-    for (ix = ix_far; ix < nx && x_grid[ix] <= y + r; ++ix) {
+    for (ix = ix_far; ix < nx && x_grid[ix] <= yval + r; ++ix) {
       /* This issue must be studied further if it arises */
-      checkf(fabs(y - x_grid[ix]) / max_dist > 1e-7,
+      checkf(fabs(yval - x_grid[ix]) / max_dist > 1e-7,
              "Evaluation point %e too close to grid point %e relative to max distance %e",
-             y, x_grid[ix], max_dist);
-      exp_term = 1 / (y - x_grid[ix]);
+             yval, x_grid[ix], max_dist);
+      exp_term = 1 / (yval - x_grid[ix]);
       for (j = 0; j != nvecs; ++j) {
-        output_y[iy * nvecs + j] += input_x[ix * nvecs + j] * exp_term;
+        phi[iy * nvecs + j] += omega[iy] * (gamma[ix] * q[ix * nvecs + j]) * exp_term;
       }
     }
   }
@@ -124,25 +125,26 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict input_x
   ix_far = nx - 1;
   x_far = fmax(x_grid[nx - 1], y_grid[ny - 1]);
   for (iy = ny - 1; iy != -1; iy--) {
-    y = y_grid[iy];
+    yval = y_grid[iy];
     /* Translate & update right far-field expansion*/
-    while (ix_far > -1 && x_grid[ix_far] > y + r) {
+    while (ix_far > -1 && x_grid[ix_far] > yval + r) {
       dx = x_grid[ix_far] - x_far;
       x_far = x_grid[ix_far];
       for (k = 0; k != NQUAD; ++k) {
         exp_term = exp(dx * quad_points[k]);
         for (j = 0; j != nvecs; ++j) {
-          alpha[k * nvecs + j] = alpha[k * nvecs + j] * exp_term + input_x[ix_far * nvecs + j];
+          alpha[k * nvecs + j] = alpha[k * nvecs + j] * exp_term + 
+            (gamma[ix_far] * q[ix_far * nvecs + j]);
         }
       }
       --ix_far;
     }
     /* Evaluate expansion and add contribution */
-    dx = y - x_far;
+    dx = yval - x_far;
     for (k = 0; k != NQUAD; ++k) {
       exp_term = quad_weights[k] * exp(dx * quad_points[k]);
       for (j = 0; j != nvecs; ++j) {
-        output_y[iy * nvecs + j] -= alpha[k * nvecs + j] * exp_term;
+        phi[iy * nvecs + j] -= omega[iy] * alpha[k * nvecs + j] * exp_term;
       }
     }
 

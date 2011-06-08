@@ -3,9 +3,10 @@ cimport cython
 import numpy as np
 
 cdef extern from "fmm1d.h":
-    void fastsht_fmm1d(double *x_grid, double *input_x, size_t nx,
-                       double *y_grid, double *output_y, size_t ny,
-                       size_t nvecs)
+    void fastsht_fmm1d(double *x_grid,  double *gamma,
+                       double *q, size_t nx,
+                       double *y_grid,  double *omega,
+                       double *phi, size_t ny, size_t nvecs)
 
 cdef extern from "math.h":
     double exp(double)
@@ -22,22 +23,28 @@ cdef extern from "mkl_vml.h":
     
 
 def fmm1d(np.ndarray[double, mode='c'] x_grid,
-          np.ndarray[double, ndim=2, mode='c'] input_x,
+          np.ndarray[double, ndim=2, mode='c'] q,
           np.ndarray[double, mode='c'] y_grid,
-          np.ndarray[double, ndim=2, mode='c'] output_y=None,
+          np.ndarray[double, mode='c'] omega=None,
+          np.ndarray[double, mode='c'] gamma=None,
+          np.ndarray[double, ndim=2, mode='c'] out=None,
           int repeat=1):
     cdef int i
-    if output_y is None:
-        output_y = np.zeros((y_grid.shape[0], input_x.shape[1]))
-    if (x_grid.shape[0] != input_x.shape[0] or y_grid.shape[0] != output_y.shape[0]
-        or input_x.shape[1] != output_y.shape[1]):
+    if out is None:
+        out = np.zeros((y_grid.shape[0], q.shape[1]))
+    if omega is None:
+        omega = y_grid * 0 + 1
+    if gamma is None:
+        gamma = x_grid * 0 + 1
+    if (not x_grid.shape[0] == q.shape[0] == gamma.shape[0]
+        or not y_grid.shape[0] == out.shape[0] == omega.shape[0]
+        or q.shape[1] != out.shape[1]):
         raise ValueError("Shapes do not conform")
     for i in range(repeat):
-        fastsht_fmm1d(<double*>x_grid.data, <double*>input_x.data, x_grid.shape[0],
-                      <double*>y_grid.data, <double*>output_y.data, y_grid.shape[0],
-                      input_x.shape[1])
-    return output_y
-
+        fastsht_fmm1d(<double*>x_grid.data, <double*>gamma.data, <double*>q.data, x_grid.shape[0],
+                      <double*>y_grid.data, <double*>omega.data, <double*>out.data, y_grid.shape[0],
+                      q.shape[1])
+    return out
                   
 @cython.boundscheck(False)
 @cython.wraparound(False)

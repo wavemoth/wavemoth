@@ -53,8 +53,16 @@ def test_compressed_application():
     S = InnerNode([(IP, IP)], (I, I))
     R = RootNode([np.eye(4) * 2, np.eye(4) * 3], S)
     C = serialize_butterfly_matrix(R)
-    y = C.apply(np.arange(4))
-    yield assert_almost_equal, y, [0, 2, 4, 6, 0, 3, 6, 9]
+    X = np.vstack([np.arange(4), np.arange(10, 14)]).T.copy()
+    y = C.apply(X)
+    yield assert_almost_equal, y, [[  0.,  20.],
+                                   [  2.,  22.],
+                                   [  4.,  24.],
+                                   [  6.,  26.],
+                                   [  0.,  30.],
+                                   [  3.,  33.],
+                                   [  6.,  36.],
+                                   [  9.,  39.]]
 
 def test_compressed_application2():
     "Manually constructed data, one interpolation matrix"

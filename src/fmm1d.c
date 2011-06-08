@@ -107,7 +107,7 @@ void fastsht_fmm1d(const double *restrict x_grid, const double *restrict gamma,
        to left and right of evaluation point, while we're at it). */
     for (ix = ix_far; ix < nx && x_grid[ix] <= yval + r; ++ix) {
       /* This issue must be studied further if it arises */
-      checkf(fabs(yval - x_grid[ix]) / max_dist > 1e-7,
+      checkf(fabs(yval - x_grid[ix]) / max_dist > 1e-10,
              "Evaluation point %e too close to grid point %e relative to max distance %e",
              yval, x_grid[ix], max_dist);
       exp_term = 1 / (yval - x_grid[ix]);

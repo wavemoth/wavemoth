@@ -121,9 +121,9 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
   bfm_index_t nrows_first = ((bfm_index_t*)head)[2 * order];
   bfm_index_t nrows_second = ((bfm_index_t*)head)[2 * order + 1];
   bfm_index_t col_split = ((bfm_index_t*)head)[2 * order + 2];
-  checkf(nrows >= nrows_first + nrows_second,
+  /*checkf(nrows >= nrows_first + nrows_second,
          "nrows=%d, but nrows_first + nrows_second = %d + %d = %d",
-         nrows, nrows_first, nrows_second, nrows_first + nrows_second);
+         nrows, nrows_first, nrows_second, nrows_first + nrows_second);*/
   head += sizeof(bfm_index_t[2 * order + 3]);
   if (order == 1) {
     /* Parse the two leaf node identity matrices */
@@ -134,20 +134,20 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
     *data_from_first = input;
     *data_from_second = *data_from_first + nrows_first * nvecs;
   } else {
-    printf("IN\n");
+    //    printf("IN\n");
     *data_from_first = output;
     /* Recurse to sub-nodes. */
     *out_block_widths_first = (bfm_index_t*) head;
-    printf("CONSUMING %d : %lx\n", nrows_first, (size_t)output);
+    //    printf("CONSUMING %d : %lx\n", nrows_first, (size_t)output);
     head = apply_butterfly_node_d(head, order / 2, input, *data_from_first, buffer2, nrows_first,
                                   col_split, nvecs);
     input += col_split * nvecs;
     *data_from_second = *data_from_first + nrows_first * nvecs;
     *out_block_widths_second = (bfm_index_t*) head;
-    printf("CONSUMING %d : %lx\n", nrows_second, (size_t)output);
+    //printf("CONSUMING %d : %lx\n", nrows_second, (size_t)output);
     head = apply_butterfly_node_d(head, order / 2, input, *data_from_second, buffer2, nrows_second,
                                   ncols - col_split, nvecs);
-    printf("OUT\n");
+    //printf("OUT\n");
   }
   return head;
 }
@@ -216,9 +216,9 @@ int bfm_apply_d(char *head, double *x, double *y,
          ((bfm_index_t*)head)[1], nrows);
   checkf(((bfm_index_t*)head)[2] == ncols, "Expected ncols==%d but got %d", 
          ((bfm_index_t*)head)[2], ncols);
-  printf("nrows=%d ncols=%d\n", nrows, ncols);
-  buffer = memalign(16, sizeof(double[nrows * nvecs]));
-  buffer2 = memalign(16, sizeof(double[nrows * nvecs]));
+  //  printf("nrows=%d ncols=%d\n", nrows, ncols);
+  buffer = memalign(16, sizeof(double[nrows * nvecs * 2]));
+  buffer2 = memalign(16, sizeof(double[nrows * nvecs * 2]));
 
   order = ((bfm_index_t*)head)[0];
   head += sizeof(bfm_index_t[3]);

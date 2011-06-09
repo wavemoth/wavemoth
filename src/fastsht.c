@@ -202,7 +202,7 @@ void fastsht_execute(fastsht_plan plan) {
   precomputation_t *rec;
   mmax = plan->mmax;
   /* Compute g_m(theta_i), including transpose step for now */
-  for (m = 0; m != mmax + 1 - 2; ++m) {
+  for (m = 0; m != mmax + 1 - 2; ++m) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
       rec = precomputed_data + 2 * m + odd;
       fastsht_perform_matmul(plan, m, odd);

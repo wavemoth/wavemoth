@@ -113,7 +113,7 @@ def test_interpolation():
         _, dP_roots = Plm_and_dPlm(m + 2 * n + odd, m, roots)
         rho = 2 * (2 * m + 4 * n + 1 + 2 * odd) / ((1 - roots**2) * (dP_roots)**2)
         c = get_c(m + 2 * n - 2 + odd, m)
-        P_m_2n_nodes, _ = Plm_and_dPlm(m + 2 * n, m, nodes)
+        P_m_2n_nodes, _ = Plm_and_dPlm(m + 2 * n + odd, m, nodes)
         K = 1.0 / np.subtract.outer(nodes**2, roots**2)
         result0 = c * P_m_2n_nodes * np.dot(K, P_m_2n_sub_2_roots * rho * values)
 

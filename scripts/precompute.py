@@ -50,7 +50,7 @@ def compute_m(m, lmax, thetas, Nside, min_rows):
             c = get_c(m + 2 * n - 2 + odd, m)
             # Evaluated in grid:
             P_m_2n = compute_normalized_associated_legendre(
-                m, thetas, m + 2 * n)[:, -1]
+                m, thetas, m + 2 * n + odd)[:, -1]
             assert P_m_2n.shape[0] == 2 * Nside
             write_array(stream, c * P_m_2n)
         
@@ -98,5 +98,5 @@ def compute(stream, mmax, lmax, Nside, min_rows):
 
 Nside = 128
 lmax = mmax = 2 * Nside
-with file('precomputed2.dat', 'wb') as f:
+with file('precomputed.dat', 'wb') as f:
     compute(f, mmax, lmax, Nside, min_rows=64)

@@ -199,12 +199,10 @@ void fastsht_destroy_plan(fastsht_plan plan) {
 void fastsht_execute(fastsht_plan plan) {
   bfm_index_t m, mmax;
   int odd;
-  precomputation_t *rec;
   mmax = plan->mmax;
   /* Compute g_m(theta_i), including transpose step for now */
   for (m = 0; m != mmax + 1 - 2; ++m) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
-      rec = precomputed_data + 2 * m + odd;
       fastsht_perform_matmul(plan, m, odd);
       /* Interpolate with FMM */
       fastsht_perform_interpolation(plan, m, odd);

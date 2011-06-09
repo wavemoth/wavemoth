@@ -197,44 +197,22 @@ void fastsht_destroy_plan(fastsht_plan plan) {
 }
 
 void fastsht_execute(fastsht_plan plan) {
-  bfm_index_t m, lmax, mmax, nrows, nrings, ncols, iring, l, mid_ring, j, n;
+  bfm_index_t m, mmax;
   int odd;
   precomputation_t *rec;
-  complex double *input_m, *work;
-  assert(plan->grid->has_equator);
   mmax = plan->mmax;
-  lmax = plan->lmax;
-  mid_ring = plan->grid->mid_ring;
-  nrings = plan->grid->nrings;
-  nrows = nrings - mid_ring;
-  work = (complex double*)plan->work;
   /* Compute g_m(theta_i), including transpose step for now */
   for (m = 0; m != mmax + 1 - 2; ++m) {
-    input_m = (complex double*)plan->input + (m * (lmax + 1) - (m * (m - 1)) / 2);
-    ncols = lmax - m + 1;
-    n = (lmax - m) / 2;
     for (odd = 0; odd != 2; ++odd) {
       rec = precomputed_data + 2 * m + odd;
       fastsht_perform_matmul(plan, m, odd);
       /* Interpolate with FMM */
       fastsht_perform_interpolation(plan, m, odd);
     }
-
-    /* Add together parts and distribute/transpose to plan->work */
-    /* Equator */
-    work[mid_ring * (mmax + 1) + m] = plan->work_g_m_even[0];
-    /* Ring-pairs */
-    for (iring = 1; iring < mid_ring + 1; ++iring) {
-      /* Top ring -- switch odd sign */
-      work[(mid_ring - iring) * (mmax + 1) + m] = 
-        plan->work_g_m_even[iring] - plan->work_g_m_odd[iring]; /* sign! */
-      /* Bottom ring */
-      work[(mid_ring + iring) * (mmax + 1) + m] =
-        plan->work_g_m_even[iring] + plan->work_g_m_odd[iring];
-    }
+    fastsht_merge_even_odd_and_transpose(plan, m);
   }
   /* Backward FFTs from plan->work to plan->output */
-  fastsht_perform_backward_ffts(plan, 0, nrings);
+  fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
 }
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
@@ -264,6 +242,27 @@ void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
                 2 * plan->Nside, 2);
 }
 
+void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {
+  bfm_index_t mmax, nrings, iring, mid_ring;
+  double complex *work;
+  assert(plan->grid->has_equator);
+  mmax = plan->mmax;
+  mid_ring = plan->grid->mid_ring;
+  nrings = plan->grid->nrings;
+  work = (complex double*)plan->work;
+  /* Add together parts and distribute/transpose to plan->work */
+  /* Equator */
+  work[mid_ring * (mmax + 1) + m] = plan->work_g_m_even[0];
+  /* Ring-pairs */
+  for (iring = 1; iring < mid_ring + 1; ++iring) {
+    /* Top ring -- switch odd sign */
+    work[(mid_ring - iring) * (mmax + 1) + m] = 
+      plan->work_g_m_even[iring] - plan->work_g_m_odd[iring]; /* sign! */
+    /* Bottom ring */
+    work[(mid_ring + iring) * (mmax + 1) + m] =
+      plan->work_g_m_even[iring] + plan->work_g_m_odd[iring];
+  }
+}
 
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {

@@ -95,39 +95,40 @@ def get_c(l, m):
 
 def test_interpolation():
     plan = make_plan()
-    m = 4
-    for odd in (0, 1):
-        n = (lmax - m) // 2
+    for m in (0, 4):
+        for odd in (0, 1):
+            n = (lmax - m) // 2
 
-        roots = associated_legendre_roots(m + 2 * n + odd, m)
-        nodes = np.cos(healpix.get_ring_thetas(Nside, positive_only=True))
-        values = np.sin(roots * 5)
-        values = values - 1j*values
+            roots = associated_legendre_roots(m + 2 * n + odd, m)
+            nodes = np.cos(healpix.get_ring_thetas(Nside, positive_only=True))
+            values = np.sin(roots * 5)
+            values = values - 1j*values
 
-        # Run C code
-        plan.work_g_m_roots[:values.shape[0]] = values
-        result = plan.perform_interpolation(m, odd)
+            # Run C code
+            plan.work_g_m_roots[:values.shape[0]] = values
+            result = plan.perform_interpolation(m, odd)
 
-        # Brute-force FMM
-        P_m_2n_sub_2_roots, _ = Plm_and_dPlm(m + 2 * n + odd - 2, m, roots)
-        _, dP_roots = Plm_and_dPlm(m + 2 * n + odd, m, roots)
-        rho = 2 * (2 * m + 4 * n + 1 + 2 * odd) / ((1 - roots**2) * (dP_roots)**2)
-        c = get_c(m + 2 * n - 2 + odd, m)
-        P_m_2n_nodes, _ = Plm_and_dPlm(m + 2 * n + odd, m, nodes)
-        K = 1.0 / np.subtract.outer(nodes**2, roots**2)
-        result0 = c * P_m_2n_nodes * np.dot(K, P_m_2n_sub_2_roots * rho * values)
+            # Brute-force FMM
+            P_m_2n_sub_2_roots, _ = Plm_and_dPlm(m + 2 * n + odd - 2, m, roots)
+            _, dP_roots = Plm_and_dPlm(m + 2 * n + odd, m, roots)
+            rho = 2 * (2 * m + 4 * n + 1 + 2 * odd) / ((1 - roots**2) * (dP_roots)**2)
+            c = get_c(m + 2 * n - 2 + odd, m)
+            P_m_2n_nodes, _ = Plm_and_dPlm(m + 2 * n + odd, m, nodes)
+            K = 1.0 / np.subtract.outer(nodes**2, roots**2)
+            result0 = c * P_m_2n_nodes * np.dot(K, P_m_2n_sub_2_roots * rho * values)
 
-        yield assert_almost_equal, result0, result
+            yield assert_almost_equal, result0, result
 
-    if do_plot:
-        plt.plot(roots, values.real, 'ob')
-        plt.plot(roots, values.imag, 'og')
-        plt.plot(nodes, result.real, '-xb')
-        plt.plot(nodes, result.imag, '-xg')
-        plt.plot(nodes, result0.real, 'r')
-        plt.plot(nodes, result0.imag, 'r:')
-    
-        plt.show()
+        if do_plot:
+            plt.clf()
+            plt.plot(roots, values.real, 'ob')
+            plt.plot(roots, values.imag, 'og')
+            plt.plot(nodes, result.real, '-xb')
+            plt.plot(nodes, result.imag, '-xg')
+            plt.plot(nodes, result0.real, 'r')
+            plt.plot(nodes, result0.imag, 'r:')
+
+            plt.show()
     
 
 def test_healpix_phi0():

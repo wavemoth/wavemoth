@@ -105,7 +105,8 @@ def test_interpolation():
         values = values - 1j*values
 
         # Run C code
-        result = plan.perform_interpolation(values, m, odd)
+        plan.work_g_m_roots[:values.shape[0]] = values
+        result = plan.perform_interpolation(m, odd)
 
         # Brute-force FMM
         P_m_2n_sub_2_roots, _ = Plm_and_dPlm(m + 2 * n + odd - 2, m, roots)

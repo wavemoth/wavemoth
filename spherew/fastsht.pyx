@@ -1,6 +1,8 @@
 cimport numpy as np
 import numpy as np
 
+np.import_array()
+
 cdef extern from "complex.h":
     pass
 
@@ -53,6 +55,7 @@ _precomputation_file = b"/home/dagss/code/spherew/precomputed.dat"
 cdef class ShtPlan:
     cdef fastsht_plan plan
     cdef readonly object input, output, work
+    cdef readonly object work_a_l, work_g_m_roots, work_g_m_even, work_g_m_odd
     
     def __cinit__(self, int Nside, int lmax, int mmax,
                   np.ndarray[double complex, mode='c'] input,
@@ -77,6 +80,17 @@ cdef class ShtPlan:
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax,
                                             <double*>input.data, <double*>output.data,
                                             <double*>work.data, flags)
+        cdef np.npy_intp *shape = [lmax + 1]
+        self.work_a_l = np.PyArray_SimpleNewFromData(1, shape, np.NPY_CDOUBLE,
+                                                     self.plan.work_a_l)
+        shape[0] = (lmax + 1) // 2
+        self.work_g_m_roots = np.PyArray_SimpleNewFromData(1, shape, np.NPY_CDOUBLE,
+                                                           self.plan.work_g_m_roots)
+        shape[0] = 2 * Nside
+        self.work_g_m_even = np.PyArray_SimpleNewFromData(1, shape, np.NPY_CDOUBLE,
+                                                          self.plan.work_g_m_even)
+        self.work_g_m_odd = np.PyArray_SimpleNewFromData(1, shape, np.NPY_CDOUBLE,
+                                                         self.plan.work_g_m_odd)
 
     def __dealloc__(self):
         if self.plan != NULL:
@@ -97,22 +111,12 @@ cdef class ShtPlan:
             out[i] = self.plan.work_g_m_roots[i]
         return out
 
-    def perform_interpolation(self, np.ndarray[double complex] values_at_roots,
-                              bfm_index_t m, int odd):
-        cdef int n = 2 * self.plan.Nside, i
-        cdef np.ndarray[double complex] out = np.zeros(n, np.complex128)
-        if values_at_roots.shape[0] != (self.plan.lmax - m) // 2:
-            raise ValueError()
-        for i in range(values_at_roots.shape[0]):
-            self.plan.work_g_m_roots[i] = values_at_roots[i]
+    def perform_interpolation(self, bfm_index_t m, int odd):
         fastsht_perform_interpolation(self.plan, m, odd)
         if odd:
-            for i in range(n):
-                out[i] = self.plan.work_g_m_odd[i]
+            return self.work_g_m_odd
         else:
-            for i in range(n):
-                out[i] = self.plan.work_g_m_even[i]
-        return out
+            return self.work_g_m_even
 
 def _get_healpix_phi0s(Nside):
     " Expose fastsht_create_healpix_grid_info for unit tests. "

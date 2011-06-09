@@ -39,9 +39,10 @@ def test_basic():
     plan.execute()
 
     y2 = psht.alm2map_mmajor(plan.input, Nside=Nside)
-    pixel_sphere_map(y2, pixel_order='ring').plot(title='FID')
-    pixel_sphere_map(plan.output, pixel_order='ring').plot()
-#    plt.show()
+    if do_plot:
+        pixel_sphere_map(y2, pixel_order='ring').plot(title='FID')
+        pixel_sphere_map(plan.output, pixel_order='ring').plot()
+        plt.show()
 
     print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     yield assert_almost_equal, y2, plan.output

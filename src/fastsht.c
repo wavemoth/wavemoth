@@ -253,12 +253,12 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {
   work[mid_ring * (mmax + 1) + m] = plan->work_g_m_even[0];
   /* Ring-pairs */
   for (iring = 1; iring < mid_ring + 1; ++iring) {
-    /* Top ring -- switch odd sign */
+    /* Top ring */
     work[(mid_ring - iring) * (mmax + 1) + m] = 
-      plan->work_g_m_even[iring] - plan->work_g_m_odd[iring]; /* sign! */
-    /* Bottom ring */
-    work[(mid_ring + iring) * (mmax + 1) + m] =
       plan->work_g_m_even[iring] + plan->work_g_m_odd[iring];
+    /* Bottom ring -- switch odd sign */
+    work[(mid_ring + iring) * (mmax + 1) + m] =
+      plan->work_g_m_even[iring] - plan->work_g_m_odd[iring]; /* sign! */
   }
 }
 

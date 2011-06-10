@@ -16,7 +16,6 @@ cdef extern from "mkl_vml.h":
         VML_HA
         VML_LA
         VML_EP
-        VML_FTZDAZ_ON
         VML_ERRMODE_STDERR
     int vmlSetMode(int)
     void vdExp(Py_ssize_t n, double *a, double *y)
@@ -75,7 +74,7 @@ def bench_add(np.ndarray[double, mode='c'] x, np.ndarray[double, mode='c'] out, 
 @cython.wraparound(False)
 def bench_vml_exp(np.ndarray[double, mode='c'] x, np.ndarray[double, mode='c'] out, int repeat):
     cdef int i, j
-    vmlSetMode(VML_LA | VML_FTZDAZ_ON | VML_ERRMODE_STDERR)
+    vmlSetMode(VML_LA | VML_ERRMODE_STDERR)
     for i in range(repeat):
         for j in range(x.shape[0]):
             vdExp(28, <double*>x.data, <double*>out.data)

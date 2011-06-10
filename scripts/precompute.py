@@ -8,7 +8,6 @@ import numpy as np
 from spherew.butterfly import *
 from spherew.healpix import *
 from spherew.benchmark_utils import *
-from spherew.roots import *
 from spherew import *
 from io import BytesIO
 
@@ -31,6 +30,7 @@ def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
         write_int64(stream, flags)
         pad128(stream)
         if interpolate:
+            from spherew.roots import associated_legendre_roots
             roots = associated_legendre_roots(m + 2 * n + odd, m)
             assert roots.shape[0] == n
             write_array(stream, roots**2)

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from __future__ import division
 
 # Stick .. in PYTHONPATH
@@ -15,7 +16,7 @@ from cPickle import dumps, loads
 
 assert os.environ['OMP_NUM_THREADS'] == '1'
 
-Nside = 256
+Nside = 128
 lmax = 2 * Nside
 
 
@@ -24,7 +25,7 @@ J = 10
 input = np.zeros((lmax + 1)**2, dtype=np.complex128)
 output = np.zeros(12*Nside**2)
 work = np.zeros((lmax + 1) * (4 * Nside - 1), dtype=np.complex128)
-plan = ShtPlan(Nside, lmax, lmax, input.view(np.double), output,
+plan = ShtPlan(Nside, lmax, lmax, input, output,
                work.view(np.double), 'mmajor')
 
 

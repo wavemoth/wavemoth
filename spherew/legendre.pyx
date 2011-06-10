@@ -1,6 +1,6 @@
 from __future__ import division
 
-cdef extern from "ylmgen_c.h":
+cdef extern from "../libpshtlight/ylmgen_c.h":
     ctypedef struct Ylmgen_C:
         int *firstl
         double *ylm

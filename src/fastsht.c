@@ -89,7 +89,7 @@ static char *skip_padding(char *ptr) {
 int fastsht_add_precomputation_file(char *filename) {
   int fd;
   struct stat fileinfo;
-  int64_t mmax, lmax, Nside, m, len, n, odd;
+  int64_t mmax, lmax, Nside, m, len, n, odd, should_interpolate;
   int64_t *offsets = NULL;
   precomputation_t *rec;
   int retcode;
@@ -117,10 +117,13 @@ int fastsht_add_precomputation_file(char *filename) {
   /* Read compressed matrices */
   for (m = 0; m != mmax + 1; ++m) {
     n = (mmax - m) / 2;
-    if (n > 0) {
-      for (odd = 0; odd != 2; ++odd) {
-        rec = precomputed_data + 2 * m + odd;
-        head = mmapped_buffer + offsets[4 * m + 2 * odd];
+    for (odd = 0; odd != 2; ++odd) {
+      rec = precomputed_data + 2 * m + odd;
+      head = mmapped_buffer + offsets[4 * m + 2 * odd];
+      should_interpolate = ((int64_t*)head)[0];
+      head = skip_padding(head + sizeof(int64_t));
+      if (should_interpolate) {
+        //      assert(n > 0);
         rec->evaluation_grid_squared = (double*)head;
         head = skip_padding(head + sizeof(double[n]));
         rec->gamma = (double*)head;
@@ -129,9 +132,10 @@ int fastsht_add_precomputation_file(char *filename) {
         head = skip_padding(head + sizeof(double[2 * Nside]));
         rec->omega = (double*)head;
         head = skip_padding(head + sizeof(double[2 * Nside]));
-        rec->matrix_data = head;
-
+      } else {
+        rec->evaluation_grid_squared = rec->gamma = rec->output_grid_squared = rec->omega = NULL;
       }
+      rec->matrix_data = head;
     }
   }
   retcode = 0;
@@ -204,8 +208,10 @@ void fastsht_execute(fastsht_plan plan) {
   for (m = 0; m != mmax + 1 - 2; ++m) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
       fastsht_perform_matmul(plan, m, odd);
-      /* Interpolate with FMM */
-      fastsht_perform_interpolation(plan, m, odd);
+      if ((precomputed_data + 2 * m + odd)->evaluation_grid_squared != NULL) {
+        /* Interpolate with FMM */
+        fastsht_perform_interpolation(plan, m, odd);
+      }
     }
     fastsht_merge_even_odd_and_transpose(plan, m);
   }
@@ -214,19 +220,26 @@ void fastsht_execute(fastsht_plan plan) {
 }
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
-  bfm_index_t ncols, n, l, lmax = plan->lmax;
+  bfm_index_t ncols, nrows, l, lmax = plan->lmax;
   double complex *input_m = (double complex*)plan->input + m * (2 * lmax - m + 3) / 2;
+  double complex *target;
   precomputation_t *rec;
-  n = (lmax - m) / 2;
   rec = precomputed_data + 2 * m + odd;
   ncols = 0;
   for (l = m + odd; l <= lmax; l += 2) {
     plan->work_a_l[ncols] = input_m[l - m];
     ++ncols;
   }
+  if (rec->evaluation_grid_squared == NULL) {
+    target = odd ? plan->work_g_m_odd : plan->work_g_m_even;
+    nrows = plan->grid->nrings - plan->grid->mid_ring;
+  } else {
+    target = plan->work_g_m_roots;
+    nrows = (lmax - m) / 2;
+  }
   /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
-  bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)plan->work_g_m_roots,
-              n, ncols, 2);
+  bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)target,
+              nrows, ncols, 2);
 }
 
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
@@ -234,6 +247,7 @@ void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
   precomputation_t *rec;
   n = (plan->lmax - m) / 2;
   rec = precomputed_data + 2 * m + odd;
+  assert(rec->evaluation_grid_squared != NULL); /* should_interpolate flag */
   fastsht_fmm1d(rec->evaluation_grid_squared, rec->gamma, (double*)plan->work_g_m_roots, n,
                 rec->output_grid_squared, rec->omega,
                 (double*)(odd ? plan->work_g_m_odd : plan->work_g_m_even),

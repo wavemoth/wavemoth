@@ -19,13 +19,18 @@ def get_c(l, m):
     d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
     return np.sqrt(n / d)
 
-def compute_m(m, lmax, thetas, Nside, min_rows):
+def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
     print 'Precomputing m=%d of %d' % (m, mmax)
     stream_even, stream_odd = BytesIO(), BytesIO()
     for stream, odd in zip((stream_even, stream_odd), (0, 1)):
         # Roots
         n = (lmax - m) // 2
-        if n > 0:
+        if n == 0:
+            interpolate = False
+        flags = int(interpolate)
+        write_int64(stream, flags)
+        pad128(stream)
+        if interpolate:
             roots = associated_legendre_roots(m + 2 * n + odd, m)
             assert roots.shape[0] == n
             write_array(stream, roots**2)
@@ -53,15 +58,19 @@ def compute_m(m, lmax, thetas, Nside, min_rows):
                 m, thetas, m + 2 * n + odd)[:, -1]
             assert P_m_2n.shape[0] == 2 * Nside
             write_array(stream, c * P_m_2n)
+
+            grid_for_P = np.arccos(roots)
+        else:
+            grid_for_P = thetas
         
-            # P matrix
-            P = compute_normalized_associated_legendre(m, np.arccos(roots), lmax)
-            P_subset = P[:, odd::2]
-            compressed = butterfly_compress(P_subset, min_rows=min_rows)
-            compressed.write_to_stream(stream)
+        # P matrix
+        P = compute_normalized_associated_legendre(m, grid_for_P, lmax)
+        P_subset = P[:, odd::2]
+        compressed = butterfly_compress(P_subset, min_rows=min_rows)
+        compressed.write_to_stream(stream)
     return stream_even, stream_odd
 
-def compute(stream, mmax, lmax, Nside, min_rows):
+def compute(stream, mmax, lmax, Nside, **kw):
     # Start by leaving room in the beginning of the file for writing
     # offsets
     write_int64(stream, lmax)
@@ -75,7 +84,7 @@ def compute(stream, mmax, lmax, Nside, min_rows):
     with ProcessPoolExecutor(max_workers=8) as proc:
         for m in range(0, mmax + 1):
             #compute_m(m, lmax, thetas, Nside, min_rows)
-            futures.append(proc.submit(compute_m, m, lmax, thetas, Nside, min_rows))
+            futures.append(proc.submit(compute_m, m, lmax, thetas, Nside, **kw))
 
         for m, fut in enumerate(futures):
             for recvstream, odd in zip(fut.result(), [0, 1]):
@@ -96,7 +105,7 @@ def compute(stream, mmax, lmax, Nside, min_rows):
 ##                    const=sum, default=max,
 ##                    help='sum the integers (default: find the max)')
 
-Nside = 128
+Nside = 512
 lmax = mmax = 2 * Nside
 with file('precomputed.dat', 'wb') as f:
-    compute(f, mmax, lmax, Nside, min_rows=64)
+    compute(f, mmax, lmax, Nside, min_rows=64, interpolate=False)

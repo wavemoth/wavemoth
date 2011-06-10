@@ -1,4 +1,5 @@
 #include "fmm1d.h"
+#include "stdio.h"
 #include "compat.h"
 #include "math.h"
 #include "malloc.h"

@@ -11,6 +11,8 @@ def options(opt):
     opt.load('compiler_fc')
     opt.load('python')
     opt.load('inplace', tooldir='tools')
+    opt.add_option('--with-libpsht', help='path to libpsht to use for benchmark comparison '
+                   '(NOTE: must be built with -fPIC)')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -43,19 +45,16 @@ def configure(conf):
     conf.check_cython_version(minver=(0,11,1))
     conf.check_tool('inplace', tooldir='tools')
 
+    conf.check_libpsht()
+
     conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
-    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/opt/intel/mkl/lib/intel64']
+#    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/opt/intel/mkl/lib/intel64']
 
-    conf.env.LIB_PERFTOOLS = ['profiler']
-    conf.env.LIB_FFTW3 = ['fftw3']
-
-    conf.env.LIB_PSHT = ['psht', 'fftpack', 'c_utils']
-    conf.env.LIBPATH_PSHT = ['/home/dagss/code/libpsht/generic_gcc/lib']
-    conf.env.INCLUDES_PSHT = ['/home/dagss/code/libpsht/generic_gcc/include']
+#    conf.env.LIB_FFTW3 = ['fftw3']
 
     conf.env.LIB_MKL = ['mkl_rt']
-    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
-    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
+#    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
+#    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
 
 def build(bld):
     bld(source=(['spherew/legendre.pyx'] +
@@ -102,5 +101,18 @@ def build(bld):
         features='c pyext cshlib')
 
 
+from waflib.Configure import conf
+from os.path import join as pjoin
+
+@conf
+def check_libpsht(conf):
+    """
+    Settings for libpsht
+    """
+    prefix = conf.options.with_libpsht
+    conf.env.LIB_PSHT = ['psht', 'fftpack', 'c_utils']
+    conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
+    conf.env.INCLUDES_PSHT = [pjoin(prefix, 'include')]
+    
 
 # vim:ft=python

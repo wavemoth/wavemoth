@@ -20,7 +20,7 @@ def get_c(l, m):
     return np.sqrt(n / d)
 
 def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
-    print 'Precomputing m=%d of %d' % (m, mmax)
+    print 'Precomputing m=%d of %d' % (m, lmax)
     stream_even, stream_odd = BytesIO(), BytesIO()
     for stream, odd in zip((stream_even, stream_odd), (0, 1)):
         # Roots
@@ -70,21 +70,24 @@ def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
         compressed.write_to_stream(stream)
     return stream_even, stream_odd
 
-def compute(stream, mmax, lmax, Nside, **kw):
+def main(stream, args):
     # Start by leaving room in the beginning of the file for writing
     # offsets
+    interpolate = False
+    mmax = lmax = 2 * args.Nside
     write_int64(stream, lmax)
     write_int64(stream, mmax)
-    write_int64(stream, Nside)
+    write_int64(stream, args.Nside)
     header_pos = stream.tell()
     for i in range(4 * (mmax + 1)):
         write_int64(stream, 0)
-    thetas = get_ring_thetas(Nside, positive_only=True)
+    thetas = get_ring_thetas(args.Nside, positive_only=True)
     futures = []
-    with ProcessPoolExecutor(max_workers=8) as proc:
+    with ProcessPoolExecutor(max_workers=args.parallel) as proc:
         for m in range(0, mmax + 1):
             #compute_m(m, lmax, thetas, Nside, min_rows)
-            futures.append(proc.submit(compute_m, m, lmax, thetas, Nside, **kw))
+            futures.append(proc.submit(compute_m, m, lmax, thetas, args.Nside,
+                                       min_rows=args.min_rows, interpolate=interpolate))
 
         for m, fut in enumerate(futures):
             for recvstream, odd in zip(fut.result(), [0, 1]):
@@ -98,14 +101,14 @@ def compute(stream, mmax, lmax, Nside, **kw):
                 stream.seek(end_pos)
             del recvstream
 
-## parser = argparse.ArgumentParser(description='Process some integers.')
-## parser.add_argument('integers', metavar='N', type=int, nargs='+',
-##                    help='an integer for the accumulator')
-## parser.add_argument('--sum', dest='accumulate', action='store_const',
-##                    const=sum, default=max,
-##                    help='sum the integers (default: find the max)')
+parser = argparse.ArgumentParser(description='Precomputation')
+parser.add_argument('-r', '--min-rows', type=int, default=64,
+                    help='how much compression (lower is more compression)')
+parser.add_argument('-j', '--parallel', type=int, default=8,
+                    help='how many processors to use for precomputation')
+parser.add_argument('Nside', type=int, help='Nside parameter')
+parser.add_argument('target', help='target datafile')
+args = parser.parse_args()
 
-Nside = 512
-lmax = mmax = 2 * Nside
-with file('precomputed.dat', 'wb') as f:
-    compute(f, mmax, lmax, Nside, min_rows=64, interpolate=False)
+with file(args.target, 'wb') as f:
+    main(f, args)

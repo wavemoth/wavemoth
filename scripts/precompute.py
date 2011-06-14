@@ -1,14 +1,21 @@
 #!/usr/bin/env python
 from __future__ import division
 
+#
+# We spawn workers and use futures to submit jobs to workers.
+# Each worker opens its own HDF file.
+#
+
 # Stick .. in PYTHONPATH
 import sys
 import os
+from glob import glob
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
+import tables
 
 from spherew.butterfly import *
 from spherew.healpix import *
@@ -23,17 +30,16 @@ def get_c(l, m):
     d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
     return np.sqrt(n / d)
 
-def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
-    stream_even, stream_odd = BytesIO(), BytesIO()
-    for stream, odd in zip((stream_even, stream_odd), (0, 1)):
-        # Roots
+def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True):
+    filename = '%s-%d' % (filename, os.getpid())
+    thetas = get_ring_thetas(Nside, positive_only=True)
+    for odd in [0, 1]:
         n = (lmax - m) // 2
         if n == 0:
             interpolate = False
-        flags = int(interpolate)
-        write_int64(stream, flags)
-        pad128(stream)
+        # Roots
         if interpolate:
+            1/0
             from spherew.roots import associated_legendre_roots
             roots = associated_legendre_roots(m + 2 * n + odd, m)
             assert roots.shape[0] == n
@@ -66,50 +72,98 @@ def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
             grid_for_P = np.arccos(roots)
         else:
             grid_for_P = thetas
-        
+
         # P matrix
         P = compute_normalized_associated_legendre(m, grid_for_P, lmax,
                                                    epsilon=1e-30)
         P_subset = P[:, odd::2]
         compressed = butterfly_compress(P_subset, min_rows=min_rows)
         print 'Computed m=%d of %d: %s' % (m, lmax, compressed.get_stats())
+        stream = BytesIO()
         compressed.write_to_stream(stream)
-    return stream_even, stream_odd
+        stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
 
-def main(stream, args):
-    # Start by leaving room in the beginning of the file for writing
-    # offsets
-    interpolate = args.interpolate
-    mmax = lmax = 2 * args.Nside
-    write_int64(stream, lmax)
-    write_int64(stream, mmax)
-    write_int64(stream, args.Nside)
-    header_pos = stream.tell()
-    for i in range(4 * (mmax + 1)):
-        write_int64(stream, 0)
-    thetas = get_ring_thetas(args.Nside, positive_only=True)
+        f = tables.openFile(filename, 'a')
+        try:
+            group = f.createGroup('/m%d' % m, ['even', 'odd'][odd],
+                                  createparents=True)
+            f.setNodeAttr(group, 'interpolate', interpolate)
+            f.setNodeAttr(group, 'lmax', lmax)
+            f.setNodeAttr(group, 'm', m)
+            f.setNodeAttr(group, 'odd', odd)
+            f.setNodeAttr(group, 'Nside', Nside)
+            f.createArray(group, 'P', stream_arr)
+        finally:
+            f.close()
+
+def compute_with_workers(args):
+    # Delete all files matching target-*
+    for fname in glob('%s-*' % args.target):
+        os.unlink(fname)
+    # Each worker will generate one HDF file
     futures = []
     with ProcessPoolExecutor(max_workers=args.parallel) as proc:
-        if args.m is None:
-            r = range(mmax)
-        else:
-            r = range(args.m, args.m + 1)
-        for m in r:
-            #compute_m(m, lmax, thetas, Nside, min_rows)
-            futures.append(proc.submit(compute_m, m, lmax, thetas, args.Nside,
-                                       min_rows=args.min_rows, interpolate=interpolate))
+        for m in range(args.lmax + 1):
+            futures.append(proc.submit(compute_m, args.target, m, args.lmax, args.Nside,
+                                       min_rows=args.min_rows, interpolate=args.interpolate))
+        for fut in futures:
+            fut.result()
 
-        for m, fut in enumerate(futures):
-            for recvstream, odd in zip(fut.result(), [0, 1]):
-                pad128(stream)
-                start_pos = stream.tell()
-                stream.write(recvstream.getvalue())
-                end_pos = stream.tell()
-                stream.seek(header_pos + (4 * m + 2 * odd) * 8)
-                write_int64(stream, start_pos)
-                write_int64(stream, end_pos - start_pos)
-                stream.seek(end_pos)
-            del recvstream
+def serialize_from_hdf_files(target):
+    """ Join the '$target-$pid' HDF file into '$target', a dat
+        file in custom format.
+    """
+    print 'Merging...'
+    infilenames = glob('%s-*' % target)
+    with file(target, 'w') as outfile:
+        infiles = [tables.openFile(x) for x in infilenames]
+
+        def get_group(m, odd):
+            for infile in infiles:
+                x = getattr(infile.root, 'm%d/%s' % (m, ['even', 'odd'][odd]), None)
+                if x is not None:
+                    return infile, x
+        
+        try:
+            f, g = get_group(0, 0)
+            Nside = f.getNodeAttr(g, 'Nside')
+            lmax = f.getNodeAttr(g, 'lmax')
+            mmax = lmax
+
+            write_int64(outfile, lmax)
+            write_int64(outfile, mmax)
+            write_int64(outfile, Nside)
+            
+            header_pos = outfile.tell()
+            for i in range(4 * (mmax + 1)):
+                write_int64(outfile, 0)
+
+            for m in range(mmax + 1):
+                for odd in [0, 1]:
+                    f, g = get_group(m, odd)
+                    if (f.getNodeAttr(g, 'Nside') != Nside or f.getNodeAttr(g, 'lmax') != lmax
+                        or f.getNodeAttr(g, 'm') != m):
+                        raise Exception('Unexpected data')
+                    pad128(outfile)
+                    start_pos = outfile.tell()
+                    # Flags
+                    write_int64(outfile, f.getNodeAttr(g, 'interpolate'))
+                    # P
+                    pad128(outfile)
+                    arr = g.P[:]
+                    write_array(outfile, arr)
+                    del arr
+                    end_pos = outfile.tell()
+                    outfile.seek(header_pos + (4 * m + 2 * odd) * 8)
+                    write_int64(outfile, start_pos)
+                    write_int64(outfile, end_pos - start_pos)
+                    outfile.seek(end_pos)
+                
+        finally:
+            for x in infiles:
+                x.close()
+    for x in infilenames:
+        os.unlink(x)
 
 parser = argparse.ArgumentParser(description='Precomputation')
 parser.add_argument('-r', '--min-rows', type=int, default=64,
@@ -123,5 +177,7 @@ parser.add_argument('Nside', type=int, help='Nside parameter')
 parser.add_argument('target', help='target datafile')
 args = parser.parse_args()
 
-with file(args.target, 'wb') as f:
-    main(f, args)
+args.lmax = 2 * args.Nside
+
+compute_with_workers(args)
+serialize_from_hdf_files(args.target)

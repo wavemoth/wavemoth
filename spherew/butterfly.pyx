@@ -1,3 +1,4 @@
+from __future__ import division
 from cpython cimport PyBytes_FromStringAndSize
 from libc.stdlib cimport free
 from libc.string cimport memcpy
@@ -143,6 +144,18 @@ def unroll_pairs(pairs):
         result.append(b)
     return result
 
+def format_numbytes(x):
+    if x < 1024**2:
+        units = 'KB'
+        x /= 1024
+    elif x < 1024**3:
+        units = 'MB'
+        x /= 1024**2
+    else:
+        units = 'GB'
+        x /= 1024**3
+    return '%.1f %s' % (x, units)
+
 class RootNode(object):
     def __init__(self, D_blocks, S_node):
         self.D_blocks = [np.ascontiguousarray(D, dtype=np.double)
@@ -194,6 +207,19 @@ class RootNode(object):
     def size(self):
         return (self.S_node.size() +
                 sum(np.prod(block.shape) for block in self.D_blocks))
+
+    def get_stats(self):
+        if self.nrows == 0 or self.ncols == 0:
+            return "empty"
+        Plms_size = sum(np.prod(block.shape) for block in self.D_blocks)
+        size = self.size()
+        dense = self.nrows * self.ncols
+        return "compression %.2f -> %s (%.2f -> %s Plms)" % (
+            size / dense,
+            format_numbytes(size * 8),
+            Plms_size / size,
+            format_numbytes(Plms_size * 8)
+            )
 
 class InterpolationBlock(object):
     def __init__(self, filter, interpolant):

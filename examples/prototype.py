@@ -3,11 +3,13 @@ from __future__ import division
 # Stick .. in PYTHONPATH
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0,'..')
+#sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
                 
 from spherew import *
 from spherew.healpix import *
 from spherew.butterfly import butterfly_compress, serialize_butterfly_matrix
+from spherew.roots import *
 import numpy as np
 from numpy import pi, prod
 from cmb.oomatrix import as_matrix
@@ -101,7 +103,7 @@ def alm2map(m, a_l, Nside):
     g_m_theta[:, m] = g
 
     from spherew.fastsht import ShtPlan
-    fake_input = np.zeros(1, dtype=np.double)
+    fake_input = np.zeros(1, dtype=np.cdouble)
     g_m_theta = g_m_theta.reshape((4 * Nside - 1) * (lmax + 1)).view(np.double)
     plan = ShtPlan(Nside, lmax, lmax, fake_input, map, g_m_theta, 'mmajor')
     plan.perform_backward_ffts(0, 4 * Nside - 1)
@@ -130,7 +132,7 @@ def alm2map(m, a_l, Nside):
 # 8000/4096: 0.0628
 
 
-Nside = 8
+Nside = 512
 lmax = 2 * Nside#2000
 
 #lmax = 200
@@ -155,18 +157,22 @@ def getroots(l, m):
     return associated_legendre_roots(lmax + 1, m)
     
 
-if 0:
-#    roots = getroots(lmax + 1, m)
-    roots = get_ring_thetas(Nside)[2*Nside-1:]
+if 1:
+    roots = getroots(lmax + 1, m)
+    
+    roots = get_ring_thetas(Nside, positive_only=True)
+    print roots.shape[0]
     P = compute_normalized_associated_legendre(m, roots, lmax)
+    print butterfly_compress(P).get_stats()
+    print butterfly_compress(P.T).get_stats()
     #SPeven = butterfly_horz(P[::2])
     #SPodd = butterfly_horz(P[1::2])
-    Peven = P[:, ::2]
+#    Peven = P[:, ::2]
 #    as_matrix(np.log(np.abs(Peven))).plot()
-    SPeven = butterfly(P[:, ::2])
-    SPodd = butterfly(P[:, 1::2])
-    print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
-    print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
+#    SPeven = butterfly(P[:, ::2])
+#    SPodd = butterfly(P[:, 1::2])
+#    print 'Compression', SPeven.size() / DenseMatrix(P[:, ::2]).size()
+#    print 'Compression', SPodd.size() / DenseMatrix(P[:, 1::2]).size()
 
 if 0:
     x = np.cos(get_ring_thetas(Nside))
@@ -180,7 +186,7 @@ if 0:
     a_l_even = a_l[::2].copy()
 
     
-if 1:
+if 0:
     map = alm2map(m, a_l, Nside)
 
     from cmb.maps import pixel_sphere_map, harmonic_sphere_map

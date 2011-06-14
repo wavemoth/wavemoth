@@ -24,7 +24,6 @@ def get_c(l, m):
     return np.sqrt(n / d)
 
 def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
-    print 'Precomputing m=%d of %d' % (m, lmax)
     stream_even, stream_odd = BytesIO(), BytesIO()
     for stream, odd in zip((stream_even, stream_odd), (0, 1)):
         # Roots
@@ -69,16 +68,18 @@ def compute_m(m, lmax, thetas, Nside, min_rows=64, interpolate=True):
             grid_for_P = thetas
         
         # P matrix
-        P = compute_normalized_associated_legendre(m, grid_for_P, lmax)
+        P = compute_normalized_associated_legendre(m, grid_for_P, lmax,
+                                                   epsilon=1e-30)
         P_subset = P[:, odd::2]
         compressed = butterfly_compress(P_subset, min_rows=min_rows)
+        print 'Computed m=%d of %d: %s' % (m, lmax, compressed.get_stats())
         compressed.write_to_stream(stream)
     return stream_even, stream_odd
 
 def main(stream, args):
     # Start by leaving room in the beginning of the file for writing
     # offsets
-    interpolate = False
+    interpolate = args.interpolate
     mmax = lmax = 2 * args.Nside
     write_int64(stream, lmax)
     write_int64(stream, mmax)
@@ -89,7 +90,11 @@ def main(stream, args):
     thetas = get_ring_thetas(args.Nside, positive_only=True)
     futures = []
     with ProcessPoolExecutor(max_workers=args.parallel) as proc:
-        for m in range(0, mmax + 1):
+        if args.m is None:
+            r = range(mmax)
+        else:
+            r = range(args.m, args.m + 1)
+        for m in r:
             #compute_m(m, lmax, thetas, Nside, min_rows)
             futures.append(proc.submit(compute_m, m, lmax, thetas, args.Nside,
                                        min_rows=args.min_rows, interpolate=interpolate))
@@ -111,6 +116,9 @@ parser.add_argument('-r', '--min-rows', type=int, default=64,
                     help='how much compression (lower is more compression)')
 parser.add_argument('-j', '--parallel', type=int, default=8,
                     help='how many processors to use for precomputation')
+parser.add_argument('-i', '--interpolate', action='store_true',
+                    default=False, help='Evaluate at Legendre roots')
+parser.add_argument('-m', type=int, default=None, help='Evaluate for a single m')
 parser.add_argument('Nside', type=int, help='Nside parameter')
 parser.add_argument('target', help='target datafile')
 args = parser.parse_args()

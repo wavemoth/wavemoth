@@ -8,6 +8,40 @@
 #include "blas.h"
 #include "fastsht_error.h"
 
+/*
+Spread and merge
+*/
+
+
+static char *merge_vectors(char *mask, double *x, double *a, double *b,
+                           int32_t alen, int32_t blen, int32_t nvec) {
+  int j;
+  char group;
+  char *end = mask + alen + blen;
+  while (mask != end) {
+    switch (*mask++) {
+    case 0:
+      for (j = 0; j != nvec; ++j) {
+        *a++ = *x++;
+      }
+      break;
+    case 1:
+      for (j = 0; j != nvec; ++j) {
+        *b++ = *x++;
+      }
+      break;
+    default:
+      assert(1 ? 0 : "Mask contained values besides 0 and 1");
+      break;
+    }
+  }
+  return mask;
+}
+
+/*
+Utils
+*/
+
 static void print_array(char *msg, double* arr, bfm_index_t len) {
   bfm_index_t i;
   printf("%s ", msg);
@@ -45,31 +79,6 @@ Type implementations
 }*/
 
 
-static char *filter_vectors(char *filter, double *x, double *a, double *b,
-                            int32_t alen, int32_t blen, int32_t nvec) {
-  int j;
-  char group;
-  char *end = filter + alen + blen;
-  while (filter != end) {
-    switch (*filter++) {
-    case 0:
-      for (j = 0; j != nvec; ++j) {
-        *a++ = *x++;
-      }
-      break;
-    case 1:
-      for (j = 0; j != nvec; ++j) {
-        *b++ = *x++;
-      }
-      break;
-    default:
-      assert(1 ? 0 : "Filter contained values besides 0 and 1");
-      break;
-    }
-  }
-  return filter;
-}
-
 static void stack_vectors_d(double *a, bfm_index_t alen, double *b, bfm_index_t blen,
                             double *output) {
   bfm_index_t i;
@@ -92,7 +101,7 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
                                    int32_t k, int32_t n, int32_t nvec) {
   int i;
   double tmp_vecs[nvec * (n - k)];
-  head = filter_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
+  head = merge_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
   head = skip_padding(head);
   dgemm_rrr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);

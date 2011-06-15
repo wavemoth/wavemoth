@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 from numpy import pi
 from cmb import as_matrix
 
+from nose import SkipTest
 from nose.tools import eq_, ok_, assert_raises
 from numpy.testing import assert_almost_equal
 
@@ -17,7 +18,7 @@ from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
 from cmb.maps import *
 
 do_plot = False
-Nside = 128
+Nside = 64
 lmax = 2 * Nside
 
 def lm_to_idx_mmajor(l, m):
@@ -48,6 +49,7 @@ def test_basic():
     yield assert_almost_equal, y2, plan.output
 
 def test_matmul():
+    raise SkipTest("This one was written with interpolation in mind")
     plan = make_plan()
     # Zero should make it through
     g_m = plan.perform_matmul(m=0, odd=0)
@@ -95,6 +97,7 @@ def get_c(l, m):
     return np.sqrt(n / d)
 
 def test_interpolation():
+    raise SkipTest("Interpolation currently disabled in source")
     plan = make_plan()
     for m in (0, 4):
         for odd in (0, 1):

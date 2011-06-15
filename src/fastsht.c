@@ -42,7 +42,7 @@ Precomputed data is stored as:
  - Array of precomputation_t indexed by resolution nside_level (Nside = 2**nside_level)
 */
 
-#define MAX_NSIDE_LEVEL 16
+#define MAX_NSIDE_LEVEL 15
 
 /*
 The precomputed data, per m. For now we only support a single Nside
@@ -54,18 +54,18 @@ typedef struct {
 } m_resource_t;
 
 struct _precomputation_t {
+  char *mmapped_buffer;
+  size_t mmap_len;
   m_resource_t *P_matrices;  /* 2D array [ms, odd ? 1 : 0] */
   int lmax, mmax;
   int refcount;
 }; /* typedef in fastsht_private.h */
 
-static char *mmapped_buffer;
-static size_t mmap_len;
 
 /*
 Precomputed
 */
-static precomputation_t precomputed_data[MAX_NSIDE_LEVEL];
+static precomputation_t precomputed_data[MAX_NSIDE_LEVEL + 1];
 
 #define MAX_RESOURCE_PATH 2048
 static char global_resource_path[MAX_RESOURCE_PATH];
@@ -138,15 +138,17 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
   /*
     Memory map buffer
    */
-  mmapped_buffer = MAP_FAILED;
+  data->mmapped_buffer = MAP_FAILED;
   fd = open(filename, O_RDONLY);
   if (fd == -1) goto ERROR;
   if (fstat(fd, &fileinfo) == -1) goto ERROR;
-  mmap_len = fileinfo.st_size;
-  mmapped_buffer = mmap(NULL, mmap_len, PROT_READ, MAP_SHARED,
-                        fd, 0);
-  if (mmapped_buffer == MAP_FAILED) goto ERROR;
-  head = mmapped_buffer;
+  data->mmap_len = fileinfo.st_size;
+  data->mmapped_buffer = mmap(NULL, data->mmap_len, PROT_READ, MAP_SHARED,
+                              fd, 0);
+  if (data->mmapped_buffer == MAP_FAILED) goto ERROR;
+  close(fd);
+  fd = -1;
+  head = data->mmapped_buffer;
   /* Read mmax, allocate arrays, read offsets */
   lmax = ((int64_t*)head)[0];
   mmax = ((int64_t*)head)[1];
@@ -163,7 +165,7 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
     n = (mmax - m) / 2;
     for (odd = 0; odd != 2; ++odd) {
       rec = data->P_matrices + 2 * m + odd;
-      head = mmapped_buffer + offsets[4 * m + 2 * odd];
+      head = data->mmapped_buffer + offsets[4 * m + 2 * odd];
       should_interpolate = ((int64_t*)head)[0];
       head = skip_padding(head + sizeof(int64_t));
       if (should_interpolate) {
@@ -187,9 +189,9 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
  ERROR:
   retcode = -1;
   if (fd != -1) close(fd);
-  if (mmapped_buffer == MAP_FAILED) {
-    munmap(mmapped_buffer, mmap_len);
-    mmapped_buffer = NULL;
+  if (data->mmapped_buffer == MAP_FAILED) {
+    munmap(data->mmapped_buffer, data->mmap_len);
+    data->mmapped_buffer = NULL;
   }
  FINALLY:
   return retcode;
@@ -202,6 +204,8 @@ precomputation_t* fastsht_fetch_resource(int Nside) {
   }
   tmp = Nside;
   while (tmp /= 2) ++Nside_level;
+  checkf(Nside_level < MAX_NSIDE_LEVEL + 1, "Nside=2**%d but maximum value is 2**%d",
+         Nside_level, MAX_NSIDE_LEVEL);
   if (precomputed_data[Nside_level].refcount == 0) {
     check(fastsht_load_resource(Nside, precomputed_data + Nside_level) == 0,
           "resource load failed");
@@ -210,8 +214,13 @@ precomputation_t* fastsht_fetch_resource(int Nside) {
   return &precomputed_data[Nside_level];
 }
 
-void fastsht_release_resource(precomputation_t *rec) {
-  // TODO
+void fastsht_release_resource(precomputation_t *data) {
+  --data->refcount;
+  if (data->refcount == 0) {
+    munmap(data->mmapped_buffer, data->mmap_len);
+    data->mmapped_buffer = NULL;
+    free(data->P_matrices);
+  }
 }
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *input,

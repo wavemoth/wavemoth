@@ -64,11 +64,11 @@ def bench_inv(np.ndarray[double, mode='c'] x, np.ndarray[double, mode='c'] out, 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def bench_add(np.ndarray[double, mode='c'] x, np.ndarray[double, mode='c'] out, int repeat):
+def bench_mul(np.ndarray[double, mode='c'] x, np.ndarray[double, mode='c'] out, int repeat):
     cdef int i, j
     for i in range(repeat):
         for j in range(x.shape[0]):
-            out[j] = x[j] + x[j]
+            out[j] = x[j] * x[j]
 
 @cython.boundscheck(False)
 @cython.wraparound(False)

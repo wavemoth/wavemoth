@@ -14,14 +14,6 @@ cdef extern from "butterfly.h":
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
 
-cdef extern from "blas.h":
-    void dgemm_crr(double *A, double *X, double *Y,
-                   int32_t m, int32_t n, int32_t k,
-                   double beta)
-    void dgemm_rrr(double *A, double *X, double *Y,
-                   int32_t m, int32_t n, int32_t k,
-                   double beta)
-
 from io import BytesIO
 import numpy as np
 cimport numpy as np
@@ -137,6 +129,9 @@ class IdentityNode(object):
     def size(self):
         return 0
 
+    def count_blocks(self):
+        return 0
+
 def unroll_pairs(pairs):
     result = []
     for a, b in pairs:
@@ -214,11 +209,13 @@ class RootNode(object):
         Plms_size = sum(np.prod(block.shape) for block in self.D_blocks)
         size = self.size()
         dense = self.nrows * self.ncols
-        return "compression %.2f -> %s (%.2f -> %s Plms)" % (
+        return "%.2f -> %s (%.2f -> %s Plms), blocks=%d+%d" % (
             size / dense,
             format_numbytes(size * 8),
             Plms_size / size,
-            format_numbytes(Plms_size * 8)
+            format_numbytes(Plms_size * 8),
+            len(self.D_blocks),
+            self.S_node.count_blocks()
             )
 
 class InterpolationBlock(object):
@@ -315,6 +312,9 @@ class InnerNode(object):
         return sum([child.size() for child in self.children] +
                    [A_ip.size() + B_ip.size()
                     for A_ip, B_ip in self.blocks])
+
+    def count_blocks(self):
+        return 2 * len(self.blocks) + sum([child.count_blocks() for child in self.children])
         
 
 def permutations_to_filter(alst, blst):
@@ -389,27 +389,3 @@ def serialize_butterfly_matrix(M):
     data = BytesIO()
     M.write_to_stream(data)
     return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
-
-def benchmark_dgemm_crr(np.ndarray[double, ndim=2, mode='fortran'] A,
-                        np.ndarray[double, ndim=2, mode='c'] X,
-                        np.ndarray[double, ndim=2, mode='c'] Y,
-                        int repeats=0):
-    assert A.shape[1] == X.shape[0]
-    assert A.shape[0] == Y.shape[0]
-    cdef int i
-    for i in range(repeats):
-        dgemm_crr(<double*>A.data, <double*>X.data, <double*>Y.data,
-                  Y.shape[0], Y.shape[1], A.shape[1], 0.0)
-   
-def benchmark_dgemm_rrr(np.ndarray[double, ndim=2, mode='c'] A,
-                        np.ndarray[double, ndim=2, mode='c'] X,
-                        np.ndarray[double, ndim=2, mode='c'] Y,
-                        int repeats=0):
-    assert A.shape[1] == X.shape[0]
-    assert A.shape[0] == Y.shape[0]
-    cdef int i
-    for i in range(repeats):
-        dgemm_rrr(<double*>A.data, <double*>X.data, <double*>Y.data,
-                  Y.shape[0], Y.shape[1], A.shape[1], 0.0)
-
-    

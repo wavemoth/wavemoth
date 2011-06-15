@@ -58,6 +58,9 @@ def configure(conf):
     conf.env.LIB_RT = ['rt']
 
     conf.env.LIB_MKL = ['mkl_rt']
+
+    conf.env.LIB_PROFILER = ['profiler']
+    
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
 
@@ -110,7 +113,7 @@ def build(bld):
         install_path='bin',
         target='shbench',
 #        use='MKLBLAS RT',
-        use='BLAS FFTW3 RT',
+        use='BLAS FFTW3 RT PROFILER',
         features='cprogram c')
 
 

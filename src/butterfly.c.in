@@ -12,9 +12,20 @@
 Spread and merge
 */
 
+{{py:
+specialize_nvecs = [2, None]
+}}
 
+
+{{for nvec in specialize_nvecs}}
+{{if nvec is None}}
 static char *merge_vectors(char *mask, double *x, double *a, double *b,
-                           int32_t alen, int32_t blen, int32_t nvec) {
+                           int32_t alen, int32_t blen, int32_t nvec)
+{{else}}
+static char *merge_vectors_{{nvec}}(char *mask, double *x, double *a, double *b,
+                                    int32_t alen, int32_t blen)
+{{endif}} {
+  {{if nvec}}#define nvec {{nvec}}{{endif}}
   int j;
   char group;
   char *end = mask + alen + blen;
@@ -36,7 +47,9 @@ static char *merge_vectors(char *mask, double *x, double *a, double *b,
     }
   }
   return mask;
+  {{if nvec}}#undef nvec{{endif}}
 }
+{{endfor}}
 
 /*
 Utils
@@ -101,7 +114,11 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
                                    int32_t k, int32_t n, int32_t nvec) {
   int i;
   double tmp_vecs[nvec * (n - k)];
-  head = merge_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
+  if (nvec == 2) {
+    head = merge_vectors_2(head, input, output, tmp_vecs, k, n - k);
+  } else {
+    head = merge_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
+  }
   head = skip_padding(head);
   dgemm_rrr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);

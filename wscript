@@ -90,7 +90,7 @@ def build(bld):
         use='NUMPY BLAS fcshlib',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c',
+    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c.in',
                  'src/fmm1d.c']),
         includes=['src'],
         target='fastsht',
@@ -108,7 +108,7 @@ def build(bld):
         use='NUMPY MKL',
         features='c pyext cshlib')
 
-    bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c', 'src/fmm1d.c']),
+    bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in', 'src/fmm1d.c']),
         includes=['src'],
         install_path='bin',
         target='shbench',
@@ -131,5 +131,22 @@ def check_libpsht(conf):
     conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
     conf.env.INCLUDES_PSHT = [pjoin(prefix, 'include')]
     
+
+from waflib import TaskGen
+
+def run_tempita(task):
+    import tempita
+    assert len(task.inputs) == len(task.outputs) == 1
+    tmpl = task.inputs[0].read()
+    result = tempita.sub(tmpl)
+    task.outputs[0].write(result)
+
+TaskGen.declare_chain(
+        name = "tempita",
+        rule = run_tempita,
+        ext_in = ['.c.in'],
+        ext_out = ['.c'],
+        reentrant = True,
+        )
 
 # vim:ft=python

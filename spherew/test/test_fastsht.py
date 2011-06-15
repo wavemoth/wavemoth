@@ -45,7 +45,7 @@ def test_basic():
         pixel_sphere_map(plan.output, pixel_order='ring').plot()
         plt.show()
 
-    print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
+    #print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     yield assert_almost_equal, y2, plan.output
 
 def test_matmul():

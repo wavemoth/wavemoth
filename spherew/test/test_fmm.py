@@ -28,7 +28,6 @@ def test_basic():
         phi0 = omega[:, None] * np.dot(K, gamma[:, None] * qq)
         # Compute via FMM
         phi = fmm1d(x_grid, qq, y_grid, omega=omega, gamma=gamma)
-        print np.max(np.abs(phi - phi0))
         return np.allclose(phi, phi0, rtol=rtol)
     
     yield ok_, doit(0.01, 0.99), (0.01, 0.99)

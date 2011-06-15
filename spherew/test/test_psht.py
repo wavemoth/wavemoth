@@ -12,6 +12,6 @@ def test_basic():
     alm[lm_to_idx_mmajor(1, 1, lmax)] = 1 + 2j
     map = np.zeros(12 * Nside**2, dtype=np.double)
     T.alm2map(alm, map, repeat=2)
-    pixel_sphere_map(map).plot()
-    plt.show()
+    #pixel_sphere_map(map).plot()
+    #plt.show()
     

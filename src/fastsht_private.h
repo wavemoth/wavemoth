@@ -13,6 +13,9 @@ The API is unstable and may change at any point.
 #include "complex.h"
 #include <fftw3.h>
 
+struct _precomputation_t;
+typedef struct _precomputation_t precomputation_t;
+
 typedef struct {
   /* To phase shift, we multiply with
 
@@ -38,6 +41,7 @@ struct _fastsht_plan {
   double complex *work_a_l, *work_g_m_roots, *work_g_m_even, *work_g_m_odd;
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
+  precomputation_t *resources;
   int Nside;
 };
 

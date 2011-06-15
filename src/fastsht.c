@@ -20,13 +20,29 @@
 #include <fcntl.h>
 
 
+/*
+Every time resource format changes, we increase this, so that
+we can keep multiple resource files around and jump in git
+history.
+*/
+#define RESOURCE_FORMAT_VERSION 0
+/*#define RESOURCE_HEADER "butterfly-compressed matrix data"*/
+
 #define PI 3.14159265358979323846
 
 #define PLANTYPE_HEALPIX 0x0
 
+
+
+
 /*
-Global storage
+Global storage of precomputed data.
+
+Precomputed data is stored as:
+ - Array of precomputation_t indexed by resolution nside_level (Nside = 2**nside_level)
 */
+
+#define MAX_NSIDE_LEVEL 16
 
 /*
 The precomputed data, per m. For now we only support a single Nside
@@ -35,17 +51,24 @@ at the time, this will definitely change.
 typedef struct {
   double *evaluation_grid_squared, *output_grid_squared, *gamma, *omega;
   char *matrix_data;
-} precomputation_t;
+} m_resource_t;
 
+struct _precomputation_t {
+  m_resource_t *P_matrices;  /* 2D array [ms, odd ? 1 : 0] */
+  int lmax, mmax;
+  int refcount;
+}; /* typedef in fastsht_private.h */
 
 static char *mmapped_buffer;
 static size_t mmap_len;
+
 /*
-Helper to access rights part of buffer:
+Precomputed
 */
-static precomputation_t *precomputed_data; /* 2D array [ms, odd ? 1 : 0] */
+static precomputation_t precomputed_data[MAX_NSIDE_LEVEL];
 
-
+#define MAX_RESOURCE_PATH 2048
+static char global_resource_path[MAX_RESOURCE_PATH];
 
 /*
 Private
@@ -62,8 +85,6 @@ static int read_int64(FILE *fd, int64_t *p_out, size_t n) {
   return fread(p_out, sizeof(int64_t), n, fd) == n;
 }
 
-
-
 static void print_array(char *msg, double* arr, bfm_index_t len) {
   bfm_index_t i;
   printf("%s ", msg);
@@ -77,6 +98,8 @@ static void print_array(char *msg, double* arr, bfm_index_t len) {
 Public
 */
 
+static int configured = 0;
+
 static char *skip_padding(char *ptr) {
   size_t m = (size_t)ptr % 16;
   if (m == 0) {
@@ -86,14 +109,32 @@ static char *skip_padding(char *ptr) {
   }
 }
 
-int fastsht_add_precomputation_file(char *filename) {
+void fastsht_configure(char *resource_path) {
+  int i;
+  check(!configured, "Already configured");
+  configured = 1;
+  strncpy(global_resource_path, resource_path, MAX_RESOURCE_PATH);
+  global_resource_path[MAX_RESOURCE_PATH - 1] = '\0';
+  memset(precomputed_data, 0, sizeof(precomputed_data));
+}
+
+int fastsht_load_resource(int Nside, precomputation_t *data) {
   int fd;
   struct stat fileinfo;
-  int64_t mmax, lmax, Nside, m, len, n, odd, should_interpolate;
+  int64_t mmax, lmax, m, len, n, odd, should_interpolate;
   int64_t *offsets = NULL;
-  precomputation_t *rec;
+  m_resource_t *rec;
   int retcode;
   char *head;
+  char filename[MAX_RESOURCE_PATH];
+
+  /* 
+   */
+  snprintf(filename, MAX_RESOURCE_PATH, "%s/rev%d/%d.dat",
+           global_resource_path, RESOURCE_FORMAT_VERSION,
+           Nside);
+  filename[MAX_RESOURCE_PATH - 1] = '\0';
+
   /*
     Memory map buffer
    */
@@ -109,16 +150,19 @@ int fastsht_add_precomputation_file(char *filename) {
   /* Read mmax, allocate arrays, read offsets */
   lmax = ((int64_t*)head)[0];
   mmax = ((int64_t*)head)[1];
-  Nside = ((int64_t*)head)[2];
+  checkf(Nside == ((int64_t*)head)[2], "Loading precomputation: Expected Nside=%d but got %d in %s",
+         Nside, (int)((int64_t*)head)[2], filename);
   head += sizeof(int64_t[3]);
-  precomputed_data = malloc(sizeof(precomputation_t[2 * (mmax + 1)]));
-  if (precomputed_data == NULL) goto ERROR;
+  data->P_matrices = malloc(sizeof(m_resource_t[2 * (mmax + 1)]));
+  data->lmax = lmax;
+  data->mmax = mmax;
+  if (data->P_matrices == NULL) goto ERROR;
   offsets = (int64_t*)head;
   /* Read compressed matrices */
   for (m = 0; m != mmax + 1; ++m) {
     n = (mmax - m) / 2;
     for (odd = 0; odd != 2; ++odd) {
-      rec = precomputed_data + 2 * m + odd;
+      rec = data->P_matrices + 2 * m + odd;
       head = mmapped_buffer + offsets[4 * m + 2 * odd];
       should_interpolate = ((int64_t*)head)[0];
       head = skip_padding(head + sizeof(int64_t));
@@ -142,7 +186,6 @@ int fastsht_add_precomputation_file(char *filename) {
   goto FINALLY;
  ERROR:
   retcode = -1;
-  free(precomputed_data);
   if (fd != -1) close(fd);
   if (mmapped_buffer == MAP_FAILED) {
     munmap(mmapped_buffer, mmap_len);
@@ -150,6 +193,25 @@ int fastsht_add_precomputation_file(char *filename) {
   }
  FINALLY:
   return retcode;
+}
+
+precomputation_t* fastsht_fetch_resource(int Nside) {
+  int Nside_level = 0, tmp;
+  if (!configured) {
+    return NULL;
+  }
+  tmp = Nside;
+  while (tmp /= 2) ++Nside_level;
+  if (precomputed_data[Nside_level].refcount == 0) {
+    check(fastsht_load_resource(Nside, precomputed_data + Nside_level) == 0,
+          "resource load failed");
+  }
+  ++precomputed_data[Nside_level].refcount;
+  return &precomputed_data[Nside_level];
+}
+
+void fastsht_release_resource(precomputation_t *rec) {
+  // TODO
 }
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *input,
@@ -172,6 +234,8 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *inpu
   plan->work_g_m_even = memalign(16, sizeof(complex double[plan->grid->mid_ring + 1]));
   plan->work_g_m_odd = memalign(16, sizeof(complex double[plan->grid->mid_ring + 1]));
 
+  plan->resources = fastsht_fetch_resource(Nside);
+
   plan->Nside = Nside;
   plan->lmax = lmax;
   plan->mmax = mmax;
@@ -192,6 +256,7 @@ void fastsht_destroy_plan(fastsht_plan plan) {
     fftw_destroy_plan(plan->fft_plans[iring]);
   }
   fastsht_free_grid_info(plan->grid);
+  fastsht_release_resource(plan->resources);
   free(plan->fft_plans);
   free(plan->work_a_l);
   free(plan->work_g_m_roots);
@@ -208,7 +273,7 @@ void fastsht_execute(fastsht_plan plan) {
   for (m = 0; m != mmax + 1 - 2; ++m) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
       fastsht_perform_matmul(plan, m, odd);
-      if ((precomputed_data + 2 * m + odd)->evaluation_grid_squared != NULL) {
+      if ((plan->resources->P_matrices + 2 * m + odd)->evaluation_grid_squared != NULL) {
         /* Interpolate with FMM */
         fastsht_perform_interpolation(plan, m, odd);
       }
@@ -223,8 +288,8 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
   bfm_index_t ncols, nrows, l, lmax = plan->lmax;
   double complex *input_m = (double complex*)plan->input + m * (2 * lmax - m + 3) / 2;
   double complex *target;
-  precomputation_t *rec;
-  rec = precomputed_data + 2 * m + odd;
+  m_resource_t *rec;
+  rec = plan->resources->P_matrices + 2 * m + odd;
   ncols = 0;
   for (l = m + odd; l <= lmax; l += 2) {
     plan->work_a_l[ncols] = input_m[l - m];
@@ -244,9 +309,9 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
 
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
   bfm_index_t n;
-  precomputation_t *rec;
+  m_resource_t *rec;
   n = (plan->lmax - m) / 2;
-  rec = precomputed_data + 2 * m + odd;
+  rec = plan->resources->P_matrices + 2 * m + odd;
   assert(rec->evaluation_grid_squared != NULL); /* should_interpolate flag */
   fastsht_fmm1d(rec->evaluation_grid_squared, rec->gamma, (double*)plan->work_g_m_roots, n,
                 rec->output_grid_squared, rec->omega,

@@ -25,7 +25,7 @@ typedef struct _fastsht_plan *fastsht_plan;
 Driver functions. Stable API.
 */
 
-int fastsht_add_precomputation_file(char *filename);
+void fastsht_configure(char *resource_dir);
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *input,
                                      double *output, double *work, int ordering);

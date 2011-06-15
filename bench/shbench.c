@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
     fclose(fd);
   }
 
-  fastsht_add_precomputation_file("/home/dagss/code/spherew/precomputed.dat");
+  fastsht_configure("/home/dagss/code/spherew/resources");
 
   input = zeros((lmax + 1) * (lmax + 1) * 2);
   output = zeros(12 * Nside * Nside);

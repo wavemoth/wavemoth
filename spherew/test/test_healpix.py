@@ -12,16 +12,16 @@ Nside = 4
 
 def test_ring_thetas():
     theta = get_ring_thetas(Nside)
-    yield ok_, theta.shape, (4 * Nside - 1,)
+    eq_(theta.shape, (4 * Nside - 1,))
 
     hz = healpix.pix2vec_ring(Nside, np.arange(12 * Nside**2))[:, 2]
     hz = np.unique(hz)
     htheta = np.arccos(hz)[::-1]
-    yield assert_almost_equal, theta, htheta
+    assert_almost_equal(theta, htheta)
 
     thetapos = get_ring_thetas(Nside, positive_only=True)
-    yield eq_, thetapos[0], np.arccos(0)
-    yield assert_almost_equal, thetapos, theta[2 * Nside - 1:]
+    eq_(thetapos[0], np.arccos(0))
+    assert_almost_equal(thetapos, theta[:2 * Nside][::-1])
 
 def test_ring_pixel_counts():
     counts = get_ring_pixel_counts(Nside)

@@ -47,10 +47,15 @@ def configure(conf):
 
     conf.check_libpsht()
 
-    conf.env.LIB_BLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
-#    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/opt/intel/mkl/lib/intel64']
+    conf.env.LIB_BLAS = ['goto2', 'gfortran']
+    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/home/dagss/code/GotoBLAS2']
 
-#    conf.env.LIB_FFTW3 = ['fftw3']
+    conf.env.LIB_MKLBLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
+    conf.env.LIBPATH_MKLBLAS = conf.env.RPATH_MKLBLAS = ['/opt/intel/mkl/lib/intel64']
+
+    conf.env.LIB_FFTW3 = ['fftw3']
+
+    conf.env.LIB_RT = ['rt']
 
     conf.env.LIB_MKL = ['mkl_rt']
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
@@ -79,15 +84,15 @@ def build(bld):
     bld(source=(['spherew/butterfly.pyx', 'src/butterfly.c']),
         includes=['src'],
         target='butterfly',
-        use='NUMPY BLAS',
+        use='NUMPY BLAS fcshlib',
         features='c pyext cshlib')
 
     bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c',
                  'src/fmm1d.c']),
         includes=['src'],
         target='fastsht',
-        use='NUMPY BLAS', # PS collision between MKL and FFTW..
-        features='c pyext cshlib')
+        use='NUMPY BLAS FFTW3', # PS collision between MKL and FFTW..
+        features='c fc pyext cshlib')
 
     bld(source=(['spherew/psht.pyx']),
         target='psht',
@@ -100,6 +105,14 @@ def build(bld):
         use='NUMPY MKL',
         features='c pyext cshlib')
 
+    bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c', 'src/fmm1d.c']),
+        includes=['src'],
+        install_path='bin',
+        target='shbench',
+#        use='MKLBLAS RT',
+        use='BLAS FFTW3 RT',
+        features='cprogram c')
+
 
 from waflib.Configure import conf
 from os.path import join as pjoin
@@ -111,6 +124,7 @@ def check_libpsht(conf):
     """
     prefix = conf.options.with_libpsht
     conf.env.LIB_PSHT = ['psht', 'fftpack', 'c_utils']
+    conf.env.LINKFLAGS_PSHT = ['-fopenmp']
     conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
     conf.env.INCLUDES_PSHT = [pjoin(prefix, 'include')]
     

@@ -1,7 +1,5 @@
-#------------------------------------------------------------------------------
-# Copyright (c) 2011, Dag Sverre Seljebotn
-# All rights reserved. See LICENSE.txt.
-#------------------------------------------------------------------------------
+#./waf-light --tools=compat15,swig,fc,compiler_fc,fc_config,fc_scan,gfortran,g95,ifort,gccdeps;
+
 
 top = '.'
 out = 'build'

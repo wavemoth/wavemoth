@@ -3,10 +3,14 @@
 #include <malloc.h>
 #undef NDEBUG
 #include <assert.h>
+#include <xmmintrin.h>
+#include <emmintrin.h>
 
 #include "butterfly.h"
 #include "blas.h"
 #include "fastsht_error.h"
+
+typedef __m128d m128d;
 
 /*
 Spread and merge
@@ -34,14 +38,16 @@ static char *merge_vectors{{suffix}}(char *mask, double *x, double *a, double *b
   char group;
   char *end = mask + alen + blen;
   int m;
-  double val;
+  m128d val;
+  assert(nvecs % 2 == 0);
   while (mask != end) {
-    m = *mask++;
-    for (j = 0; j != nvecs; ++j) {
-      val = *x++;
-      *a = val;
-      *b = val;
-      a += (1 - m);
+    m = 2 * *mask++;
+    for (j = 0; j != nvecs / 2; ++j) {
+      val = _mm_load_pd(x);
+      x += 2;
+      _mm_store_pd(a, val);
+      _mm_store_pd(b, val);
+      a += (2 - m);
       b += m;
     }
   }

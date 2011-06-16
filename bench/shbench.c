@@ -17,8 +17,13 @@ C program to benchmark spherical harmonic transforms
 #define Nside 512
 #define lmax 2 * Nside
 #define mmax lmax
-#define PROFILE_TIME 4.0
+#define PROFILE_TIME 2.0
 
+#define NTHREADS 4
+
+/*
+Utils
+*/
 static double walltime() {
   struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
@@ -32,8 +37,9 @@ static double *zeros(size_t n) {
   return buf;
 }
 
-static void printtime(char* msg, double time) {
+static void printtime(char* msg, int n, double time) {
   char *units;
+  time /= n;
   if (time < 1e-06) {
     units = "ns";
     time *= 1e9;
@@ -46,8 +52,60 @@ static void printtime(char* msg, double time) {
   } else {
     units = "s";
   }
-  printf("%s: %.1f %s\n", msg, time, units);
+  printf("%s -- %d times, avg: %.1f %s\n", msg, n, time, units);
 }
+
+
+/*
+Benchmark memory throughput
+*/
+double *mem_buf;
+size_t N_mem = 200 * 1024 * 1024 / sizeof(double);
+
+void setup_memory_benchmark() {
+  /* zero buffer, so that we won't hit denormal numbers in reading loop */
+  mem_buf = zeros(NTHREADS * N_mem);
+}
+
+void finish_memory_benchmark(double dt) {
+  printf("  Bandwidth: %.3f GB/s\n", NTHREADS * N_mem * sizeof(double) / dt / (1024 * 1024 * 1024));
+  free(mem_buf);
+}
+
+void execute_memory_benchmark() {
+  /* Simply accumulate the buffer in a double -- we're going to be very
+     IO-bound so we can basically ignore the addition put in in order to
+     avoid optimizing things out.   */
+  int i, j;
+  size_t n = N_mem;
+  double acc;
+  double *buf = mem_buf;
+  #pragma omp parallel for num_threads(NTHREADS) private(i, j) shared(n) reduction(+:acc)
+  for (i = 0; i < NTHREADS; ++i) {
+    for (j = 0; j != n; j += 2) {
+      acc += buf[i * n + j];
+    }
+  }
+  if (acc != 0.0) printf("dummy\n");
+}
+
+/*
+Main
+*/
+
+typedef void (*voidfunc)(void);
+typedef struct {
+  char *name;
+  voidfunc setup, execute;
+  void (*finish)(double dt);
+} benchmark_t;
+
+benchmark_t benchmarks[] = {
+  {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark},
+  {NULL, NULL, NULL}
+};
+
+
 
 int main(int argc, char *argv[]) {
   fastsht_plan plan;
@@ -55,6 +113,7 @@ int main(int argc, char *argv[]) {
   double t0, t1, dt;
   int n;
   FILE *fd;
+  benchmark_t *pbench;
 
   /* Import FFTW plan if it exists */
   printf("Initializing (incl. FFTW)\n");
@@ -96,7 +155,24 @@ int main(int argc, char *argv[]) {
   ProfilerStop();
   #endif
   printf("Repeated %d times\n", n);
-  printtime("Avg. time", (t1 - t0) / n);
+  printtime("Avg. time", n, t1 - t0);
   fastsht_destroy_plan(plan);
+
+  pbench = benchmarks;
+  while (pbench->execute != NULL) {
+    printf("%s:\n", pbench->name);
+    if (pbench->setup != NULL) pbench->setup();
+    t0 = walltime();
+    n = 0;
+    do {
+      pbench->execute();
+      n++;
+      t1 = walltime();
+    } while (t1 - t0 < PROFILE_TIME);
+    t1 = walltime();
+    printtime("  ", n, t1 - t0);
+    if (pbench->finish) pbench->finish((t1 - t0) / n);
+    pbench++;
+  }
 
 }

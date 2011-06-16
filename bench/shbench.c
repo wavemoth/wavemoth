@@ -3,13 +3,14 @@ C program to benchmark spherical harmonic transforms
 */
 
 #include "fastsht.h"
+#include "blas.h"
+
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
 #include <malloc.h>
 #include <string.h>
 #include <fftw3.h>
-
 #ifdef USE_PPROF
 #include <google/profiler.h>
 #endif
@@ -52,7 +53,7 @@ static void printtime(char* msg, int n, double time) {
   } else {
     units = "s";
   }
-  printf("%s -- %d times, avg: %.1f %s\n", msg, n, time, units);
+  printf("%s%d times, avg: %.1f %s\n", msg, n, time, units);
 }
 
 
@@ -90,6 +91,80 @@ void execute_memory_benchmark() {
 }
 
 /*
+FLOPS benchmark
+*/
+size_t N_dgemm = 1400;
+double *A, *B, *Y;
+
+void setup_dgemm() {
+  A = zeros(N_dgemm * N_dgemm);
+  B = zeros(N_dgemm * N_dgemm);
+  Y = zeros(N_dgemm * N_dgemm);
+  execute_dgemm(); /* warmup */
+}
+
+void finish_dgemm(double dt) {
+  size_t flops = N_dgemm * N_dgemm * N_dgemm * 2;
+  printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9);
+  free(A);
+  free(B);
+  free(Y);
+}
+
+void execute_dgemm() {
+  dgemm_rrr(A, B, Y, N_dgemm, N_dgemm, N_dgemm, 1.0);
+}
+
+
+/*
+Butterfly SHT benchmark
+*/
+
+double *sht_input, *sht_output, *sht_work;
+fastsht_plan sht_plan;
+
+void setup_sht() {
+  FILE *fd;
+  printf("  Initializing (incl. FFTW)\n");
+
+  /* Import FFTW plan if it exists */
+  fd = fopen("fftw.wisdom", "r");
+  if (fd != NULL) {
+    fftw_import_wisdom_from_file(fd);
+    fclose(fd);
+  }
+
+  fastsht_configure("/home/dagss/code/spherew/resources");
+  sht_input = zeros((lmax + 1) * (lmax + 1) * 2);
+  sht_output = zeros(12 * Nside * Nside);
+  sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2);
+  sht_plan = fastsht_plan_to_healpix(Nside, lmax, mmax, sht_input,
+                                     sht_output, sht_work, FASTSHT_MMAJOR);
+
+  /* Export FFTW wisdom generated during planning */
+  fd = fopen("fftw.wisdom", "w");
+  if (fd != NULL) {
+    fftw_export_wisdom_to_file(fd);
+    fclose(fd);
+  }
+  execute_sht(); /* warmup */
+}
+
+void execute_sht() {
+  fastsht_execute(sht_plan);
+}
+
+void finish_sht(double dt) {
+  fastsht_destroy_plan(sht_plan);
+  free(sht_input);
+  free(sht_output);
+  free(sht_work);
+}
+
+
+
+
+/*
 Main
 */
 
@@ -101,7 +176,9 @@ typedef struct {
 } benchmark_t;
 
 benchmark_t benchmarks[] = {
+  {"SHT", setup_sht, execute_sht, finish_sht},
   {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark},
+  {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm},
   {NULL, NULL, NULL}
 };
 
@@ -114,49 +191,6 @@ int main(int argc, char *argv[]) {
   int n;
   FILE *fd;
   benchmark_t *pbench;
-
-  /* Import FFTW plan if it exists */
-  printf("Initializing (incl. FFTW)\n");
-  fd = fopen("fftw.wisdom", "r");
-  if (fd != NULL) {
-    fftw_import_wisdom_from_file(fd);
-    fclose(fd);
-  }
-
-  fastsht_configure("/home/dagss/code/spherew/resources");
-
-  input = zeros((lmax + 1) * (lmax + 1) * 2);
-  output = zeros(12 * Nside * Nside);
-  work = zeros((lmax + 1) * (4 * Nside - 1) * 2);
-
-  plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input, output, work, FASTSHT_MMAJOR);
-
-  /* Export FFTW wisdom generated during planning */
-  fd = fopen("fftw.wisdom", "w");
-  if (fd != NULL) {
-    fftw_export_wisdom_to_file(fd);
-    fclose(fd);
-  }
-
-  fastsht_execute(plan); /* Ensure precomputed data is loaded */
-  printf("Computing for > %.1f seconds, Nside=%d...\n", PROFILE_TIME, Nside);
-  #ifdef USE_PPROF
-  ProfilerStart("shbench.prof");
-  #endif
-  t0 = walltime();
-  n = 0;
-  do {
-    fastsht_execute(plan);   
-    n++;
-    t1 = walltime();
-  } while (t1 - t0 < PROFILE_TIME);
-  t1 = walltime();
-  #ifdef USE_PPROF
-  ProfilerStop();
-  #endif
-  printf("Repeated %d times\n", n);
-  printtime("Avg. time", n, t1 - t0);
-  fastsht_destroy_plan(plan);
 
   pbench = benchmarks;
   while (pbench->execute != NULL) {

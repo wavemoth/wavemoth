@@ -9,7 +9,10 @@ C program to benchmark spherical harmonic transforms
 #include <malloc.h>
 #include <string.h>
 #include <fftw3.h>
+
+#ifdef USE_PPROF
 #include <google/profiler.h>
+#endif
 
 #define Nside 512
 #define lmax 2 * Nside
@@ -78,7 +81,9 @@ int main(int argc, char *argv[]) {
 
   fastsht_execute(plan); /* Ensure precomputed data is loaded */
   printf("Computing for > %.1f seconds, Nside=%d...\n", PROFILE_TIME, Nside);
+  #ifdef USE_PPROF
   ProfilerStart("shbench.prof");
+  #endif
   t0 = walltime();
   n = 0;
   do {
@@ -87,7 +92,9 @@ int main(int argc, char *argv[]) {
     t1 = walltime();
   } while (t1 - t0 < PROFILE_TIME);
   t1 = walltime();
+  #ifdef USE_PPROF
   ProfilerStop();
+  #endif
   printf("Repeated %d times\n", n);
   printtime("Avg. time", (t1 - t0) / n);
   fastsht_destroy_plan(plan);

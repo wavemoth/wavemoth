@@ -111,7 +111,7 @@ def build(bld):
         install_path='bin',
         target='shbench',
 #        use='MKLBLAS RT',
-        use='BLAS FFTW3 RT PROFILER',
+        use='BLAS FFTW3 RT',
         features='cprogram c')
 
 

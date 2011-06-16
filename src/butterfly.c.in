@@ -13,41 +13,40 @@ Spread and merge
 */
 
 {{py:
-specialize_nvecs = [2, None]
+nvecs_specs = [2, None]
+
+nvecarg_specs = [', int32_t nvecs' if x is None else '' for x in nvecs_specs]
+nvecs_instances = zip(
+    nvecs_specs, # nvecs
+    ['_%d' % x if x is not None else '' for x in nvecs_specs], # suffix
+    [', int32_t nvecs' if x is None else '' for x in nvecs_specs],     # trailing_args
+    ['#define nvecs %d' % x if x is not None else '' for x in nvecs_specs], # define
+    ['#undef nvecs' if x is not None else '' for x in nvecs_specs]) # undef
+
 }}
 
 
-{{for nvec in specialize_nvecs}}
-{{if nvec is None}}
-static char *merge_vectors(char *mask, double *x, double *a, double *b,
-                           int32_t alen, int32_t blen, int32_t nvec)
-{{else}}
-static char *merge_vectors_{{nvec}}(char *mask, double *x, double *a, double *b,
-                                    int32_t alen, int32_t blen)
-{{endif}} {
-  {{if nvec}}#define nvec {{nvec}}{{endif}}
+{{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
+static char *merge_vectors{{suffix}}(char *mask, double *x, double *a, double *b,
+                           int32_t alen, int32_t blen{{trailing_args}}) {
+  {{define}}
   int j;
   char group;
   char *end = mask + alen + blen;
+  int m;
+  double val;
   while (mask != end) {
-    switch (*mask++) {
-    case 0:
-      for (j = 0; j != nvec; ++j) {
-        *a++ = *x++;
-      }
-      break;
-    case 1:
-      for (j = 0; j != nvec; ++j) {
-        *b++ = *x++;
-      }
-      break;
-    default:
-      assert(1 ? 0 : "Mask contained values besides 0 and 1");
-      break;
+    m = *mask++;
+    for (j = 0; j != nvecs; ++j) {
+      val = *x++;
+      *a = val;
+      *b = val;
+      a += (1 - m);
+      b += m;
     }
   }
   return mask;
-  {{if nvec}}#undef nvec{{endif}}
+  {{undefine}}
 }
 {{endfor}}
 

@@ -15,12 +15,14 @@ C program to benchmark spherical harmonic transforms
 #include <google/profiler.h>
 #endif
 
+#include <omp.h>
+
 #define Nside 512
 #define lmax 2 * Nside
 #define mmax lmax
 #define PROFILE_TIME 2.0
 
-#define NTHREADS 4
+int N_threads;
 
 /*
 Utils
@@ -65,11 +67,11 @@ size_t N_mem = 200 * 1024 * 1024 / sizeof(double);
 
 void setup_memory_benchmark() {
   /* zero buffer, so that we won't hit denormal numbers in reading loop */
-  mem_buf = zeros(NTHREADS * N_mem);
+  mem_buf = zeros(N_threads * N_mem);
 }
 
 void finish_memory_benchmark(double dt) {
-  printf("  Bandwidth: %.3f GB/s\n", NTHREADS * N_mem * sizeof(double) / dt / (1024 * 1024 * 1024));
+  printf("  Bandwidth: %.3f GB/s\n", N_threads * N_mem * sizeof(double) / dt / (1024 * 1024 * 1024));
   free(mem_buf);
 }
 
@@ -81,8 +83,8 @@ void execute_memory_benchmark() {
   size_t n = N_mem;
   double acc;
   double *buf = mem_buf;
-  #pragma omp parallel for num_threads(NTHREADS) private(i, j) shared(n) reduction(+:acc)
-  for (i = 0; i < NTHREADS; ++i) {
+  #pragma omp parallel for num_threads(N_threads) private(i, j) shared(n) reduction(+:acc)
+  for (i = 0; i < N_threads; ++i) {
     for (j = 0; j != n; j += 2) {
       acc += buf[i * n + j];
     }
@@ -191,6 +193,8 @@ int main(int argc, char *argv[]) {
   int n;
   FILE *fd;
   benchmark_t *pbench;
+
+  N_threads = omp_get_max_threads();
 
   pbench = benchmarks;
   while (pbench->execute != NULL) {

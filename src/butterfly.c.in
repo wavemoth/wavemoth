@@ -3,10 +3,62 @@
 #include <malloc.h>
 #undef NDEBUG
 #include <assert.h>
+#include <xmmintrin.h>
+#include <emmintrin.h>
 
 #include "butterfly.h"
 #include "blas.h"
 #include "fastsht_error.h"
+
+typedef __m128d m128d;
+
+/*
+Spread and merge
+*/
+
+{{py:
+nvecs_specs = [2, None]
+
+nvecarg_specs = [', int32_t nvecs' if x is None else '' for x in nvecs_specs]
+nvecs_instances = zip(
+    nvecs_specs, # nvecs
+    ['_%d' % x if x is not None else '' for x in nvecs_specs], # suffix
+    [', int32_t nvecs' if x is None else '' for x in nvecs_specs],     # trailing_args
+    ['#define nvecs %d' % x if x is not None else '' for x in nvecs_specs], # define
+    ['#undef nvecs' if x is not None else '' for x in nvecs_specs]) # undef
+
+}}
+
+
+{{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
+static char *merge_vectors{{suffix}}(char *mask, double *x, double *a, double *b,
+                           int32_t alen, int32_t blen{{trailing_args}}) {
+  {{define}}
+  int j;
+  char group;
+  char *end = mask + alen + blen;
+  int m;
+  m128d val;
+  assert(nvecs % 2 == 0);
+  while (mask != end) {
+    m = 2 * *mask++;
+    for (j = 0; j != nvecs / 2; ++j) {
+      val = _mm_load_pd(x);
+      x += 2;
+      _mm_store_pd(a, val);
+      _mm_store_pd(b, val);
+      a += (2 - m);
+      b += m;
+    }
+  }
+  return mask;
+  {{undefine}}
+}
+{{endfor}}
+
+/*
+Utils
+*/
 
 static void print_array(char *msg, double* arr, bfm_index_t len) {
   bfm_index_t i;
@@ -45,31 +97,6 @@ Type implementations
 }*/
 
 
-static char *filter_vectors(char *filter, double *x, double *a, double *b,
-                            int32_t alen, int32_t blen, int32_t nvec) {
-  int j;
-  char group;
-  char *end = filter + alen + blen;
-  while (filter != end) {
-    switch (*filter++) {
-    case 0:
-      for (j = 0; j != nvec; ++j) {
-        *a++ = *x++;
-      }
-      break;
-    case 1:
-      for (j = 0; j != nvec; ++j) {
-        *b++ = *x++;
-      }
-      break;
-    default:
-      assert(1 ? 0 : "Filter contained values besides 0 and 1");
-      break;
-    }
-  }
-  return filter;
-}
-
 static void stack_vectors_d(double *a, bfm_index_t alen, double *b, bfm_index_t blen,
                             double *output) {
   bfm_index_t i;
@@ -92,7 +119,11 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
                                    int32_t k, int32_t n, int32_t nvec) {
   int i;
   double tmp_vecs[nvec * (n - k)];
-  head = filter_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
+  if (nvec == 2) {
+    head = merge_vectors_2(head, input, output, tmp_vecs, k, n - k);
+  } else {
+    head = merge_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
+  }
   head = skip_padding(head);
   dgemm_rrr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);

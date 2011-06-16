@@ -1,0 +1,5 @@
+if ! stat shbench.prof > /dev/null 2>&1 || ! diff <(md5sum bin/shbench) shbench.md5 > /dev/null; then
+   bin/shbench
+   md5sum bin/shbench > shbench.md5
+fi
+pprof --text bin/shbench shbench.prof | head -n 40

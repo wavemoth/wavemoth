@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
 
   input = zeros((lmax + 1) * (lmax + 1) * 2);
   output = zeros(12 * Nside * Nside);
-  work = zeros((lmax + 1) * (4 * Nside - 1));
+  work = zeros((lmax + 1) * (4 * Nside - 1) * 2);
 
   plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input, output, work, FASTSHT_MMAJOR);
 

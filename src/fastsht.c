@@ -51,6 +51,7 @@ at the time, this will definitely change.
 typedef struct {
   double *evaluation_grid_squared, *output_grid_squared, *gamma, *omega;
   char *matrix_data;
+  int64_t combined_matrix_size;
 } m_resource_t;
 
 struct _precomputation_t {
@@ -111,7 +112,7 @@ static char *skip_padding(char *ptr) {
 
 void fastsht_configure(char *resource_path) {
   int i;
-  check(!configured, "Already configured");
+  /*check(!configured, "Already configured");*/
   configured = 1;
   strncpy(global_resource_path, resource_path, MAX_RESOURCE_PATH);
   global_resource_path[MAX_RESOURCE_PATH - 1] = '\0';
@@ -167,7 +168,8 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
       rec = data->P_matrices + 2 * m + odd;
       head = data->mmapped_buffer + offsets[4 * m + 2 * odd];
       should_interpolate = ((int64_t*)head)[0];
-      head = skip_padding(head + sizeof(int64_t));
+      rec->combined_matrix_size = ((int64_t*)head)[1];
+      head = skip_padding(head + sizeof(int64_t[2]));
       if (should_interpolate) {
         //      assert(n > 0);
         rec->evaluation_grid_squared = (double*)head;
@@ -272,6 +274,14 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   free(plan->work_g_m_even);
   free(plan->work_g_m_odd);
   free(plan);
+}
+
+int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
+  int64_t N, nvecs;
+  N = (plan->resources->P_matrices + 2 * m + odd)->combined_matrix_size;
+  nvecs = 2;
+  N *= nvecs;
+  return N * 2; /* count mul and add seperately */
 }
 
 void fastsht_execute(fastsht_plan plan) {

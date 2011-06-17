@@ -92,6 +92,7 @@ def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True):
             f.setNodeAttr(group, 'm', m)
             f.setNodeAttr(group, 'odd', odd)
             f.setNodeAttr(group, 'Nside', Nside)
+            f.setNodeAttr(group, 'combined_matrix_size', compressed.size())
             f.createArray(group, 'P', stream_arr)
         finally:
             f.close()
@@ -148,6 +149,7 @@ def serialize_from_hdf_files(target):
                     start_pos = outfile.tell()
                     # Flags
                     write_int64(outfile, f.getNodeAttr(g, 'interpolate'))
+                    write_int64(outfile, f.getNodeAttr(g, 'combined_matrix_size')) # for computing FLOPS
                     # P
                     pad128(outfile)
                     arr = g.P[:]

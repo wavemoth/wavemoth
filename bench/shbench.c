@@ -3,6 +3,7 @@ C program to benchmark spherical harmonic transforms
 */
 
 #include "fastsht.h"
+#include "fastsht_private.h"
 #include "blas.h"
 
 #include <stdio.h>
@@ -17,9 +18,8 @@ C program to benchmark spherical harmonic transforms
 
 #include <omp.h>
 
-#define Nside 512
+#define Nside 256
 #define lmax 2 * Nside
-#define mmax lmax
 #define PROFILE_TIME 3.0
 
 int N_threads;
@@ -79,16 +79,12 @@ void execute_memory_benchmark(int threadnum) {
   /* Simply accumulate the buffer in a double -- we're going to be very
      IO-bound so we can basically ignore the addition put in in order to
      avoid optimizing things out.   */
-  int i, j;
+  int j;
   size_t n = N_mem;
   double acc = 0;
   double *buf = mem_buf;
-#pragma omp parallel for schedule(static, 1) private(j) \
-    firstprivate(threadnum) shared(n) reduction(+:acc)
-  for (i = 0; i < N_threads; ++i) {
-    for (j = 0; j != n; j += 2) {
-      acc += buf[threadnum * n + j];
-    }
+  for (j = 0; j != n; j += 2) {
+    acc += buf[threadnum * n + j];
   }
   if (acc != 0.0) printf("dummy\n");
 }
@@ -143,6 +139,26 @@ void execute_sht(int threadnum) {
   fastsht_execute(sht_plan);
 }
 
+void execute_legendre(int threadnum) {
+  int m, odd;
+  for (m = 0; m != sht_plan->mmax + 1; ++m) {
+    for (odd = 0; odd != 2; ++odd) {
+      fastsht_perform_matmul(sht_plan, m, odd);
+    }
+  }
+}
+
+void finish_legendre(double dt) {
+  int64_t flops = 0;
+  int m, odd;
+  for (m = 0; m != sht_plan->mmax + 1; ++m) {
+    for (odd = 0; odd != 2; ++odd) {
+      flops += fastsht_get_legendre_flops(sht_plan, m, odd) * 2;
+    }
+  }
+  printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9);
+}
+
 void setup_sht() {
   FILE *fd;
   printf("  Initializing (incl. FFTW)\n");
@@ -158,7 +174,7 @@ void setup_sht() {
   sht_input = zeros((lmax + 1) * (lmax + 1) * 2);
   sht_output = zeros(12 * Nside * Nside);
   sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2);
-  sht_plan = fastsht_plan_to_healpix(Nside, lmax, mmax, sht_input,
+  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, sht_input,
                                      sht_output, sht_work, FASTSHT_MMAJOR);
 
   /* Export FFTW wisdom generated during planning */
@@ -192,7 +208,8 @@ typedef struct {
 } benchmark_t;
 
 benchmark_t benchmarks[] = {
-  {"SHT", setup_sht, execute_sht, finish_sht, 0},
+  {"sht", setup_sht, execute_sht, finish_sht, 0},
+  {"legendre", setup_sht, execute_legendre, finish_legendre, 0},
   {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark, 1},
   {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm, 1},
   {"dgemm-single", setup_dgemm, execute_dgemm, finish_dgemm, 0},
@@ -202,11 +219,8 @@ benchmark_t benchmarks[] = {
 
 
 int main(int argc, char *argv[]) {
-  fastsht_plan plan;
-  double *input, *output, *work;
-  double t0, t1, dt;
+  double t0, t1;
   int n, i;
-  FILE *fd;
   benchmark_t *pbench;
   
   omp_set_dynamic(0);

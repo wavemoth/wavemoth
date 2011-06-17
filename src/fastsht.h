@@ -33,4 +33,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *inpu
 void fastsht_destroy_plan(fastsht_plan plan);
 void fastsht_execute(fastsht_plan plan);
 
+int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd);
+
 #endif

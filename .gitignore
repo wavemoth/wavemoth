@@ -37,3 +37,5 @@ bin/*
 *.prof
 jobstore
 precomputed.dat
+
+/resources

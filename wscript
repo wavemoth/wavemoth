@@ -61,6 +61,10 @@ def configure(conf):
 
     conf.env.CFLAGS_OPENMP = ['-fopenmp']
     conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
+
+    conf.env.LIB_ATLAS = 'f77blas atlas gfortran'.split()
+    conf.env.LIBPATH_ATLAS = ['/home/dagss/code/ATLAS/build_nehalem/lib']
+    
     
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
@@ -88,14 +92,14 @@ def build(bld):
     bld(source=(['spherew/butterfly.pyx', 'src/butterfly.c']),
         includes=['src'],
         target='butterfly',
-        use='NUMPY BLAS fcshlib',
+        use='NUMPY ATLAS fcshlib',
         features='c pyext cshlib')
 
     bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c.in',
                  'src/fmm1d.c']),
         includes=['src'],
         target='fastsht',
-        use='NUMPY BLAS FFTW3', # PS collision between MKL and FFTW..
+        use='NUMPY ATLAS FFTW3', # PS collision between MKL and FFTW..
         features='c fc pyext cshlib')
 
     bld(source=(['spherew/psht.pyx']),
@@ -114,7 +118,7 @@ def build(bld):
         install_path='bin',
         target='shbench',
 #        use='MKLBLAS RT',
-        use='BLAS FFTW3 RT OPENMP',
+        use='ATLAS FFTW3 RT OPENMP',
         features='cprogram c')
 
 

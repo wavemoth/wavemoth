@@ -188,13 +188,14 @@ class RootNode(object):
             write_array(stream, D)
 
     def apply(self, x):
+        assert x.ndim == 2
         y = self.S_node.apply(x)
-        out = np.empty(self.nrows, np.double)
+        out = np.empty((self.nrows, x.shape[1]), np.double)
         i_out = 0
         i_y = 0
         for block in self.D_blocks:
             m, n = block.shape
-            out[i_out:i_out + m] = np.dot(block, y[i_y:i_y + n])
+            out[i_out:i_out + m, :] = np.dot(block, y[i_y:i_y + n, :])
             i_out += m
             i_y += n
         return out
@@ -281,11 +282,11 @@ class InnerNode(object):
         LS, RS = self.children
         assert x.shape[0] == self.ncols
         assert x.shape[0] == LS.ncols + RS.ncols
-        z_left = LS.apply(x[:LS.ncols])
-        z_right = RS.apply(x[LS.ncols:])
+        z_left = LS.apply(x[:LS.ncols, :])
+        z_right = RS.apply(x[LS.ncols:, :])
 
         # Apply this butterfly, permuting the input as we go
-        y = np.empty(self.nrows, np.double)
+        y = np.empty((self.nrows, x.shape[1]), np.double)
         i_y = 0
         i_l = i_r = 0
         for i_block, (T_ip, B_ip) in enumerate(self.blocks):
@@ -293,18 +294,18 @@ class InnerNode(object):
             lw = LS.block_heights[i_block]
             rw = RS.block_heights[i_block]
             assert T_ip.shape[1] == B_ip.shape[1] == lw + rw
-            buf = np.empty(lw + rw)
-            buf[:lw] = z_left[i_l:i_l + lw]
+            buf = np.empty((lw + rw, x.shape[1]))
+            buf[:lw, :] = z_left[i_l:i_l + lw, :]
             i_l += lw
-            buf[lw:] = z_right[i_r:i_r + rw]
+            buf[lw:, :] = z_right[i_r:i_r + rw, :]
             i_r += rw
             # Do computation
             th = self.block_heights[2 * i_block]
             bh = self.block_heights[2 * i_block + 1]
             assert T_ip.shape[0] == th and B_ip.shape[0] == bh
-            y[i_y:i_y + th] = T_ip.apply(buf)
+            y[i_y:i_y + th, :] = T_ip.apply(buf)
             i_y += th
-            y[i_y:i_y + bh] = B_ip.apply(buf)
+            y[i_y:i_y + bh, :] = B_ip.apply(buf)
             i_y += bh
         return y
         

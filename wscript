@@ -118,7 +118,7 @@ def build(bld):
         install_path='bin',
         target='shbench',
 #        use='MKLBLAS RT',
-        use='ATLAS FFTW3 RT OPENMP',
+        use='ATLAS FFTW3 RT OPENMP PSHT',
         features='cprogram c')
 
 

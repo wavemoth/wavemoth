@@ -18,9 +18,14 @@ C program to benchmark spherical harmonic transforms
 
 #include <omp.h>
 
-#define Nside 256
+#include <stddef.h>
+#include <psht.h>
+#include <psht_geomhelpers.h>
+
+
+#define Nside 64
 #define lmax 2 * Nside
-#define PROFILE_TIME 3.0
+#define PROFILE_TIME 8.0
 
 int N_threads;
 
@@ -193,6 +198,50 @@ void finish_sht(double dt) {
 }
 
 
+/*
+PSHT
+*/
+
+psht_alm_info *benchpsht_alm_info;
+psht_geom_info *benchpsht_geom_info;
+pshtd_joblist *benchpsht_joblist;
+
+ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
+  return m * (2 * lmax - m + 3) / 2 + (l - m);
+}
+
+void setup_psht() {
+  int m;
+  int marr[lmax + 1];
+  ptrdiff_t mstart[lmax + 1];
+  /* Setup m-major alm info */
+  for (m = 0; m != lmax + 1; ++m) {
+    mstart[m] = lm_to_idx_mmajor(0, m);
+    marr[m] = m;
+  }
+  psht_make_general_alm_info(lmax, lmax + 1, 1, marr, mstart, &benchpsht_alm_info);
+  /* The rest is standard */
+  psht_make_healpix_geom_info(Nside, 1, &benchpsht_geom_info);
+  pshtd_make_joblist(&benchpsht_joblist);
+
+  sht_input = zeros((lmax + 1) * (lmax + 1) * 2);
+  sht_output = zeros(12 * Nside * Nside);
+  pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input, sht_output, 0);
+}
+
+void finish_psht() {
+  psht_destroy_alm_info(benchpsht_alm_info);
+  psht_destroy_geom_info(benchpsht_geom_info);
+  pshtd_clear_joblist(benchpsht_joblist);
+  pshtd_destroy_joblist(benchpsht_joblist);
+  free(sht_input);
+  free(sht_output);
+}
+
+void execute_psht(int threadnum) {
+  pshtd_execute_jobs(benchpsht_joblist, benchpsht_geom_info, benchpsht_alm_info);
+}
+
 
 
 /*
@@ -209,6 +258,7 @@ typedef struct {
 
 benchmark_t benchmarks[] = {
   {"sht", setup_sht, execute_sht, finish_sht, 0},
+  {"psht", setup_psht, execute_psht, finish_psht, 0},
   {"legendre", setup_sht, execute_legendre, finish_legendre, 0},
   {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark, 1},
   {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm, 1},
@@ -220,24 +270,39 @@ benchmark_t benchmarks[] = {
 
 int main(int argc, char *argv[]) {
   double t0, t1;
-  int n, i;
+  int n, i, j, should_run;
   benchmark_t *pbench;
+  int max_threads;
+
+  max_threads = omp_get_max_threads();
   
   omp_set_dynamic(0);
 
   pbench = benchmarks;
   while (pbench->execute != NULL) {
+    should_run = 0;
+    if (argc > 1) {
+      for (j = 1; j != argc; ++j) {
+        if (strcmp(argv[j], pbench->name) == 0) should_run = 1;
+      }
+      if (!should_run) {
+        pbench++;
+        continue;
+      }
+    }
     printf("%s:\n", pbench->name);
-    N_threads = pbench->multithreaded ? omp_get_max_threads() : 1;
+    N_threads = pbench->multithreaded ? max_threads : 1;
     if (pbench->setup != NULL) pbench->setup();
     t0 = walltime();
     n = 0;
-    #pragma omp parallel for num_threads(N_threads) schedule(static, 1)
+
+    omp_set_num_threads(N_threads);
+    #pragma omp parallel for schedule(static, 1)
     for (i = 0; i < N_threads; ++i) {
       pbench->execute(i);
     }
     do {
-    #pragma omp parallel for num_threads(N_threads) schedule(static, 1)
+    #pragma omp parallel for schedule(static, 1)
       for (i = 0; i < N_threads; ++i) {
         pbench->execute(i);
       }

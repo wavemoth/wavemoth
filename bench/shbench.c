@@ -23,9 +23,9 @@ C program to benchmark spherical harmonic transforms
 #include <psht_geomhelpers.h>
 
 
-#define Nside 64
+#define Nside 256
 #define lmax 2 * Nside
-#define PROFILE_TIME 8.0
+#define PROFILE_TIME 5.0
 
 int N_threads;
 
@@ -164,7 +164,7 @@ void finish_legendre(double dt) {
   printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9);
 }
 
-void setup_sht() {
+void _setup_sht(int nmaps) {
   FILE *fd;
   printf("  Initializing (incl. FFTW)\n");
 
@@ -176,10 +176,10 @@ void setup_sht() {
   }
 
   fastsht_configure("/home/dagss/code/spherew/resources");
-  sht_input = zeros((lmax + 1) * (lmax + 1) * 2);
-  sht_output = zeros(12 * Nside * Nside);
-  sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2);
-  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, 1, sht_input,
+  sht_input = zeros((lmax + 1) * (lmax + 1) * 2 * nmaps);
+  sht_output = zeros(12 * Nside * Nside * nmaps);
+  sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2 * nmaps);
+  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, sht_input,
                                      sht_output, sht_work, FASTSHT_MMAJOR);
 
   /* Export FFTW wisdom generated during planning */
@@ -188,6 +188,14 @@ void setup_sht() {
     fftw_export_wisdom_to_file(fd);
     fclose(fd);
   }
+}
+
+void setup_sht1() {
+  _setup_sht(1);
+}
+
+void setup_sht10() {
+  _setup_sht(10);
 }
 
 void finish_sht(double dt) {
@@ -210,23 +218,39 @@ ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
   return m * (2 * lmax - m + 3) / 2 + (l - m);
 }
 
-void setup_psht() {
+void _setup_psht(int nmaps) {
   int m;
   int marr[lmax + 1];
-  ptrdiff_t mstart[lmax + 1];
+  int j;
+  ptrdiff_t npix = 12 * Nside * Nside;
+  ptrdiff_t mstart[lmax + 1], stride;
   /* Setup m-major alm info */
   for (m = 0; m != lmax + 1; ++m) {
     mstart[m] = lm_to_idx_mmajor(0, m);
     marr[m] = m;
   }
-  psht_make_general_alm_info(lmax, lmax + 1, 1, marr, mstart, &benchpsht_alm_info);
+  /* Input is strided/interleaved in m-major triangular order;
+     output has one map after the other (non-interleaved) */
+  stride = nmaps;
+  psht_make_general_alm_info(lmax, lmax + 1, stride, marr, mstart, &benchpsht_alm_info);
   /* The rest is standard */
   psht_make_healpix_geom_info(Nside, 1, &benchpsht_geom_info);
   pshtd_make_joblist(&benchpsht_joblist);
 
-  sht_input = zeros((lmax + 1) * (lmax + 1) * 2);
-  sht_output = zeros(12 * Nside * Nside);
-  pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input, sht_output, 0);
+  sht_input = zeros((lmax + 1) * (lmax + 1) * 2 * nmaps);
+  sht_output = zeros(12 * Nside * Nside * nmaps);
+  for (j = 0; j != nmaps; ++j) {
+    pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input + j,
+                          sht_output + j * npix, 0);
+  }
+}
+
+void setup_psht1() {
+  _setup_psht(1);
+}
+
+void setup_psht10() {
+  _setup_psht(10);
 }
 
 void finish_psht() {
@@ -257,9 +281,11 @@ typedef struct {
 } benchmark_t;
 
 benchmark_t benchmarks[] = {
-  {"sht", setup_sht, execute_sht, finish_sht, 0},
-  {"psht", setup_psht, execute_psht, finish_psht, 0},
-  {"legendre", setup_sht, execute_legendre, finish_legendre, 0},
+  {"sht1", setup_sht1, execute_sht, finish_sht, 0},
+  {"sht10", setup_sht10, execute_sht, finish_sht, 0},
+  {"psht1", setup_psht1, execute_psht, finish_psht, 0},
+  {"psht10", setup_psht10, execute_psht, finish_psht, 0},
+  {"legendre", setup_sht1, execute_legendre, finish_legendre, 0},
   {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark, 1},
   {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm, 1},
   {"dgemm-single", setup_dgemm, execute_dgemm, finish_dgemm, 0},

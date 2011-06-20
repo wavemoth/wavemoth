@@ -139,6 +139,7 @@ Butterfly SHT benchmark
 
 double *sht_input, *sht_output, *sht_work;
 fastsht_plan sht_plan;
+int sht_nmaps;
 
 void execute_sht(int threadnum) {
   fastsht_execute(sht_plan);
@@ -167,7 +168,7 @@ void finish_legendre(double dt) {
 void _setup_sht(int nmaps) {
   FILE *fd;
   printf("  Initializing (incl. FFTW)\n");
-
+  sht_nmaps = nmaps;
   /* Import FFTW plan if it exists */
   fd = fopen("fftw.wisdom", "r");
   if (fd != NULL) {
@@ -198,6 +199,10 @@ void setup_sht10() {
   _setup_sht(10);
 }
 
+void setup_sht20() {
+  _setup_sht(20);
+}
+
 void finish_sht(double dt) {
   fastsht_destroy_plan(sht_plan);
   free(sht_input);
@@ -224,6 +229,7 @@ void _setup_psht(int nmaps) {
   int j;
   ptrdiff_t npix = 12 * Nside * Nside;
   ptrdiff_t mstart[lmax + 1], stride;
+  sht_nmaps = nmaps;
   /* Setup m-major alm info */
   for (m = 0; m != lmax + 1; ++m) {
     mstart[m] = lm_to_idx_mmajor(0, m);
@@ -251,6 +257,10 @@ void setup_psht1() {
 
 void setup_psht10() {
   _setup_psht(10);
+}
+
+void setup_psht20() {
+  _setup_psht(20);
 }
 
 void finish_psht() {
@@ -283,8 +293,10 @@ typedef struct {
 benchmark_t benchmarks[] = {
   {"sht1", setup_sht1, execute_sht, finish_sht, 0},
   {"sht10", setup_sht10, execute_sht, finish_sht, 0},
+  {"sht20", setup_sht20, execute_sht, finish_sht, 0},
   {"psht1", setup_psht1, execute_psht, finish_psht, 0},
   {"psht10", setup_psht10, execute_psht, finish_psht, 0},
+  {"psht20", setup_psht20, execute_psht, finish_psht, 0},
   {"legendre", setup_sht1, execute_legendre, finish_legendre, 0},
   {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark, 1},
   {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm, 1},
@@ -321,6 +333,7 @@ int main(int argc, char *argv[]) {
     }
     printf("%s:\n", pbench->name);
     N_threads = pbench->multithreaded ? max_threads : 1;
+    sht_nmaps = -1;
     if (pbench->setup != NULL) pbench->setup();
     omp_set_num_threads(N_threads);
     #pragma omp parallel for schedule(static, 1)
@@ -347,6 +360,9 @@ int main(int argc, char *argv[]) {
     ProfilerStop();
     #endif
     printtime("  ", n, t1 - t0);
+    if (sht_nmaps >= 1) {
+      printtime("  Per map: ", n * sht_nmaps, t1 - t0);
+    }
     if (pbench->finish) pbench->finish((t1 - t0) / n);
     pbench++;
   }

@@ -179,7 +179,7 @@ void setup_sht() {
   sht_input = zeros((lmax + 1) * (lmax + 1) * 2);
   sht_output = zeros(12 * Nside * Nside);
   sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2);
-  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, sht_input,
+  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, 1, sht_input,
                                      sht_output, sht_work, FASTSHT_MMAJOR);
 
   /* Export FFTW wisdom generated during planning */

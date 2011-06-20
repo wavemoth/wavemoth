@@ -2,7 +2,6 @@
 #define _FASTSHT_ERROR_H_
 
 #define ERRMAXLEN 2048
-static char current_error[ERRMAXLEN];
 static char error_buf[ERRMAXLEN];
 #define _exception(file, line, msg) do { \
     fprintf(stderr, "%s:%d %s\n", file, line, msg); \

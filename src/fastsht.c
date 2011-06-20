@@ -111,7 +111,6 @@ static char *skip_padding(char *ptr) {
 }
 
 void fastsht_configure(char *resource_path) {
-  int i;
   /*check(!configured, "Already configured");*/
   configured = 1;
   strncpy(global_resource_path, resource_path, MAX_RESOURCE_PATH);
@@ -122,7 +121,7 @@ void fastsht_configure(char *resource_path) {
 int fastsht_load_resource(int Nside, precomputation_t *data) {
   int fd;
   struct stat fileinfo;
-  int64_t mmax, lmax, m, len, n, odd, should_interpolate;
+  int64_t mmax, lmax, m, n, odd, should_interpolate;
   int64_t *offsets = NULL;
   m_resource_t *rec;
   int retcode;
@@ -225,8 +224,9 @@ void fastsht_release_resource(precomputation_t *data) {
   }
 }
 
-fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *input,
-                                     double *output, double *work, int ordering) {
+fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
+                                     double *input, double *output, double *work,
+                                     int ordering) {
   fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
   int iring;
   fastsht_grid_info *grid;
@@ -239,11 +239,12 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, double *inpu
   plan->output = output;
   plan->work = work;
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
+  plan->nmaps = nmaps;
 
-  plan->work_a_l = memalign(16, sizeof(complex double[2 * (lmax + 1)])); /*TODO: 2 x here? */
-  plan->work_g_m_roots = memalign(16, sizeof(complex double[(lmax + 1) / 2]));
-  plan->work_g_m_even = memalign(16, sizeof(complex double[plan->grid->mid_ring + 1]));
-  plan->work_g_m_odd = memalign(16, sizeof(complex double[plan->grid->mid_ring + 1]));
+  plan->work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
+  plan->work_g_m_roots = memalign(16, sizeof(complex double[nmaps * ((lmax + 1) / 2)]));
+  plan->work_g_m_even = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
+  plan->work_g_m_odd = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
 
   plan->resources = fastsht_fetch_resource(Nside);
 
@@ -304,14 +305,16 @@ void fastsht_execute(fastsht_plan plan) {
 }
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
-  bfm_index_t ncols, nrows, l, lmax = plan->lmax;
-  double complex *input_m = (double complex*)plan->input + m * (2 * lmax - m + 3) / 2;
+  bfm_index_t ncols, nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
+  double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
   double complex *target;
   m_resource_t *rec;
   rec = plan->resources->P_matrices + 2 * m + odd;
   ncols = 0;
   for (l = m + odd; l <= lmax; l += 2) {
-    plan->work_a_l[ncols] = input_m[l - m];
+    for (j = 0; j != nmaps; ++j) {
+      plan->work_a_l[ncols * nmaps + j] = input_m[(l - m) * nmaps + j];
+    }
     ++ncols;
   }
   if (rec->evaluation_grid_squared == NULL) {
@@ -323,7 +326,7 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
   }
   /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
   bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)target,
-              nrows, ncols, 2);
+              nrows, ncols, 2 * plan->nmaps);
 }
 
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
@@ -339,8 +342,10 @@ void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
 }
 
 void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {
-  bfm_index_t mmax, nrings, iring, mid_ring;
+  bfm_index_t mmax, nrings, iring, mid_ring, imap;
   double complex *work;
+  int nmaps = plan->nmaps;
+  bfm_index_t work_stride;
   assert(plan->grid->has_equator);
   mmax = plan->mmax;
   mid_ring = plan->grid->mid_ring;
@@ -348,30 +353,42 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {
   work = (complex double*)plan->work;
   /* Add together parts and distribute/transpose to plan->work */
   /* Equator */
-  work[mid_ring * (mmax + 1) + m] = plan->work_g_m_even[0];
+  work_stride = (2 * mid_ring + 1) * (mmax + 1);
+  for (imap = 0; imap != nmaps; ++imap) {
+    work[imap * work_stride + mid_ring * (mmax + 1) + m] = plan->work_g_m_even[imap];
+  }
   /* Ring-pairs */
   for (iring = 1; iring < mid_ring + 1; ++iring) {
-    /* Top ring */
-    work[(mid_ring - iring) * (mmax + 1) + m] = 
-      plan->work_g_m_even[iring] + plan->work_g_m_odd[iring];
-    /* Bottom ring -- switch odd sign */
-    work[(mid_ring + iring) * (mmax + 1) + m] =
-      plan->work_g_m_even[iring] - plan->work_g_m_odd[iring]; /* sign! */
+    for (imap = 0; imap != nmaps; ++imap) {
+      /* Top ring */
+      work[imap * work_stride + (mid_ring - iring) * (mmax + 1) + m] = 
+        plan->work_g_m_even[iring * nmaps + imap] + plan->work_g_m_odd[iring * nmaps + imap];
+      /* Bottom ring -- switch odd sign */
+      work[imap * work_stride + (mid_ring + iring) * (mmax + 1) + m] =
+        plan->work_g_m_even[iring * nmaps + imap] - plan->work_g_m_odd[iring * nmaps + imap];
+    }
   }
 }
 
-
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
-  int iring, mmax, j, N, offset;
-  double *g_m;
+  int iring, imap, mmax, j, N;
+  double complex *g_m;
+  double *output_ring;
+  bfm_index_t work_stride, npix;
   fastsht_grid_info *grid = plan->grid;
   mmax = plan->mmax;
-  for (iring = ring_start; iring != ring_end; ++iring) {
-    g_m = plan->work + 2 * (1 + mmax) * iring;
-    N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
-    phase_shift_ring_inplace(mmax, (complex double*)g_m, grid->phi0s[iring]);
-    fftw_execute(plan->fft_plans[iring]);
-  }
+  work_stride = (2 * plan->grid->mid_ring + 1) * (mmax + 1);
+  npix = plan->grid->npix;
+  imap = 0;
+  for (imap = 0; imap != plan->nmaps; ++imap) {
+    for (iring = ring_start; iring != ring_end; ++iring) {
+      g_m = (double complex*)plan->work + imap * work_stride + (1 + mmax) * iring;
+      N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
+      phase_shift_ring_inplace(mmax, g_m, grid->phi0s[iring]);
+      output_ring = plan->output + imap * npix + plan->grid->ring_offsets[iring];
+      fftw_execute_dft_c2r(plan->fft_plans[iring], g_m, output_ring);
+    }
+  }  
 }
 
 fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside) {
@@ -405,6 +422,7 @@ fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside) {
     ipix += ring_npix;
   }
   result->ring_offsets[nrings] = ipix;
+  result->npix = ipix;
   return result;
 }
 

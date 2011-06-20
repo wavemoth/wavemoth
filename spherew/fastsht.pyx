@@ -22,6 +22,7 @@ cdef extern from "fastsht.h":
     ctypedef int bfm_index_t
     
     fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax,
+                                         int nmaps,
                                          double *input,
                                          double *output,
                                          double *work,
@@ -59,9 +60,9 @@ cdef class ShtPlan:
     cdef readonly object work_a_l, work_g_m_roots, work_g_m_even, work_g_m_odd
     
     def __cinit__(self, int Nside, int lmax, int mmax,
-                  np.ndarray[double complex, mode='c'] input,
-                  np.ndarray[double, mode='c'] output,
-                  np.ndarray[double, mode='c'] work,
+                  np.ndarray[double complex, ndim=2, mode='c'] input,
+                  np.ndarray[double, ndim=2, mode='c'] output,
+                  np.ndarray[double complex, ndim=2, mode='c'] work,
                   ordering):
         global _configured
         cdef int flags
@@ -72,12 +73,14 @@ cdef class ShtPlan:
         self.input = input
         self.output = output
         self.work = work
+        if not (input.shape[1] == output.shape[0] == work.shape[0]):
+            raise ValueError("Nonconforming arrays")
 
         if not _configured:
             fastsht_configure(_resource_dir)
             _configured = True
         
-        self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax,
+        self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],
                                             <double*>input.data, <double*>output.data,
                                             <double*>work.data, flags)
         cdef np.npy_intp *shape = [lmax + 1]
@@ -130,3 +133,5 @@ def _get_healpix_phi0s(Nside):
         fastsht_free_grid_info(info)
     return phi0s
     
+
+

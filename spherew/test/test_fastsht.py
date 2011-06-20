@@ -18,35 +18,40 @@ from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
 from cmb.maps import *
 
 do_plot = False
-Nside = 64
+Nside = 16
 lmax = 2 * Nside
 
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
-def make_plan():
-    input = np.zeros((lmax + 1)**2, dtype=np.complex128)
-    output = np.zeros(12*Nside**2)
-    work = np.zeros((lmax + 1) * (4 * Nside - 1), dtype=np.complex128)
-    plan = ShtPlan(Nside, lmax, lmax, input, output,
-                   work.view(np.double), 'mmajor')
+def make_plan(nmaps):
+    input = np.zeros(((lmax + 1)**2, nmaps), dtype=np.complex128)
+    output = np.zeros((nmaps, 12*Nside**2))
+    work = np.zeros((nmaps, (lmax + 1) * (4 * Nside - 1)), dtype=np.complex128)
+    plan = ShtPlan(Nside, lmax, lmax, input, output, work, 'mmajor')
+
     return plan
 
 def test_basic():
-    plan = make_plan()
-    plan.input[0] = 10
-    plan.input[lm_to_idx_mmajor(1, 0)] = 10
-    plan.input[lm_to_idx_mmajor(2, 1)] = 10 + 5j
+    nmaps = 3
+    plan = make_plan(nmaps)
+    plan.input[0, :] = 10
+    plan.input[lm_to_idx_mmajor(1, 0), :] = np.arange(nmaps) * 100
+    plan.input[lm_to_idx_mmajor(2, 1), :] = 10 + 5j
     plan.execute()
 
     y2 = psht.alm2map_mmajor(plan.input, Nside=Nside)
     if do_plot:
-        pixel_sphere_map(y2, pixel_order='ring').plot(title='FID')
-        pixel_sphere_map(plan.output, pixel_order='ring').plot()
+        for i in range(nmaps):
+            pixel_sphere_map(y2[i, :], pixel_order='ring').plot(title='FID %d' % i)
+            pixel_sphere_map(plan.output[i, :], pixel_order='ring').plot(title='%d' % i)
+            pixel_sphere_map(plan.output[i, :] - y2[i, :], pixel_order='ring').plot(title='delta %d' % i)
+
         plt.show()
 
     #print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
-    yield assert_almost_equal, y2, plan.output
+    for i in range(nmaps):
+        yield assert_almost_equal, y2[i, :], plan.output[i, :]
 
 def test_matmul():
     raise SkipTest("This one was written with interpolation in mind")

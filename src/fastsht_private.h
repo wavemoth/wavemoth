@@ -31,12 +31,14 @@ typedef struct {
   double *phi0s;
   bfm_index_t *ring_offsets;
   bfm_index_t nrings, mid_ring;
+  bfm_index_t npix;
   int has_equator;
 } fastsht_grid_info;
 
 struct _fastsht_plan {
   int type;
   int lmax, mmax;
+  int nmaps;
   double *output, *input, *work;
   double complex *work_a_l, *work_g_m_roots, *work_g_m_even, *work_g_m_odd;
   fastsht_grid_info *grid;

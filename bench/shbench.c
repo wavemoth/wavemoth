@@ -299,6 +299,9 @@ int main(int argc, char *argv[]) {
   int n, i, j, should_run;
   benchmark_t *pbench;
   int max_threads;
+  #ifdef USE_PPROF
+  char profilefile[1024];
+  #endif
 
   max_threads = omp_get_max_threads();
   
@@ -319,14 +322,18 @@ int main(int argc, char *argv[]) {
     printf("%s:\n", pbench->name);
     N_threads = pbench->multithreaded ? max_threads : 1;
     if (pbench->setup != NULL) pbench->setup();
-    t0 = walltime();
-    n = 0;
-
     omp_set_num_threads(N_threads);
     #pragma omp parallel for schedule(static, 1)
     for (i = 0; i < N_threads; ++i) {
       pbench->execute(i);
     }
+    #ifdef USE_PPROF
+    snprintf(profilefile, 1023, "profiles/%s.prof", pbench->name);
+    profilefile[1023] = '\0';
+    ProfilerStart(profilefile);
+    #endif
+    t0 = walltime();
+    n = 0;
     do {
     #pragma omp parallel for schedule(static, 1)
       for (i = 0; i < N_threads; ++i) {
@@ -335,8 +342,10 @@ int main(int argc, char *argv[]) {
       t1 = walltime();
       n++;
     } while (t1 - t0 < PROFILE_TIME);
-    
     t1 = walltime();
+    #ifdef USE_PPROF
+    ProfilerStop();
+    #endif
     printtime("  ", n, t1 - t0);
     if (pbench->finish) pbench->finish((t1 - t0) / n);
     pbench++;

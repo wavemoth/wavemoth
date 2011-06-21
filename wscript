@@ -15,6 +15,8 @@ def options(opt):
                    '(NOTE: must be built with -fPIC)')
     opt.add_option('--with-fftw3', help='path to FFTW3 to use '
                    '(NOTE: must be configured with --with-pic)')
+    opt.add_option('--with-atlas-lib', help='path to ATLAS libs to use '
+                   '(NOTE: must be configured with PIC)')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -51,23 +53,19 @@ def configure(conf):
     conf.check_libpsht()
     conf.check_fftw3()
     conf.check_google_perftools()
+    conf.check_atlas()
 
-    conf.env.LIB_BLAS = ['goto2', 'gfortran']
-    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/home/dagss/code/GotoBLAS2']
+#    conf.env.LIB_BLAS = ['goto2', 'gfortran']
+#    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/home/dagss/code/GotoBLAS2']
 
-    conf.env.LIB_MKLBLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
-    conf.env.LIBPATH_MKLBLAS = conf.env.RPATH_MKLBLAS = ['/opt/intel/mkl/lib/intel64']
+#    conf.env.LIB_MKLBLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
+#    conf.env.LIBPATH_MKLBLAS = conf.env.RPATH_MKLBLAS = ['/opt/intel/mkl/lib/intel64']
 
     conf.env.LIB_RT = ['rt']
-
     conf.env.LIB_MKL = ['mkl_rt']
 
     conf.env.CFLAGS_OPENMP = ['-fopenmp']
     conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
-
-    conf.env.LIB_ATLAS = 'f77blas atlas gfortran'.split()
-    conf.env.LIBPATH_ATLAS = ['/home/dagss/code/ATLAS/build_nehalem/lib']
-    
     
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
@@ -102,7 +100,7 @@ def build(bld):
                  'src/fmm1d.c']),
         includes=['src'],
         target='fastsht',
-        use='NUMPY ATLAS FFTW3', # PS collision between MKL and FFTW..
+        use='NUMPY ATLAS FFTW3',
         features='c fc pyext cshlib')
 
     bld(source=(['spherew/psht.pyx']),
@@ -120,7 +118,6 @@ def build(bld):
         includes=['src'],
         install_path='bin',
         target='shbench',
-#        use='MKLBLAS RT',
         use='ATLAS FFTW3 RT OPENMP PSHT MAYBEPERFTOOLS',
         features='cprogram c')
 
@@ -133,7 +130,10 @@ def check_libpsht(conf):
     """
     Settings for libpsht
     """
+    conf.start_msg("Checking for libpsht")
     prefix = conf.options.with_libpsht
+    if not prefix:
+        conf.fatal("--with-libpsht not used (FIXME)")
     conf.env.LIB_PSHT = ['psht', 'fftpack', 'c_utils']
     conf.env.LINKFLAGS_PSHT = ['-fopenmp']
     conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
@@ -159,12 +159,14 @@ def check_libpsht(conf):
         compile_filename='test.c',
         use='PSHT',
         msg='Checking for libpsht')
+    conf.end_msg(prefix if prefix else True)
 
 @conf
 def check_fftw3(conf):
     """
     Settings for FFTW3
     """
+    conf.start_msg("Checking for FFTW3")
     conf.env.LIB_FFTW3 = ['fftw3']
     prefix = conf.options.with_fftw3
     if prefix:
@@ -184,8 +186,31 @@ def check_fftw3(conf):
         fragment=cfrag,
         features = 'c',
         compile_filename='test.c',
-        use='FFTW3',
-        msg='Checking for FFTW3')
+        use='FFTW3')
+    conf.end_msg(prefix if prefix else True)
+
+@conf
+def check_atlas(conf):
+    """
+    Settings for ATLAS
+    """
+    conf.start_msg("Checking for ATLAS")
+    conf.env.LIB_ATLAS = 'f77blas atlas gfortran'.split()
+    path = conf.options.with_atlas_lib
+    if path:
+        conf.env.LIBPATH_ATLAS = path
+    cfrag = dedent('''\
+    void dgemm_(void); /* just check existence of symbol through compilation*/
+    int main() {
+      dgemm_();
+    }
+    ''')
+    conf.check_cc(
+        fragment=cfrag,
+        features = 'c',
+        compile_filename='test.c',
+        use='ATLAS')
+    conf.end_msg(path if path else True)
 
 @conf
 def check_google_perftools(conf):

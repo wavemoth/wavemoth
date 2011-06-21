@@ -1,6 +1,8 @@
 #./waf-light --tools=compat15,swig,fc,compiler_fc,fc_config,fc_scan,gfortran,g95,ifort,gccdeps;
 
 
+from textwrap import dedent
+
 top = '.'
 out = 'build'
 
@@ -11,6 +13,8 @@ def options(opt):
     opt.load('inplace', tooldir='tools')
     opt.add_option('--with-libpsht', help='path to libpsht to use for benchmark comparison '
                    '(NOTE: must be built with -fPIC)')
+    opt.add_option('--with-fftw3', help='path to FFTW3 to use '
+                   '(NOTE: must be configured with --with-pic)')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -43,15 +47,15 @@ def configure(conf):
     conf.check_cython_version(minver=(0,11,1))
     conf.check_tool('inplace', tooldir='tools')
 
+    # Libraries
     conf.check_libpsht()
+    conf.check_fftw3()
 
     conf.env.LIB_BLAS = ['goto2', 'gfortran']
     conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/home/dagss/code/GotoBLAS2']
 
     conf.env.LIB_MKLBLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
     conf.env.LIBPATH_MKLBLAS = conf.env.RPATH_MKLBLAS = ['/opt/intel/mkl/lib/intel64']
-
-    conf.env.LIB_FFTW3 = ['fftw3']
 
     conf.env.LIB_RT = ['rt']
 
@@ -135,7 +139,55 @@ def check_libpsht(conf):
     conf.env.LINKFLAGS_PSHT = ['-fopenmp']
     conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
     conf.env.INCLUDES_PSHT = [pjoin(prefix, 'include')]
-    
+    cfrag = dedent('''\
+    #include <psht.h>
+    #include <psht_geomhelpers.h>
+    psht_alm_info *x;
+    psht_geom_info *y;
+    pshtd_joblist *z;
+    int main() {
+    /* Only intended for compilation */
+      psht_make_general_alm_info(10, 10, 1, NULL, 0, &x);
+      psht_make_healpix_geom_info(4, 1, &y);
+      pshtd_make_joblist(&z);
+      pshtd_execute_jobs(x, y, z);
+      return 0;
+    }
+    ''')
+    conf.check_cc(
+        fragment=cfrag,
+        features = 'c',
+        compile_filename='test.c',
+        use='PSHT',
+        msg='Checking for libpsht')
+
+@conf
+def check_fftw3(conf):
+    """
+    Settings for FFTW3
+    """
+    conf.env.LIB_FFTW3 = ['fftw3']
+    prefix = conf.options.with_fftw3
+    if prefix:
+        conf.env.LIBPATH_FFTW3 = [pjoin(prefix, 'lib')]
+        conf.env.INCLUDES_FFTW3 = [pjoin(prefix, 'include')]
+    cfrag = dedent('''\
+    #include <fftw3.h>
+    int main() {
+    /* Only intended for compilation */
+      fftw_plan plan;
+      fftw_plan_dft_c2r_1d(4, NULL, NULL, FFTW_ESTIMATE);
+      fftw_execute(plan);
+      return 0;
+    }
+    ''')
+    conf.check_cc(
+        fragment=cfrag,
+        features = 'c',
+        compile_filename='test.c',
+        use='FFTW3',
+        msg='Checking for FFTW3')
+
 
 from waflib import TaskGen
 

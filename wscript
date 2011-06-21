@@ -17,6 +17,8 @@ def options(opt):
                    '(NOTE: must be configured with --with-pic)')
     opt.add_option('--with-atlas-lib', help='path to ATLAS libs to use '
                    '(NOTE: must be configured with PIC)')
+    opt.add_option('--with-perftools', help='path to google-perftools'
+                   '(NOTE: must be configured with PIC)')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -225,6 +227,10 @@ def check_google_perftools(conf):
     }
     ''')
     conf.env.LIB_PERFTOOLS = ['profiler']
+    prefix = conf.options.with_perftools
+    if prefix:
+        conf.env.LIBPATH_PERFTOOLS = [pjoin(prefix, 'lib')]
+        conf.env.INCLUDES_PERFTOOLS = [pjoin(prefix, 'include')]
     try:
         conf.check_cc(
             fragment=cfrag,

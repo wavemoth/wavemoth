@@ -219,6 +219,7 @@ def check_google_perftools(conf):
     """
     Settings for Google perftools
     """
+    conf.start_msg("Checking for google-perftools")
     cfrag = dedent('''\
     #include <google/profiler.h>
     int main() {
@@ -236,13 +237,13 @@ def check_google_perftools(conf):
             fragment=cfrag,
             features = 'c',
             compile_filename='test.c',
-            use='PERFTOOLS',
-            msg='Checking for Google perftools')
+            use='PERFTOOLS')
     except conf.errors.ConfigurationError:
         conf.env.LIB_MAYBEPERFTOOLS = []
     else:
         conf.env.LIB_MAYBEPERFTOOLS = conf.env.LIB_PERFTOOLS
         conf.env.CFLAGS_MAYBEPERFTOOLS = ['-DHAS_PPROF=1']
+    conf.end_msg(prefix if prefix else True)
 
 
 from waflib import TaskGen

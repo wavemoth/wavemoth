@@ -26,9 +26,9 @@ C program to benchmark spherical harmonic transforms
 
 #define Nside 512
 //#define Nside 2048
-//2048
+//#define Nside 1024
 #define lmax 2 * Nside
-#define PROFILE_TIME 60.0
+#define PROFILE_TIME 4.0
 
 int N_threads;
 
@@ -79,7 +79,9 @@ void setup_memory_benchmark() {
 }
 
 void finish_memory_benchmark(double dt) {
-  printf("  Bandwidth: %.3f GB/s\n", N_threads * N_mem * sizeof(double) / dt / (1024 * 1024 * 1024));
+  printf("  Bandwidth: %.3f GB/s = %.3f giga-doubles/s\n ",
+         N_threads * N_mem * sizeof(double) / dt / (1024 * 1024 * 1024),
+         N_threads * N_mem / dt / (1024 * 1024 * 1024));
   free(mem_buf);
 }
 
@@ -200,6 +202,10 @@ void setup_sht1() {
   _setup_sht(1);
 }
 
+void setup_sht2() {
+  _setup_sht(2);
+}
+
 void setup_sht10() {
   _setup_sht(10);
 }
@@ -260,6 +266,10 @@ void setup_psht1() {
   _setup_psht(1);
 }
 
+void setup_psht2() {
+  _setup_psht(2);
+}
+
 void setup_psht10() {
   _setup_psht(10);
 }
@@ -297,9 +307,11 @@ typedef struct {
 
 benchmark_t benchmarks[] = {
   {"sht1", setup_sht1, execute_sht, finish_sht, 0},
+  {"sht2", setup_sht2, execute_sht, finish_sht, 0},
   {"sht10", setup_sht10, execute_sht, finish_sht, 0},
   {"sht20", setup_sht20, execute_sht, finish_sht, 0},
   {"psht1", setup_psht1, execute_psht, finish_psht, 0},
+  {"psht2", setup_psht2, execute_psht, finish_psht, 0},
   {"psht10", setup_psht10, execute_psht, finish_psht, 0},
   {"psht20", setup_psht20, execute_psht, finish_psht, 0},
   {"legendre", setup_sht1, execute_legendre, finish_legendre, 0},

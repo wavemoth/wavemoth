@@ -1,6 +1,7 @@
 #include "fastsht_private.h"
 #include "fastsht_error.h"
 #include "fmm1d.h"
+#include "blas.h"
 
 #undef NDEBUG
 #include "complex.h"
@@ -19,6 +20,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+/* Wall timer */
+#include <sys/times.h>
+#include <time.h>
 
 /*
 Every time resource format changes, we increase this, so that
@@ -32,6 +36,9 @@ history.
 
 #define PLANTYPE_HEALPIX 0x0
 
+static INLINE int imin(int a, int b) {
+  return (a < b) ? a : b;
+}
 
 
 
@@ -51,6 +58,7 @@ at the time, this will definitely change.
 typedef struct {
   double *evaluation_grid_squared, *output_grid_squared, *gamma, *omega;
   char *matrix_data;
+  size_t matrix_len;
   int64_t combined_matrix_size;
 } m_resource_t;
 
@@ -160,7 +168,9 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
   data->mmax = mmax;
   if (data->P_matrices == NULL) goto ERROR;
   offsets = (int64_t*)head;
-  /* Read compressed matrices */
+  /* Assign pointers to compressed matrices. This doesn't actually load it
+     into memory, just set out pointers into virtual memory presently on
+     disk. */
   for (m = 0; m != mmax + 1; ++m) {
     n = (mmax - m) / 2;
     for (odd = 0; odd != 2; ++odd) {
@@ -183,6 +193,7 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
         rec->evaluation_grid_squared = rec->gamma = rec->output_grid_squared = rec->omega = NULL;
       }
       rec->matrix_data = head;
+      rec->matrix_len = offsets[4 * m + 2 * odd + 1];
     }
   }
   retcode = 0;
@@ -196,6 +207,41 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
   }
  FINALLY:
   return retcode;
+}
+
+volatile char _fastsht_dummy; /* Export symbol to avoid optimizing out. */
+
+static void fastsht_swap_in_resources(precomputation_t *resources, int m_start, int m_stop) {
+  int m, odd;
+  m_resource_t *rec;
+  char acc = 0;
+  char *ptr, *stop;
+  /* Read a byte every 1024 bytes from all the matrix data in the given range
+     of m's, to force loading all pages from disk. */
+  for (m = m_start; m < m_stop; ++m) {
+    for (odd = 0; odd != 1; ++odd) {
+      rec = resources->P_matrices + 2 * m + odd;
+      stop = rec->matrix_data + rec->matrix_len;
+      for (ptr = rec->matrix_data; ptr < stop; ptr += 1) {
+        //        printf("%ld %ld\n", (size_t)ptr, (size_t)stop);
+        acc += *ptr;
+      }
+    }
+  }
+  _fastsht_dummy = acc;
+}
+
+static void fastsht_swap_out_resources(precomputation_t *resources, int m_start, int m_stop) {
+  int m, odd;
+  m_resource_t *rec;
+  /* Use madvise to tell OS to drop pages; they'll be reread from disk
+     when needed. */
+  for (m = m_start; m < m_stop; ++m) {
+    for (odd = 0; odd != 1; ++odd) {
+      rec = resources->P_matrices + 2 * m + odd;
+      madvise(rec->matrix_data, rec->matrix_len, MADV_DONTNEED);
+    }
+  }
 }
 
 precomputation_t* fastsht_fetch_resource(int Nside) {
@@ -232,7 +278,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   fastsht_grid_info *grid;
   int nrings = 4 * Nside - 1;
   bfm_index_t work_stride = 1 + mmax, start, stop;
-  unsigned flags = FFTW_DESTROY_INPUT | FFTW_MEASURE;
+  unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
 
   plan->type = PLANTYPE_HEALPIX;
   plan->input = input;
@@ -302,6 +348,89 @@ void fastsht_execute(fastsht_plan plan) {
   }
   /* Backward FFTs from plan->work to plan->output */
   fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
+}
+
+typedef struct tms benchtime_t;
+#define ZERO_TIMER {0, 0, 0, 0}
+
+static benchtime_t walltime_fetch() {
+  struct tms t;
+  times(&t);
+  return t;
+  /*
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  return tv;*/
+}
+
+static benchtime_t walltime_add_elapsed(benchtime_t *target, benchtime_t t0) {
+  struct tms t = {0, 0, 0, 0};
+  times(&t);
+  target->tms_utime += t.tms_utime - t0.tms_utime;
+  return t;
+  /*struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  target->tv_sec += tv.tv_sec - t0.tv_sec;
+  target->tv_nsec += tv.tv_nsec - t0.tv_nsec;
+  return tv;*/
+}
+
+double timer_to_double(benchtime_t t) {
+  return (double)t.tms_utime / sysconf(_SC_CLK_TCK);
+  //return tv.tv_sec + 1e-9 * tv.tv_nsec;
+}
+
+void fastsht_execute_out_of_core(fastsht_plan plan,
+                                 double *out_compute_time,
+                                 double *out_load_time) {
+  /* Do an out-of-core computation where we start and stop the clock,
+     to emulate a benchmark on a bigger-memory machine.
+
+     We keep two buffers of 'chunksize' m's each; we take care
+     to interleave loading and computation so that preloaded
+     data should be evicted from cache before being used. Seperate
+     clocks is used for loading and computation.
+   */
+  int m, mmax, m_chunk_start, m_chunk_stop;
+  int odd;
+  const int chunksize = 200;
+  
+  benchtime_t t0, t1;
+  benchtime_t t_compute = ZERO_TIMER, t_load = ZERO_TIMER;
+
+  mmax = plan->mmax;
+
+  /* Swap in first chunk and enter loop */
+  printf("Load\n");
+  t0 = walltime_fetch();
+  fastsht_swap_in_resources(plan->resources, 0, imin(chunksize, mmax + 1));
+  t0 = walltime_add_elapsed(&t_load, t0);
+  for (m_chunk_start = 0; m_chunk_start < mmax; m_chunk_start += chunksize) {
+    m_chunk_stop = imin(m_chunk_start + chunksize, mmax + 1);
+    /* Swap in next chunk before computation */
+    printf("Load\n");
+    fastsht_swap_in_resources(plan->resources,
+                              m_chunk_stop,
+                              imin(m_chunk_stop + chunksize, mmax + 1));
+    t0 = walltime_add_elapsed(&t_load, t0);
+    /* Computation */
+    printf("Compute\n");
+    for (m = m_chunk_start; m != m_chunk_stop; ++m) {
+      for (odd = 0; odd != 2; ++odd) {
+        fastsht_perform_matmul(plan, m, odd);
+      }
+      fastsht_merge_even_odd_and_transpose(plan, m);    
+    }
+    t0 = walltime_add_elapsed(&t_compute, t0);
+    fastsht_swap_out_resources(plan->resources, m_chunk_start, m_chunk_stop);
+    t0 = walltime_add_elapsed(&t_load, t0);
+  }
+  /* Backward FFTs from plan->work to plan->output */
+  printf("FFT\n");
+  fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
+  walltime_add_elapsed(&t_compute, t0);
+  *out_compute_time = timer_to_double(t_compute);
+  *out_load_time = timer_to_double(t_load);
 }
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {

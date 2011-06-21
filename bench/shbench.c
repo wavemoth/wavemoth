@@ -23,9 +23,11 @@ C program to benchmark spherical harmonic transforms
 #include <psht_geomhelpers.h>
 
 
-#define Nside 256
+#define Nside 512
+//#define Nside 2048
+//2048
 #define lmax 2 * Nside
-#define PROFILE_TIME 5.0
+#define PROFILE_TIME 60.0
 
 int N_threads;
 
@@ -142,7 +144,9 @@ fastsht_plan sht_plan;
 int sht_nmaps;
 
 void execute_sht(int threadnum) {
-  fastsht_execute(sht_plan);
+  double t_compute, t_load;
+  fastsht_execute_out_of_core(sht_plan, &t_compute, &t_load);
+  printf("compute:load: %f %f\n", t_compute, t_load);
 }
 
 void execute_legendre(int threadnum) {
@@ -336,10 +340,10 @@ int main(int argc, char *argv[]) {
     sht_nmaps = -1;
     if (pbench->setup != NULL) pbench->setup();
     omp_set_num_threads(N_threads);
-    #pragma omp parallel for schedule(static, 1)
+    /*    #pragma omp parallel for schedule(static, 1)
     for (i = 0; i < N_threads; ++i) {
       pbench->execute(i);
-    }
+      }*/
     #ifdef USE_PPROF
     snprintf(profilefile, 1023, "profiles/%s.prof", pbench->name);
     profilefile[1023] = '\0';

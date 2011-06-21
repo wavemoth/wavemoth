@@ -61,5 +61,8 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
 fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside);
 void fastsht_free_grid_info(fastsht_grid_info *info);
 
+void fastsht_execute_out_of_core(fastsht_plan plan,
+                                 double *out_compute_time,
+                                 double *out_load_time);
 
 #endif

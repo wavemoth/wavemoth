@@ -216,32 +216,38 @@ static void fastsht_swap_in_resources(precomputation_t *resources, int m_start, 
   m_resource_t *rec;
   char acc = 0;
   char *ptr, *stop;
+  size_t size = 0;
   /* Read a byte every 1024 bytes from all the matrix data in the given range
      of m's, to force loading all pages from disk. */
   for (m = m_start; m < m_stop; ++m) {
     for (odd = 0; odd != 1; ++odd) {
       rec = resources->P_matrices + 2 * m + odd;
       stop = rec->matrix_data + rec->matrix_len;
+      size += rec->matrix_len;
       for (ptr = rec->matrix_data; ptr < stop; ptr += 1) {
         //        printf("%ld %ld\n", (size_t)ptr, (size_t)stop);
         acc += *ptr;
       }
     }
   }
+  fprintf(stderr, "Swapped in %d MB\n", (int)(size / 1024 / 1024));
   _fastsht_dummy = acc;
 }
 
 static void fastsht_swap_out_resources(precomputation_t *resources, int m_start, int m_stop) {
   int m, odd;
   m_resource_t *rec;
+  size_t size = 0;
   /* Use madvise to tell OS to drop pages; they'll be reread from disk
      when needed. */
   for (m = m_start; m < m_stop; ++m) {
     for (odd = 0; odd != 1; ++odd) {
       rec = resources->P_matrices + 2 * m + odd;
+      size += rec->matrix_len;
       madvise(rec->matrix_data, rec->matrix_len, MADV_DONTNEED);
     }
   }
+  fprintf(stderr, "Swapped out %d MB\n", (int)(size / 1024 / 1024));
 }
 
 precomputation_t* fastsht_fetch_resource(int Nside) {
@@ -393,7 +399,7 @@ void fastsht_execute_out_of_core(fastsht_plan plan,
    */
   int m, mmax, m_chunk_start, m_chunk_stop;
   int odd;
-  const int chunksize = 200;
+  const int chunksize = 40;
   
   benchtime_t t0, t1;
   benchtime_t t_compute = ZERO_TIMER, t_load = ZERO_TIMER;
@@ -405,10 +411,11 @@ void fastsht_execute_out_of_core(fastsht_plan plan,
   t0 = walltime_fetch();
   fastsht_swap_in_resources(plan->resources, 0, imin(chunksize, mmax + 1));
   t0 = walltime_add_elapsed(&t_load, t0);
-  for (m_chunk_start = 0; m_chunk_start < mmax; m_chunk_start += chunksize) {
+  mmax -= 2; // TODO fix mmax!
+  for (m_chunk_start = 0; m_chunk_start < mmax + 1; m_chunk_start += chunksize) {
     m_chunk_stop = imin(m_chunk_start + chunksize, mmax + 1);
     /* Swap in next chunk before computation */
-    printf("Load\n");
+    printf("Load m=%d\n", m_chunk_start);
     fastsht_swap_in_resources(plan->resources,
                               m_chunk_stop,
                               imin(m_chunk_stop + chunksize, mmax + 1));

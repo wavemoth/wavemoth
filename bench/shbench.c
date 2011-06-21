@@ -7,12 +7,13 @@ C program to benchmark spherical harmonic transforms
 #include "blas.h"
 
 #include <stdio.h>
+#include <unistd.h>
 #include <time.h>
 #include <math.h>
 #include <malloc.h>
 #include <string.h>
 #include <fftw3.h>
-#ifdef USE_PPROF
+#ifdef HAS_PPROF
 #include <google/profiler.h>
 #endif
 
@@ -315,9 +316,29 @@ int main(int argc, char *argv[]) {
   int n, i, j, should_run;
   benchmark_t *pbench;
   int max_threads;
-  #ifdef USE_PPROF
+  #ifdef HAS_PPROF
   char profilefile[1024];
   #endif
+
+  int c;
+
+  int should_profile = 0;
+
+  opterr = 0;
+  while ((c = getopt (argc, argv, "p")) != -1) {
+    switch (c) {
+    case 'p':
+#ifndef HAS_PPROF
+      fprintf(stderr, "ERROR: Profiling requested but not compiled with Google perftools!\n");
+      return -1;
+#else
+      should_profile = 1;
+      break;
+#endif
+    }
+  }
+  argv += (optind - 1);
+  argc -= (optind - 1);
 
   max_threads = omp_get_max_threads();
   
@@ -344,10 +365,12 @@ int main(int argc, char *argv[]) {
     for (i = 0; i < N_threads; ++i) {
       pbench->execute(i);
       }*/
-    #ifdef USE_PPROF
-    snprintf(profilefile, 1023, "profiles/%s.prof", pbench->name);
-    profilefile[1023] = '\0';
-    ProfilerStart(profilefile);
+    #ifdef HAS_PPROF
+    if (should_profile) {
+      snprintf(profilefile, 1023, "profiles/%s.prof", pbench->name);
+      profilefile[1023] = '\0';
+      ProfilerStart(profilefile);
+    }
     #endif
     t0 = walltime();
     n = 0;
@@ -360,7 +383,7 @@ int main(int argc, char *argv[]) {
       n++;
     } while (t1 - t0 < PROFILE_TIME);
     t1 = walltime();
-    #ifdef USE_PPROF
+    #ifdef HAS_PPROF
     ProfilerStop();
     #endif
     printtime("  ", n, t1 - t0);

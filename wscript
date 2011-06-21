@@ -50,6 +50,7 @@ def configure(conf):
     # Libraries
     conf.check_libpsht()
     conf.check_fftw3()
+    conf.check_google_perftools()
 
     conf.env.LIB_BLAS = ['goto2', 'gfortran']
     conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/home/dagss/code/GotoBLAS2']
@@ -60,8 +61,6 @@ def configure(conf):
     conf.env.LIB_RT = ['rt']
 
     conf.env.LIB_MKL = ['mkl_rt']
-
-    conf.env.LIB_PROFILER = ['profiler']
 
     conf.env.CFLAGS_OPENMP = ['-fopenmp']
     conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
@@ -122,7 +121,7 @@ def build(bld):
         install_path='bin',
         target='shbench',
 #        use='MKLBLAS RT',
-        use='ATLAS FFTW3 RT OPENMP PSHT',
+        use='ATLAS FFTW3 RT OPENMP PSHT MAYBEPERFTOOLS',
         features='cprogram c')
 
 
@@ -187,6 +186,32 @@ def check_fftw3(conf):
         compile_filename='test.c',
         use='FFTW3',
         msg='Checking for FFTW3')
+
+@conf
+def check_google_perftools(conf):
+    """
+    Settings for Google perftools
+    """
+    cfrag = dedent('''\
+    #include <google/profiler.h>
+    int main() {
+      ProfilerStart("foo");
+      ProfilerStop();
+    }
+    ''')
+    conf.env.LIB_PERFTOOLS = ['profiler']
+    try:
+        conf.check_cc(
+            fragment=cfrag,
+            features = 'c',
+            compile_filename='test.c',
+            use='PERFTOOLS',
+            msg='Checking for Google perftools')
+    except conf.errors.ConfigurationError:
+        conf.env.LIB_MAYBEPERFTOOLS = []
+    else:
+        conf.env.LIB_MAYBEPERFTOOLS = conf.env.LIB_PERFTOOLS
+        conf.env.CFLAGS_MAYBEPERFTOOLS = ['-DHAS_PPROF=1']
 
 
 from waflib import TaskGen

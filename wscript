@@ -110,11 +110,11 @@ def build(bld):
         use='NUMPY PSHT',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
-        target='fmm',
-        includes=['src'],
-        use='NUMPY MKL',
-        features='c pyext cshlib')
+    ## bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
+    ##     target='fmm',
+    ##     includes=['src'],
+    ##     use='NUMPY MKL',
+    ##     features='c pyext cshlib')
 
     bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in', 'src/fmm1d.c']),
         includes=['src'],

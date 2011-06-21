@@ -181,7 +181,7 @@ void _setup_sht(int nmaps) {
   }
 
   fastsht_configure("/home/dagss/code/spherew/resources");
-  sht_input = zeros((lmax + 1) * (lmax + 1) * 2 * nmaps);
+  sht_input = zeros(lmax * (lmax + 1) / 2 * 2 * nmaps);
   sht_output = zeros(12 * Nside * Nside * nmaps);
   sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2 * nmaps);
   sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, sht_input,

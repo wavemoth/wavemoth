@@ -126,22 +126,34 @@ void fastsht_configure(char *resource_path) {
   memset(precomputed_data, 0, sizeof(precomputed_data));
 }
 
-int fastsht_load_resource(int Nside, precomputation_t *data) {
+static void fastsht_get_resources_filename(char *filename, size_t buflen, int Nside) {
+  snprintf(filename, buflen, "%s/rev%d/%d.dat",
+           global_resource_path, RESOURCE_FORMAT_VERSION,
+           Nside);
+  filename[buflen - 1] = '\0';
+}
+
+int fastsht_query_resourcefile(char *filename, int *out_Nside, int *out_lmax) {
+  FILE *fd;
+  int64_t fields[3];
+
+  fd = fopen(filename, "r");
+  if (fd == NULL) return -1;
+  checkf(fread(fields, sizeof(int64_t[3]), 1, fd) == 1, "Could not read file header: %s", filename);
+  fclose(fd);
+  *out_lmax = fields[0];
+  *out_Nside = fields[2];
+  return 0;
+}
+
+int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nside) {
   int fd;
   struct stat fileinfo;
-  int64_t mmax, lmax, m, n, odd, should_interpolate;
+  int64_t mmax, lmax, m, n, odd, should_interpolate, Nside;
   int64_t *offsets = NULL;
   m_resource_t *rec;
   int retcode;
   char *head;
-  char filename[MAX_RESOURCE_PATH];
-
-  /* 
-   */
-  snprintf(filename, MAX_RESOURCE_PATH, "%s/rev%d/%d.dat",
-           global_resource_path, RESOURCE_FORMAT_VERSION,
-           Nside);
-  filename[MAX_RESOURCE_PATH - 1] = '\0';
 
   /*
     Memory map buffer
@@ -160,8 +172,7 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
   /* Read mmax, allocate arrays, read offsets */
   lmax = ((int64_t*)head)[0];
   mmax = ((int64_t*)head)[1];
-  checkf(Nside == ((int64_t*)head)[2], "Loading precomputation: Expected Nside=%d but got %d in %s",
-         Nside, (int)((int64_t*)head)[2], filename);
+  *out_Nside = Nside = ((int64_t*)head)[2];
   head += sizeof(int64_t[3]);
   data->P_matrices = malloc(sizeof(m_resource_t[2 * (mmax + 1)]));
   data->lmax = lmax;
@@ -176,6 +187,12 @@ int fastsht_load_resource(int Nside, precomputation_t *data) {
     for (odd = 0; odd != 2; ++odd) {
       rec = data->P_matrices + 2 * m + odd;
       head = data->mmapped_buffer + offsets[4 * m + 2 * odd];
+      if (head == data->mmapped_buffer) {
+        /* For debugging/benchmarking, sometimes matrices are missing.
+           In those cases the offset is registered as 0. */
+        rec->matrix_data = NULL;
+        continue;
+      }
       should_interpolate = ((int64_t*)head)[0];
       rec->combined_matrix_size = ((int64_t*)head)[1];
       head = skip_padding(head + sizeof(int64_t[2]));
@@ -222,6 +239,7 @@ static void fastsht_swap_in_resources(precomputation_t *resources, int m_start, 
   for (m = m_start; m < m_stop; ++m) {
     for (odd = 0; odd != 1; ++odd) {
       rec = resources->P_matrices + 2 * m + odd;
+      if (rec->matrix_data == NULL) continue;
       stop = rec->matrix_data + rec->matrix_len;
       size += rec->matrix_len;
       for (ptr = rec->matrix_data; ptr < stop; ptr += 1) {
@@ -243,6 +261,7 @@ static void fastsht_swap_out_resources(precomputation_t *resources, int m_start,
   for (m = m_start; m < m_stop; ++m) {
     for (odd = 0; odd != 1; ++odd) {
       rec = resources->P_matrices + 2 * m + odd;
+      if (rec->matrix_data == NULL) continue;
       size += rec->matrix_len;
       madvise(rec->matrix_data, rec->matrix_len, MADV_DONTNEED);
     }
@@ -251,17 +270,22 @@ static void fastsht_swap_out_resources(precomputation_t *resources, int m_start,
 }
 
 precomputation_t* fastsht_fetch_resource(int Nside) {
-  int Nside_level = 0, tmp;
+  int Nside_level = 0, tmp, got_Nside;
+  char filename[MAX_RESOURCE_PATH];
+
   if (!configured) {
     return NULL;
   }
+  fastsht_get_resources_filename(filename, MAX_RESOURCE_PATH, Nside);
   tmp = Nside;
   while (tmp /= 2) ++Nside_level;
   checkf(Nside_level < MAX_NSIDE_LEVEL + 1, "Nside=2**%d but maximum value is 2**%d",
          Nside_level, MAX_NSIDE_LEVEL);
   if (precomputed_data[Nside_level].refcount == 0) {
-    check(fastsht_load_resource(Nside, precomputed_data + Nside_level) == 0,
+    check(fastsht_mmap_resources(filename, precomputed_data + Nside_level, &got_Nside) == 0,
           "resource load failed");
+    checkf(Nside == got_Nside, "Loading precomputation: Expected Nside=%d but got %d in %s",
+           Nside, got_Nside, filename);
   }
   ++precomputed_data[Nside_level].refcount;
   return &precomputed_data[Nside_level];
@@ -278,13 +302,29 @@ void fastsht_release_resource(precomputation_t *data) {
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      double *input, double *output, double *work,
-                                     int ordering) {
+                                     int ordering, char *resource_filename) {
   fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
-  int iring;
+  int nrings, iring;
+  int out_Nside;
   fastsht_grid_info *grid;
-  int nrings = 4 * Nside - 1;
   bfm_index_t work_stride = 1 + mmax, start, stop;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
+
+  if (resource_filename != NULL) {
+    /* Used in debugging/benchmarking */
+    plan->resources = malloc(sizeof(precomputation_t));
+    plan->did_allocate_resources = 1;
+    checkf(fastsht_mmap_resources(resource_filename, plan->resources, &out_Nside) == 0,
+           "Error in loading resource %s", resource_filename);
+    check(Nside < 0 || out_Nside == Nside, "Incompatible Nside");
+    Nside = out_Nside;
+  } else {
+    check(Nside >= 0, "Invalid Nside");
+    plan->did_allocate_resources = 0;
+    plan->resources = fastsht_fetch_resource(Nside);
+  }
+
+  nrings = 4 * Nside - 1;
 
   plan->type = PLANTYPE_HEALPIX;
   plan->input = input;
@@ -297,8 +337,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->work_g_m_roots = memalign(16, sizeof(complex double[nmaps * ((lmax + 1) / 2)]));
   plan->work_g_m_even = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
   plan->work_g_m_odd = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
-
-  plan->resources = fastsht_fetch_resource(Nside);
 
   plan->Nside = Nside;
   plan->lmax = lmax;
@@ -321,6 +359,7 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   }
   fastsht_free_grid_info(plan->grid);
   fastsht_release_resource(plan->resources);
+  if (plan->did_allocate_resources) free(plan->resources);
   free(plan->fft_plans);
   free(plan->work_a_l);
   free(plan->work_g_m_roots);
@@ -340,12 +379,18 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 void fastsht_execute(fastsht_plan plan) {
   bfm_index_t m, mmax;
   int odd;
+  m_resource_t *rec;
   mmax = plan->mmax;
   /* Compute g_m(theta_i), including transpose step for now */
   for (m = 0; m != mmax + 1 - 2; ++m) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
+      rec = plan->resources->P_matrices + 2 * m + odd;
+      if (rec->matrix_data == NULL) {
+        /* Only during benchmarks, so computed values are unimportant. */
+        continue;
+      }
       fastsht_perform_matmul(plan, m, odd);
-      if ((plan->resources->P_matrices + 2 * m + odd)->evaluation_grid_squared != NULL) {
+      if (rec->evaluation_grid_squared != NULL) {
         /* Interpolate with FMM */
         fastsht_perform_interpolation(plan, m, odd);
       }

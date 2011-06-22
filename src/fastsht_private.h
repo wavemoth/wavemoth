@@ -44,6 +44,7 @@ struct _fastsht_plan {
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
+  int did_allocate_resources;
   int Nside;
 };
 

@@ -104,13 +104,13 @@ def compute_with_workers(args):
     # Each worker will generate one HDF file
     futures = []
     with ProcessPoolExecutor(max_workers=args.parallel) as proc:
-        for m in range(args.lmax + 1):
+        for m in range(0, args.lmax + 1, args.stride):
             futures.append(proc.submit(compute_m, args.target, m, args.lmax, args.Nside,
                                        min_rows=args.min_rows, interpolate=args.interpolate))
         for fut in futures:
             fut.result()
 
-def serialize_from_hdf_files(target):
+def serialize_from_hdf_files(args, target):
     """ Join the '$target-$pid' HDF file into '$target', a dat
         file in custom format.
     """
@@ -139,7 +139,7 @@ def serialize_from_hdf_files(target):
             for i in range(4 * (mmax + 1)):
                 write_int64(outfile, 0)
 
-            for m in range(mmax + 1):
+            for m in range(0, mmax + 1, args.stride):
                 for odd in [0, 1]:
                     f, g = get_group(m, odd)
                     if (f.getNodeAttr(g, 'Nside') != Nside or f.getNodeAttr(g, 'lmax') != lmax
@@ -174,6 +174,9 @@ parser.add_argument('-j', '--parallel', type=int, default=8,
                     help='how many processors to use for precomputation')
 parser.add_argument('-i', '--interpolate', action='store_true',
                     default=False, help='Evaluate at Legendre roots')
+parser.add_argument('--stride', type=int, default=1,
+                    help='Skip m values. Results will be incorrect, '
+                    'but useful for benchmarks.')
 parser.add_argument('-m', type=int, default=None, help='Evaluate for a single m')
 parser.add_argument('Nside', type=int, help='Nside parameter')
 parser.add_argument('target', help='target datafile')
@@ -182,4 +185,4 @@ args = parser.parse_args()
 args.lmax = 2 * args.Nside
 
 compute_with_workers(args)
-serialize_from_hdf_files(args.target)
+serialize_from_hdf_files(args, args.target)

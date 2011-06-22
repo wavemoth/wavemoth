@@ -26,7 +26,8 @@ cdef extern from "fastsht.h":
                                          double *input,
                                          double *output,
                                          double *work,
-                                         int ordering)
+                                         int ordering,
+                                         char *resourcename)
 
     void fastsht_destroy_plan(fastsht_plan plan)
     void fastsht_execute(fastsht_plan plan)
@@ -82,7 +83,7 @@ cdef class ShtPlan:
         
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],
                                             <double*>input.data, <double*>output.data,
-                                            <double*>work.data, flags)
+                                            <double*>work.data, flags, NULL)
         cdef np.npy_intp *shape = [lmax + 1]
         self.work_a_l = np.PyArray_SimpleNewFromData(1, shape, np.NPY_CDOUBLE,
                                                      self.plan.work_a_l)

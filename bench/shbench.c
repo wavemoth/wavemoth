@@ -4,6 +4,7 @@ C program to benchmark spherical harmonic transforms
 
 #include "fastsht.h"
 #include "fastsht_private.h"
+#include "fastsht_error.h"
 #include "blas.h"
 
 #include <stdio.h>
@@ -24,11 +25,11 @@ C program to benchmark spherical harmonic transforms
 #include <psht_geomhelpers.h>
 
 
-#define Nside 512
-//#define Nside 2048
-//#define Nside 1024
-#define lmax 2 * Nside
 #define PROFILE_TIME 4.0
+
+int Nside, lmax;
+char *sht_resourcefile;
+
 
 int N_threads;
 
@@ -148,8 +149,9 @@ int sht_nmaps;
 
 void execute_sht(int threadnum) {
   double t_compute, t_load;
-  fastsht_execute_out_of_core(sht_plan, &t_compute, &t_load);
-  printf("compute:load: %f %f\n", t_compute, t_load);
+  /*  fastsht_execute_out_of_core(sht_plan, &t_compute, &t_load);
+      printf("compute:load: %f %f\n", t_compute, t_load);*/
+  fastsht_execute(sht_plan);
 }
 
 void execute_legendre(int threadnum) {
@@ -183,12 +185,12 @@ void _setup_sht(int nmaps) {
     fclose(fd);
   }
 
-  fastsht_configure("/home/dagss/code/spherew/resources");
   sht_input = zeros(lmax * (lmax + 1) / 2 * 2 * nmaps);
   sht_output = zeros(12 * Nside * Nside * nmaps);
   sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2 * nmaps);
   sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, sht_input,
-                                     sht_output, sht_work, FASTSHT_MMAJOR);
+                                     sht_output, sht_work, FASTSHT_MMAJOR,
+                                     sht_resourcefile);
 
   /* Export FFTW wisdom generated during planning */
   fd = fopen("fftw.wisdom", "w");
@@ -240,6 +242,7 @@ void _setup_psht(int nmaps) {
   int j;
   ptrdiff_t npix = 12 * Nside * Nside;
   ptrdiff_t mstart[lmax + 1], stride;
+  check(Nside >= 0, "Invalid Nside");
   sht_nmaps = nmaps;
   /* Setup m-major alm info */
   for (m = 0; m != lmax + 1; ++m) {
@@ -254,7 +257,7 @@ void _setup_psht(int nmaps) {
   psht_make_healpix_geom_info(Nside, 1, &benchpsht_geom_info);
   pshtd_make_joblist(&benchpsht_joblist);
 
-  sht_input = zeros((lmax + 1) * (lmax + 1) * 2 * nmaps);
+  sht_input = zeros((lmax + 1) * lmax / 2 * 2 * nmaps);
   sht_output = zeros(12 * Nside * Nside * nmaps);
   for (j = 0; j != nmaps; ++j) {
     pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input + j,
@@ -322,6 +325,11 @@ benchmark_t benchmarks[] = {
 };
 
 
+char *usage[] = {
+  "usage: shbench [-p] [-r resourcefile] [benchmarknames...]",
+};
+
+#define MAXPATH 2048
 
 int main(int argc, char *argv[]) {
   double t0, t1;
@@ -329,15 +337,18 @@ int main(int argc, char *argv[]) {
   benchmark_t *pbench;
   int max_threads;
   #ifdef HAS_PPROF
-  char profilefile[1024];
+  char profilefile[MAXPATH];
   #endif
+  char *resourcename;
 
   int c;
 
   int should_profile = 0;
+  sht_resourcefile = NULL;
+  Nside = -1;
 
   opterr = 0;
-  while ((c = getopt (argc, argv, "p")) != -1) {
+  while ((c = getopt (argc, argv, "pr:")) != -1) {
     switch (c) {
     case 'p':
 #ifndef HAS_PPROF
@@ -347,10 +358,20 @@ int main(int argc, char *argv[]) {
       should_profile = 1;
       break;
 #endif
+    case 'r':
+      sht_resourcefile = optarg;
+      break;
     }
   }
   argv += (optind - 1);
   argc -= (optind - 1);
+
+  /* Resource configuration */
+  fastsht_configure("/home/dagss/code/spherew/resources");
+  if (sht_resourcefile != NULL) {
+    fastsht_query_resourcefile(sht_resourcefile, &Nside, &lmax);
+  }
+
 
   max_threads = omp_get_max_threads();
   
@@ -379,8 +400,8 @@ int main(int argc, char *argv[]) {
       }*/
     #ifdef HAS_PPROF
     if (should_profile) {
-      snprintf(profilefile, 1023, "profiles/%s.prof", pbench->name);
-      profilefile[1023] = '\0';
+      snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
+      profilefile[MAXPATH - 1] = '\0';
       ProfilerStart(profilefile);
     }
     #endif

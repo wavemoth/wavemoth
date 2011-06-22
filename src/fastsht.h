@@ -29,11 +29,13 @@ void fastsht_configure(char *resource_dir);
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      double *input, double *output, double *work,
-                                     int ordering);
+                                     int ordering, char *resource_filename);
 
 void fastsht_destroy_plan(fastsht_plan plan);
 void fastsht_execute(fastsht_plan plan);
 
 int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd);
+
+int fastsht_query_resourcefile(char *filename, int *out_Nside, int *out_lmax);
 
 #endif

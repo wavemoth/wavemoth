@@ -268,7 +268,7 @@ ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
 }
 
 void _setup_psht(int nmaps) {
-  int mm;
+  int m;
   int marr[lmax + 1];
   int j;
   ptrdiff_t npix = 12 * Nside * Nside;

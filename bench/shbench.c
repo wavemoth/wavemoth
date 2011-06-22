@@ -340,11 +340,11 @@ typedef struct {
 } benchmark_t;
 
 benchmark_t benchmarks[] = {
-  {"sht1", setup_sht1, execute_sht, finish_sht, 0},
+  {"sht1", setup_sht1, execute_sht, finish_sht, 1},
   {"sht2", setup_sht2, execute_sht, finish_sht, 0},
   {"sht10", setup_sht10, execute_sht, finish_sht, 0},
   {"sht20", setup_sht20, execute_sht, finish_sht, 0},
-  {"psht1", setup_psht1, execute_psht, finish_psht, 0},
+  {"psht1", setup_psht1, execute_psht, finish_psht, 1},
   {"psht2", setup_psht2, execute_psht, finish_psht, 0},
   {"psht10", setup_psht10, execute_psht, finish_psht, 0},
   {"psht20", setup_psht20, execute_psht, finish_psht, 0},
@@ -366,7 +366,7 @@ int main(int argc, char *argv[]) {
   double t0, t1;
   int n, i, j, should_run;
   benchmark_t *pbench;
-  int max_threads;
+  int nthreads;
   #ifdef HAS_PPROF
   char profilefile[MAXPATH];
   #endif
@@ -375,11 +375,15 @@ int main(int argc, char *argv[]) {
   int c;
 
   int should_profile = 0;
+
+
+
+  nthreads = omp_get_max_threads();
   sht_resourcefile = NULL;
   Nside = -1;
 
   opterr = 0;
-  while ((c = getopt (argc, argv, "pr:N:")) != -1) {
+  while ((c = getopt (argc, argv, "pr:N:j:")) != -1) {
     switch (c) {
     case 'p':
 #ifndef HAS_PPROF
@@ -394,6 +398,10 @@ int main(int argc, char *argv[]) {
       break;
     case 'N':
       Nside = atoi(optarg);
+      break;
+    case 'j':
+      nthreads = atoi(optarg);
+      break;
     }
   }
   argv += (optind - 1);
@@ -407,10 +415,6 @@ int main(int argc, char *argv[]) {
     lmax = 2 * Nside;
   }
 
-
-
-  max_threads = omp_get_max_threads();
-  
   omp_set_dynamic(0);
 
   pbench = benchmarks;
@@ -426,14 +430,14 @@ int main(int argc, char *argv[]) {
       }
     }
     printf("%s:\n", pbench->name);
-    N_threads = pbench->multithreaded ? max_threads : 1;
+    N_threads = pbench->multithreaded ? nthreads : 1;
     sht_nmaps = -1;
     if (pbench->setup != NULL) pbench->setup();
+    printf("# of threads requested %d\n", N_threads);
     omp_set_num_threads(N_threads);
-    #pragma omp parallel for schedule(static, 1)
-    for (i = 0; i < N_threads; ++i) {
+    /*    for (i = 0; i < N_threads; ++i) {
       pbench->execute(i);
-    }
+      }*/
     #ifdef HAS_PPROF
     if (should_profile) {
       snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
@@ -444,14 +448,12 @@ int main(int argc, char *argv[]) {
     t0 = walltime();
     n = 0;
     do {
-    #pragma omp parallel for schedule(static, 1)
       for (i = 0; i < N_threads; ++i) {
         pbench->execute(i);
       }
       t1 = walltime();
       n++;
     } while (t1 - t0 < PROFILE_TIME);
-    t1 = walltime();
     #ifdef HAS_PPROF
     ProfilerStop();
     #endif

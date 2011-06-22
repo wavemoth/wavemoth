@@ -25,7 +25,7 @@ C program to benchmark spherical harmonic transforms
 #include <psht_geomhelpers.h>
 
 
-#define PROFILE_TIME 4.0
+#define PROFILE_TIME 10.0
 
 int Nside, lmax;
 char *sht_resourcefile;
@@ -146,6 +146,34 @@ Butterfly SHT benchmark
 double *sht_input, *sht_output, *sht_work;
 fastsht_plan sht_plan;
 int sht_nmaps;
+int sht_m_stride = 50;
+size_t *sht_mstart;
+
+void setup_sht_buffers() {
+  /* Allocate input, output and work -- in m-major mode with some m's dropped */
+  int m;
+  size_t pos;
+  pos = 0;
+  sht_mstart = malloc(sizeof(size_t[lmax + 1]));
+  for (m = 0; m < lmax + 1; m += 1) {
+    if (m % sht_m_stride == 0) {
+      sht_mstart[m] = pos - m;
+      pos += m + 1;      
+    } else {
+      sht_mstart[m] = 0x7FFFFFFF;
+    }
+  }
+  sht_input = zeros(pos * 2 * sht_nmaps);
+  sht_output = zeros(12 * Nside * Nside * sht_nmaps);
+  sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2 * sht_nmaps);
+}
+
+void free_sht_buffers() {
+  free(sht_mstart);
+  free(sht_input);
+  free(sht_output);
+  free(sht_work);
+}
 
 void execute_sht(int threadnum) {
   double t_compute, t_load;
@@ -218,15 +246,18 @@ void setup_sht20() {
 
 void finish_sht(double dt) {
   fastsht_destroy_plan(sht_plan);
-  free(sht_input);
-  free(sht_output);
-  free(sht_work);
+  free_sht_buffers();
 }
 
 
 /*
 PSHT
 */
+
+/*
+Inserted our own hack in PSHT...
+*/
+void _psht_set_m_stride(int m_stride);
 
 psht_alm_info *benchpsht_alm_info;
 psht_geom_info *benchpsht_geom_info;
@@ -237,28 +268,29 @@ ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
 }
 
 void _setup_psht(int nmaps) {
-  int m;
+  int mm;
   int marr[lmax + 1];
   int j;
   ptrdiff_t npix = 12 * Nside * Nside;
-  ptrdiff_t mstart[lmax + 1], stride;
+  ptrdiff_t stride;
+  for (m = 0; m < lmax + 1; m += 1) {
+    marr[m] = m;
+  }
   check(Nside >= 0, "Invalid Nside");
   sht_nmaps = nmaps;
   /* Setup m-major alm info */
-  for (m = 0; m != lmax + 1; ++m) {
-    mstart[m] = lm_to_idx_mmajor(0, m);
-    marr[m] = m;
-  }
   /* Input is strided/interleaved in m-major triangular order;
-     output has one map after the other (non-interleaved) */
+     output has one map after the other (non-interleaved). We support
+     skipping some m's to speed benchmarks up.
+  */
+  setup_sht_buffers();
+  _psht_set_m_stride(sht_m_stride);
   stride = nmaps;
-  psht_make_general_alm_info(lmax, lmax + 1, stride, marr, mstart, &benchpsht_alm_info);
+  psht_make_general_alm_info(lmax, lmax + 1, stride, marr, sht_mstart, &benchpsht_alm_info);
   /* The rest is standard */
   psht_make_healpix_geom_info(Nside, 1, &benchpsht_geom_info);
   pshtd_make_joblist(&benchpsht_joblist);
 
-  sht_input = zeros((lmax + 1) * lmax / 2 * 2 * nmaps);
-  sht_output = zeros(12 * Nside * Nside * nmaps);
   for (j = 0; j != nmaps; ++j) {
     pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input + j,
                           sht_output + j * npix, 0);
@@ -286,8 +318,7 @@ void finish_psht() {
   psht_destroy_geom_info(benchpsht_geom_info);
   pshtd_clear_joblist(benchpsht_joblist);
   pshtd_destroy_joblist(benchpsht_joblist);
-  free(sht_input);
-  free(sht_output);
+  free_sht_buffers();
 }
 
 void execute_psht(int threadnum) {
@@ -348,7 +379,7 @@ int main(int argc, char *argv[]) {
   Nside = -1;
 
   opterr = 0;
-  while ((c = getopt (argc, argv, "pr:")) != -1) {
+  while ((c = getopt (argc, argv, "pr:N:")) != -1) {
     switch (c) {
     case 'p':
 #ifndef HAS_PPROF
@@ -361,6 +392,8 @@ int main(int argc, char *argv[]) {
     case 'r':
       sht_resourcefile = optarg;
       break;
+    case 'N':
+      Nside = atoi(optarg);
     }
   }
   argv += (optind - 1);
@@ -370,7 +403,10 @@ int main(int argc, char *argv[]) {
   fastsht_configure("/home/dagss/code/spherew/resources");
   if (sht_resourcefile != NULL) {
     fastsht_query_resourcefile(sht_resourcefile, &Nside, &lmax);
+  } else {
+    lmax = 2 * Nside;
   }
+
 
 
   max_threads = omp_get_max_threads();
@@ -394,10 +430,10 @@ int main(int argc, char *argv[]) {
     sht_nmaps = -1;
     if (pbench->setup != NULL) pbench->setup();
     omp_set_num_threads(N_threads);
-    /*    #pragma omp parallel for schedule(static, 1)
+    #pragma omp parallel for schedule(static, 1)
     for (i = 0; i < N_threads; ++i) {
       pbench->execute(i);
-      }*/
+    }
     #ifdef HAS_PPROF
     if (should_profile) {
       snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);

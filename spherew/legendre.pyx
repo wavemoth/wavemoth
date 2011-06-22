@@ -54,6 +54,34 @@ def compute_normalized_associated_legendre(int m, theta,
         Ylmgen_destroy(&ctx)
     return out
     
+@cython.wraparound(False)
+def normalized_associated_legendre_ms(m, double theta,
+                                      int lmax, double epsilon=1e-300,
+                                      out=None):
+    cdef Ylmgen_C ctx
+    cdef Py_ssize_t col, row, mval
+    cdef np.ndarray[int, mode='c'] m_ = np.ascontiguousarray(m, dtype=np.intc)
+    cdef np.ndarray[double, ndim=2] out_
+    cdef int firstl
+    if out is None:
+        out = np.empty((m_.shape[0], lmax + 1), np.double)
+    out_ = out
+    if out_.shape[0] != m_.shape[0] or out_.shape[1] != lmax + 1:
+        raise ValueError("Invalid shape of out")
+    Ylmgen_init(&ctx, lmax, lmax, 0, 0, epsilon)
+    try:
+        Ylmgen_set_theta(&ctx, &theta, 1)
+        for row in range(m_.shape[0]):
+            Ylmgen_prepare(&ctx, 0, m_[row])
+            Ylmgen_recalc_Ylm(&ctx)
+            firstl = ctx.firstl[0] # argument: spin
+            for col in range(min(firstl, lmax + 1)):
+                out[row, col] = 0
+            for col in range(firstl, lmax + 1):
+                out_[row, col] = ctx.ylm[col]
+    finally:
+        Ylmgen_destroy(&ctx)
+    return out
     
 
 def Plm_and_dPlm(l, m, x):

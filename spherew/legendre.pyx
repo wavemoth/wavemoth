@@ -47,9 +47,9 @@ def compute_normalized_associated_legendre(int m, theta,
             Ylmgen_recalc_Ylm(&ctx)
             firstl = ctx.firstl[0] # argument: spin
             for col in range(m, min(firstl, lmax + 1)):
-                out[row, col - m] = 0
+                out_[row, col - m] = 0
             for col in range(max(m, firstl), lmax + 1):
-                out[row, col - m] = ctx.ylm[col]
+                out_[row, col - m] = ctx.ylm[col]
     finally:
         Ylmgen_destroy(&ctx)
     return out

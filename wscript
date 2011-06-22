@@ -116,13 +116,21 @@ def build(bld):
     ##     use='NUMPY MKL',
     ##     features='c pyext cshlib')
 
+
     bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in', 'src/fmm1d.c']),
         includes=['src'],
         install_path='bin',
         target='shbench',
-        use='ATLAS FFTW3 RT OPENMP PSHT MAYBEPERFTOOLS',
+        use='ATLAS FFTW3 RT PSHT OPENMP',
         features='cprogram c')
 
+    if bld.env.HAS_PERFTOOLS:
+        bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in', 'src/fmm1d.c']),
+            includes=['src'],
+            install_path='bin',
+            target='shbench-prof',
+            use='ATLAS FFTW3 RT PSHT OPENMP PERFTOOLS',
+            features='cprogram c')
 
 from waflib.Configure import conf
 from os.path import join as pjoin
@@ -228,6 +236,7 @@ def check_google_perftools(conf):
     }
     ''')
     conf.env.LIB_PERFTOOLS = ['profiler']
+    conf.env.CFLAGS_PERFTOOLS = ['-DHAS_PPROF=1']
     prefix = conf.options.with_perftools
     if prefix:
         conf.env.LIBPATH_PERFTOOLS = [pjoin(prefix, 'lib')]
@@ -240,9 +249,11 @@ def check_google_perftools(conf):
             use='PERFTOOLS')
     except conf.errors.ConfigurationError:
         conf.env.LIB_MAYBEPERFTOOLS = []
+        conf.env.HAS_PERFTOOLS = False
     else:
         conf.env.LIB_MAYBEPERFTOOLS = conf.env.LIB_PERFTOOLS
-        conf.env.CFLAGS_MAYBEPERFTOOLS = ['-DHAS_PPROF=1']
+        conf.env.CFLAGS_MAYBEPERFTOOLS = conf.env.CFLAGS_PERFTOOLS
+        conf.env.HAS_PERFTOOLS = True
     conf.end_msg(prefix if prefix else True)
 
 

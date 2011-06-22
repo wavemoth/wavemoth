@@ -146,7 +146,7 @@ Butterfly SHT benchmark
 double *sht_input, *sht_output, *sht_work;
 fastsht_plan sht_plan;
 int sht_nmaps;
-int sht_m_stride = 50;
+int sht_m_stride = 1;
 size_t *sht_mstart;
 
 void setup_sht_buffers() {
@@ -257,7 +257,7 @@ PSHT
 /*
 Inserted our own hack in PSHT...
 */
-void _psht_set_m_stride(int m_stride);
+//void _psht_set_m_stride(int m_stride);
 
 psht_alm_info *benchpsht_alm_info;
 psht_geom_info *benchpsht_geom_info;
@@ -284,7 +284,7 @@ void _setup_psht(int nmaps) {
      skipping some m's to speed benchmarks up.
   */
   setup_sht_buffers();
-  _psht_set_m_stride(sht_m_stride);
+  //  _psht_set_m_stride(sht_m_stride);
   stride = nmaps;
   psht_make_general_alm_info(lmax, lmax + 1, stride, marr, sht_mstart, &benchpsht_alm_info);
   /* The rest is standard */

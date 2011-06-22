@@ -336,22 +336,21 @@ typedef struct {
   void (*setup)(void); 
   void (*execute)(int threadnum);
   void (*finish)(double dt);
-  int multithreaded;
 } benchmark_t;
 
 benchmark_t benchmarks[] = {
-  {"sht1", setup_sht1, execute_sht, finish_sht, 1},
-  {"sht2", setup_sht2, execute_sht, finish_sht, 0},
-  {"sht10", setup_sht10, execute_sht, finish_sht, 0},
-  {"sht20", setup_sht20, execute_sht, finish_sht, 0},
-  {"psht1", setup_psht1, execute_psht, finish_psht, 1},
-  {"psht2", setup_psht2, execute_psht, finish_psht, 0},
-  {"psht10", setup_psht10, execute_psht, finish_psht, 0},
-  {"psht20", setup_psht20, execute_psht, finish_psht, 0},
-  {"legendre", setup_sht1, execute_legendre, finish_legendre, 0},
-  {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark, 1},
-  {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm, 1},
-  {"dgemm-single", setup_dgemm, execute_dgemm, finish_dgemm, 0},
+  {"sht1", setup_sht1, execute_sht, finish_sht},
+  {"sht2", setup_sht2, execute_sht, finish_sht},
+  {"sht10", setup_sht10, execute_sht, finish_sht},
+  {"sht20", setup_sht20, execute_sht, finish_sht},
+  {"psht1", setup_psht1, execute_psht, finish_psht},
+  {"psht2", setup_psht2, execute_psht, finish_psht},
+  {"psht10", setup_psht10, execute_psht, finish_psht},
+  {"psht20", setup_psht20, execute_psht, finish_psht},
+  {"legendre", setup_sht1, execute_legendre, finish_legendre},
+  {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark},
+  {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm},
+  {"dgemm-single", setup_dgemm, execute_dgemm, finish_dgemm},
   {NULL, NULL, NULL}
 };
 
@@ -375,7 +374,7 @@ int main(int argc, char *argv[]) {
   int c;
 
   int should_profile = 0;
-
+  int got_threads;
 
 
   nthreads = omp_get_max_threads();
@@ -400,7 +399,7 @@ int main(int argc, char *argv[]) {
       Nside = atoi(optarg);
       break;
     case 'j':
-      nthreads = atoi(optarg);
+      N_threads = atoi(optarg);
       break;
     }
   }
@@ -416,6 +415,15 @@ int main(int argc, char *argv[]) {
   }
 
   omp_set_dynamic(0);
+  omp_set_num_threads(N_threads);
+#pragma omp parallel shared(got_threads)
+  {
+    got_threads = omp_get_num_threads();
+  }
+  if (got_threads < N_threads) {
+    fprintf(stderr, "WARNING: Threads available less than requested.\n");
+  }
+  fprintf(stderr, "Using %d threads\n", got_threads);
 
   pbench = benchmarks;
   while (pbench->execute != NULL) {
@@ -430,14 +438,8 @@ int main(int argc, char *argv[]) {
       }
     }
     printf("%s:\n", pbench->name);
-    N_threads = pbench->multithreaded ? nthreads : 1;
     sht_nmaps = -1;
     if (pbench->setup != NULL) pbench->setup();
-    printf("# of threads requested %d\n", N_threads);
-    omp_set_num_threads(N_threads);
-    /*    for (i = 0; i < N_threads; ++i) {
-      pbench->execute(i);
-      }*/
     #ifdef HAS_PPROF
     if (should_profile) {
       snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
@@ -448,9 +450,7 @@ int main(int argc, char *argv[]) {
     t0 = walltime();
     n = 0;
     do {
-      for (i = 0; i < N_threads; ++i) {
-        pbench->execute(i);
-      }
+      pbench->execute(i);
       t1 = walltime();
       n++;
     } while (t1 - t0 < PROFILE_TIME);

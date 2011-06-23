@@ -56,7 +56,6 @@ The precomputed data, per m. For now we only support a single Nside
 at the time, this will definitely change.
 */
 typedef struct {
-  double *evaluation_grid_squared, *output_grid_squared, *gamma, *omega;
   char *matrix_data;
   size_t matrix_len;
   int64_t combined_matrix_size;
@@ -194,21 +193,9 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
         continue;
       }
       should_interpolate = ((int64_t*)head)[0];
+      check(!should_interpolate, "Interpolation not supported");
       rec->combined_matrix_size = ((int64_t*)head)[1];
       head = skip_padding(head + sizeof(int64_t[2]));
-      if (should_interpolate) {
-        //      assert(n > 0);
-        rec->evaluation_grid_squared = (double*)head;
-        head = skip_padding(head + sizeof(double[n]));
-        rec->gamma = (double*)head;
-        head = skip_padding(head + sizeof(double[n]));
-        rec->output_grid_squared = (double*)head;
-        head = skip_padding(head + sizeof(double[2 * Nside]));
-        rec->omega = (double*)head;
-        head = skip_padding(head + sizeof(double[2 * Nside]));
-      } else {
-        rec->evaluation_grid_squared = rec->gamma = rec->output_grid_squared = rec->omega = NULL;
-      }
       rec->matrix_data = head;
       rec->matrix_len = offsets[4 * m + 2 * odd + 1];
     }
@@ -334,7 +321,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->nmaps = nmaps;
 
   plan->work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
-  plan->work_g_m_roots = memalign(16, sizeof(complex double[nmaps * ((lmax + 1) / 2)]));
   plan->work_g_m_even = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
   plan->work_g_m_odd = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
 
@@ -362,7 +348,6 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   if (plan->did_allocate_resources) free(plan->resources);
   free(plan->fft_plans);
   free(plan->work_a_l);
-  free(plan->work_g_m_roots);
   free(plan->work_g_m_even);
   free(plan->work_g_m_odd);
   free(plan);
@@ -390,10 +375,6 @@ void fastsht_execute(fastsht_plan plan) {
         continue;
       }
       fastsht_perform_matmul(plan, m, odd);
-      if (rec->evaluation_grid_squared != NULL) {
-        /* Interpolate with FMM */
-        fastsht_perform_interpolation(plan, m, odd);
-      }
     }
     fastsht_merge_even_odd_and_transpose(plan, m);
   }
@@ -498,28 +479,11 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
     }
     ++ncols;
   }
-  if (rec->evaluation_grid_squared == NULL) {
-    target = odd ? plan->work_g_m_odd : plan->work_g_m_even;
-    nrows = plan->grid->nrings - plan->grid->mid_ring;
-  } else {
-    target = plan->work_g_m_roots;
-    nrows = (lmax - m) / 2;
-  }
+  target = odd ? plan->work_g_m_odd : plan->work_g_m_even;
+  nrows = plan->grid->nrings - plan->grid->mid_ring;
   /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
   bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)target,
               nrows, ncols, 2 * plan->nmaps);
-}
-
-void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd) {
-  bfm_index_t n;
-  m_resource_t *rec;
-  n = (plan->lmax - m) / 2;
-  rec = plan->resources->P_matrices + 2 * m + odd;
-  assert(rec->evaluation_grid_squared != NULL); /* should_interpolate flag */
-  fastsht_fmm1d(rec->evaluation_grid_squared, rec->gamma, (double*)plan->work_g_m_roots, n,
-                rec->output_grid_squared, rec->omega,
-                (double*)(odd ? plan->work_g_m_odd : plan->work_g_m_even),
-                2 * plan->Nside, 2);
 }
 
 void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {

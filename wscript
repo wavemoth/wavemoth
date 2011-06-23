@@ -98,8 +98,7 @@ def build(bld):
         use='NUMPY ATLAS fcshlib',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c.in',
-                 'src/fmm1d.c']),
+    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c.in']),
         includes=['src'],
         target='fastsht',
         use='NUMPY ATLAS FFTW3',
@@ -117,7 +116,7 @@ def build(bld):
     ##     features='c pyext cshlib')
 
 
-    bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in', 'src/fmm1d.c']),
+    bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in']),
         includes=['src'],
         install_path='bin',
         target='shbench',
@@ -125,7 +124,7 @@ def build(bld):
         features='cprogram c')
 
     if bld.env.HAS_PERFTOOLS:
-        bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in', 'src/fmm1d.c']),
+        bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in']),
             includes=['src'],
             install_path='bin',
             target='shbench-prof',

@@ -158,7 +158,7 @@ void setup_sht_buffers() {
   for (m = 0; m < lmax + 1; m += 1) {
     if (m % sht_m_stride == 0) {
       sht_mstart[m] = pos - m;
-      pos += m + 1;      
+      pos += lmax - m + 1;
     } else {
       sht_mstart[m] = 0x7FFFFFFF;
     }

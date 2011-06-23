@@ -25,7 +25,7 @@ def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
 def make_plan(nmaps):
-    input = np.zeros((lmax * (lmax + 1) // 2, nmaps), dtype=np.complex128)
+    input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((nmaps, 12*Nside**2))
     work = np.zeros((nmaps, (lmax + 1) * (4 * Nside - 1)), dtype=np.complex128)
     plan = ShtPlan(Nside, lmax, lmax, input, output, work, 'mmajor')
@@ -36,16 +36,16 @@ def test_basic():
     nmaps = 3
     plan = make_plan(nmaps)
     plan.input[0, :] = 10
-    plan.input[lm_to_idx_mmajor(1, 0), :] = np.arange(nmaps) * 100
+    plan.input[lm_to_idx_mmajor(1, 0), :] = np.arange(nmaps) * 30
     plan.input[lm_to_idx_mmajor(2, 1), :] = 10 + 5j
     plan.execute()
 
-    y2 = psht.alm2map_mmajor(plan.input, Nside=Nside)
+    y2 = psht.alm2map_mmajor(plan.input, lmax=lmax, Nside=Nside)
     if do_plot:
         for i in range(nmaps):
             pixel_sphere_map(y2[i, :], pixel_order='ring').plot(title='FID %d' % i)
             pixel_sphere_map(plan.output[i, :], pixel_order='ring').plot(title='%d' % i)
-            pixel_sphere_map(plan.output[i, :] - y2[i, :], pixel_order='ring').plot(title='delta %d' % i)
+#            pixel_sphere_map(plan.output[i, :] - y2[i, :], pixel_order='ring').plot(title='delta %d' % i)
 
         plt.show()
 

@@ -106,9 +106,10 @@ cdef class PshtMmajorHealpix:
         pshtd_clear_joblist(self.joblist)
         return map
 
-def alm2map_mmajor(alm, map=None, Nside=None, repeat=1):
+def alm2map_mmajor(alm, lmax, map=None, Nside=None, repeat=1):
+    if alm.shape[0] != ((lmax + 1) * (lmax + 2)) // 2:
+        raise ValueError('alm.shape does not match lmax')
     nmaps = alm.shape[1]
-    lmax = int(np.sqrt(alm.shape[0])) - 1
     if map is not None:
         assert Nside is None
         Nside = int(np.sqrt(map.shape[1] // 12))

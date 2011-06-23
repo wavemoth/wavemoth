@@ -24,6 +24,9 @@ C program to benchmark spherical harmonic transforms
 #include <psht.h>
 #include <psht_geomhelpers.h>
 
+#define MAXPATH 2048
+#define MAXTIME 50
+
 int Nside, lmax;
 char *sht_resourcefile;
 int do_ffts;
@@ -46,10 +49,7 @@ static double *zeros(size_t n) {
   return buf;
 }
 
-/* Ugly hack: Ring buffer of return buffers... */
-static char ftime_buf[5][200];
-static int ftime_idx = 0;
-static char* dangerous_ftime(double time) {
+static void snftime(char *buf, size_t n, double time) {
   char *units;
   if (time < 1e-06) {
     units = "ns";
@@ -57,22 +57,16 @@ static char* dangerous_ftime(double time) {
   } else if (time < 1e-03) {
     units = "us";
     time *= 1e6;
-  } else if (time < 1) {
+  } else if (time < 10) {
     units = "ms";
     time *= 1e3;
   } else {
     units = "s";
   }
-  ftime_idx = (ftime_idx + 1) % 5;
-  sprintf(ftime_buf[ftime_idx], "%.1f %s", time, units);
-  return ftime_buf[ftime_idx];
+  snprintf(buf, n, "%.1f %s", time, units);
+  buf[n - 1] = '\0';
 }
 
-static void printtime(char* msg, int n, double time) {
-  char *units;
-  time /= n;
-  printf("%s%d times, avg: %s\n", msg, n, dangerous_ftime(time));
-}
 
 /*
 Butterfly SHT benchmark
@@ -119,27 +113,10 @@ void execute_sht() {
   }
 }
 
-void execute_legendre() {
-}
-
-void finish_legendre(double dt) {
-  int64_t flops = 0;
-  int m, odd;
-  double stridefudge;
-  for (m = 0; m != sht_plan->mmax + 1; ++m) {
-    for (odd = 0; odd != 2; ++odd) {
-      flops += fastsht_get_legendre_flops(sht_plan, m, odd) * 2;
-    }
-  }
-  printf("  Per map: %s", dangerous_ftime(dt / sht_nmaps));
-  stridefudge = (double)(lmax / sht_m_stride) / lmax;
-  printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9 * stridefudge);
-}
-
 void setup_sht() {
   int nmaps = sht_nmaps;
   FILE *fd;
-  printf("  Initializing (incl. FFTW)\n");
+  printf("  Initializing (incl. FFTW plans)\n");
   /* Import FFTW plan if it exists */
   fd = fopen("fftw.wisdom", "r");
   if (fd != NULL) {
@@ -163,8 +140,26 @@ void setup_sht() {
 }
 
 void finish_sht(double dt) {
+  int64_t flops = 0;
+  int m, odd;
+  double stridefudge;
+  char timestr[MAXTIME];
+
   fastsht_destroy_plan(sht_plan);
   free_sht_buffers();
+  
+  if (!do_ffts) {
+    for (m = 0; m != sht_plan->mmax + 1; ++m) {
+      for (odd = 0; odd != 2; ++odd) {
+        flops += fastsht_get_legendre_flops(sht_plan, m, odd) * 2;
+      }
+    }
+
+    snftime(timestr, MAXTIME, dt / sht_nmaps);
+    printf("  Per map: %s\n", timestr);
+    stridefudge = (double)(lmax / sht_m_stride) / lmax;
+    printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9 * stridefudge);
+  }
 }
 
 
@@ -195,6 +190,7 @@ void setup_psht() {
   for (m = 0; m < lmax + 1; m += 1) {
     marr[m] = m;
   }
+
   check(Nside >= 0, "Invalid Nside");
   /* Setup m-major alm info */
   /* Input is strided/interleaved in m-major triangular order;
@@ -246,24 +242,23 @@ benchmark_t benchmarks[] = {
 };
 
 
-#define MAXPATH 2048
 
 int main(int argc, char *argv[]) {
-  double t0, t1, dtmin, tit0, tit1;
+  double t0, t1, dtmin, tit0, tit1, dt;
   int n, i, j, should_run;
   benchmark_t *pbench;
-  int nthreads;
   #ifdef HAS_PPROF
   char profilefile[MAXPATH];
   #endif
   char *resourcename;
+  char timestr1[MAXTIME], timestr2[MAXTIME];
 
   int c;
   int got_threads, miniter;
   double mintime;
 
   /* Parse options */
-  nthreads = omp_get_max_threads();
+  N_threads = 1;
   sht_resourcefile = NULL;
   Nside = -1;
   miniter = 1;
@@ -311,6 +306,7 @@ int main(int argc, char *argv[]) {
   }
   fprintf(stderr, "Using %d threads, %d maps, %s, m-thinning %d\n", got_threads, sht_nmaps,
           do_ffts ? "with FFTs" : "without FFTs", sht_m_stride);
+  fprintf(stderr, "Nside=%d, lmax=%d\n", Nside, lmax);
 
   /* Run requested benchmarks */
   pbench = benchmarks;
@@ -327,6 +323,9 @@ int main(int argc, char *argv[]) {
     }
     printf("%s:\n", pbench->name);
     if (pbench->setup != NULL) pbench->setup();
+    printf("  Warming up\n");
+    printf("  Executing\n");
+    pbench->execute();
     #ifdef HAS_PPROF
     snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
     profilefile[MAXPATH - 1] = '\0';
@@ -340,15 +339,20 @@ int main(int argc, char *argv[]) {
       pbench->execute();
       tit1 = t1 = walltime();
       if (tit1 - tit0 < dtmin) dtmin = tit1 - tit0;
-      
       n++;
     } while (n < miniter || t1 - t0 < mintime);
     #ifdef HAS_PPROF
     ProfilerStop();
     #endif
-    printf("  Minimum of %d reps: %s wall, %s thread-wall\n", n, dangerous_ftime(dtmin),
-           dangerous_ftime(dtmin * N_threads));
-    if (pbench->finish) pbench->finish((t1 - t0) / n);
+    dt = (t1 - t0) / n;
+
+    snftime(timestr1, MAXTIME, dtmin);
+    snftime(timestr2, MAXTIME, dtmin * N_threads);
+    printf("  Best of %d reps: %s wall, %s thread-wall\n", n, timestr1, timestr2);
+    snftime(timestr1, MAXTIME, dt);
+    snftime(timestr2, MAXTIME, dt * N_threads);
+    printf("  Mean of %d reps: %s wall, %s thread-wall\n", n, timestr1, timestr2);
+    if (pbench->finish) pbench->finish(dtmin);
     pbench++;
   }
 

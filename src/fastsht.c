@@ -355,29 +355,32 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 }
 
 void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride) {
-  bfm_index_t m;
-  int odd;
-  m_resource_t *rec;
-  double complex *work_g_m[2], *work_a_l;
   int lmax = plan->lmax, nmaps = plan->nmaps, nrings_half = plan->grid->mid_ring + 1;
 
-  work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
-  work_g_m[0] = memalign(16, sizeof(complex double[nmaps * nrings_half]));
-  work_g_m[1] = memalign(16, sizeof(complex double[nmaps * nrings_half]));
-  
-  /* Compute g_m(theta_i), including transpose step for now */
-  for (m = mstart; m != mstop - 2; m += mstride) { /* TODO TODO TODO */
-    for (odd = 0; odd != 2; ++odd) {
-      rec = plan->resources->P_matrices + 2 * m + odd;
-      check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
-      fastsht_perform_matmul(plan, m, odd, work_a_l, work_g_m[odd]);
-    }
-    fastsht_merge_even_odd_and_transpose(plan, m, work_g_m[0], work_g_m[1]);
-  }
+#pragma omp parallel
+  {
+    int m, odd;
+    m_resource_t *rec;
+    double complex *work_g_m_even, *work_g_m_odd, *work_a_l;
 
-  free(work_a_l);
-  free(work_g_m[0]);
-  free(work_g_m[1]);
+    work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
+    work_g_m_even = memalign(16, sizeof(complex double[nmaps * nrings_half]));
+    work_g_m_odd = memalign(16, sizeof(complex double[nmaps * nrings_half]));
+  
+    /* Compute g_m(theta_i), including transpose step for now */
+#pragma omp for schedule(dynamic,1)
+    for (m = mstart; m < mstop - 2; m += mstride) { /* TODO TODO TODO */
+      for (odd = 0; odd != 2; ++odd) {
+        rec = plan->resources->P_matrices + 2 * m + odd;
+        check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
+        fastsht_perform_matmul(plan, m, odd, work_a_l, odd ? work_g_m_odd : work_g_m_even);
+      }
+      fastsht_merge_even_odd_and_transpose(plan, m, work_g_m_even, work_g_m_odd);
+    }
+    free(work_a_l);
+    free(work_g_m_even);
+    free(work_g_m_odd);
+  }
 }
 
 void fastsht_execute(fastsht_plan plan) {
@@ -438,22 +441,25 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
-  int iring, imap, mmax, j, N;
-  double complex *g_m;
-  double *output_ring;
-  bfm_index_t work_stride, npix;
   fastsht_grid_info *grid = plan->grid;
-  mmax = plan->mmax;
-  work_stride = (2 * plan->grid->mid_ring + 1) * (mmax + 1);
-  npix = plan->grid->npix;
-  imap = 0;
-  for (imap = 0; imap != plan->nmaps; ++imap) {
-    for (iring = ring_start; iring != ring_end; ++iring) {
-      g_m = (double complex*)plan->work + imap * work_stride + (1 + mmax) * iring;
-      N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
-      phase_shift_ring_inplace(mmax, g_m, grid->phi0s[iring]);
-      output_ring = plan->output + imap * npix + plan->grid->ring_offsets[iring];
-      fftw_execute_dft_c2r(plan->fft_plans[iring], g_m, output_ring);
+  int mmax = plan->mmax;
+  size_t work_stride = (2 * plan->grid->mid_ring + 1) * (mmax + 1);
+  size_t npix = plan->grid->npix;
+#pragma omp parallel
+  {
+    double complex *g_m;
+    double *output_ring;
+    int iring, imap, mmax, j, N;
+    imap = 0;
+    for (imap = 0; imap < plan->nmaps; ++imap) {
+#pragma omp for schedule(dynamic, 16) nowait
+      for (iring = ring_start; iring < ring_end; ++iring) {
+        g_m = (double complex*)plan->work + imap * work_stride + (1 + mmax) * iring;
+        N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
+        phase_shift_ring_inplace(mmax, g_m, grid->phi0s[iring]);
+        output_ring = plan->output + imap * npix + plan->grid->ring_offsets[iring];
+        fftw_execute_dft_c2r(plan->fft_plans[iring], g_m, output_ring);
+      }
     }
   }  
 }

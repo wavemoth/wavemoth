@@ -25,7 +25,7 @@ C program to benchmark spherical harmonic transforms
 #include <psht_geomhelpers.h>
 
 
-#define PROFILE_TIME 10.0
+#define PROFILE_TIME 2.0
 
 int Nside, lmax;
 char *sht_resourcefile;
@@ -258,6 +258,9 @@ psht_alm_info *benchpsht_alm_info;
 psht_geom_info *benchpsht_geom_info;
 pshtd_joblist *benchpsht_joblist;
 
+void _psht_set_benchmark_parameters(int m_start, int m_stop, int m_stride,
+                                    int run_ffts);
+
 ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
   return m * (2 * lmax - m + 3) / 2 + (l - m);
 }
@@ -279,7 +282,7 @@ void _setup_psht(int nmaps) {
      skipping some m's to speed benchmarks up.
   */
   setup_sht_buffers();
-  //  _psht_set_m_stride(sht_m_stride);
+  _psht_set_benchmark_parameters(0, lmax + 1, sht_m_stride, 1);
   stride = nmaps;
   psht_make_general_alm_info(lmax, lmax + 1, stride, marr, sht_mstart, &benchpsht_alm_info);
   /* The rest is standard */

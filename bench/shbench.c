@@ -46,8 +46,9 @@ static double *zeros(size_t n) {
   return buf;
 }
 
-static char ftime_buf[200];
-
+/* Ugly hack: Ring buffer of return buffers... */
+static char ftime_buf[5][200];
+static int ftime_idx = 0;
 static char* dangerous_ftime(double time) {
   char *units;
   if (time < 1e-06) {
@@ -62,8 +63,9 @@ static char* dangerous_ftime(double time) {
   } else {
     units = "s";
   }
-  sprintf(ftime_buf, "%.1f %s", time, units);
-  return ftime_buf;
+  ftime_idx = (ftime_idx + 1) % 5;
+  sprintf(ftime_buf[ftime_idx], "%.1f %s", time, units);
+  return ftime_buf[ftime_idx];
 }
 
 static void printtime(char* msg, int n, double time) {
@@ -247,7 +249,7 @@ benchmark_t benchmarks[] = {
 #define MAXPATH 2048
 
 int main(int argc, char *argv[]) {
-  double t0, t1;
+  double t0, t1, dtmin, tit0, tit1;
   int n, i, j, should_run;
   benchmark_t *pbench;
   int nthreads;
@@ -330,17 +332,22 @@ int main(int argc, char *argv[]) {
     profilefile[MAXPATH - 1] = '\0';
     ProfilerStart(profilefile);
     #endif
+    dtmin = 1e300;
     t0 = walltime();
     n = 0;
     do {
+      tit0 = walltime();
       pbench->execute();
-      t1 = walltime();
+      tit1 = t1 = walltime();
+      if (tit1 - tit0 < dtmin) dtmin = tit1 - tit0;
+      
       n++;
     } while (n < miniter || t1 - t0 < mintime);
     #ifdef HAS_PPROF
     ProfilerStop();
     #endif
-    printtime("  ", n, t1 - t0);
+    printf("  Minimum of %d reps: %s wall, %s thread-wall\n", n, dangerous_ftime(dtmin),
+           dangerous_ftime(dtmin * N_threads));
     if (pbench->finish) pbench->finish((t1 - t0) / n);
     pbench++;
   }

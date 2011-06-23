@@ -320,10 +320,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
 
-  plan->work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
-  plan->work_g_m_even = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
-  plan->work_g_m_odd = memalign(16, sizeof(complex double[nmaps * (plan->grid->mid_ring + 1)]));
-
   plan->Nside = Nside;
   plan->lmax = lmax;
   plan->mmax = mmax;
@@ -347,9 +343,6 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   fastsht_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
   free(plan->fft_plans);
-  free(plan->work_a_l);
-  free(plan->work_g_m_even);
-  free(plan->work_g_m_odd);
   free(plan);
 }
 
@@ -365,16 +358,26 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
   bfm_index_t m;
   int odd;
   m_resource_t *rec;
+  double complex *work_g_m[2], *work_a_l;
+  int lmax = plan->lmax, nmaps = plan->nmaps, nrings_half = plan->grid->mid_ring + 1;
+
+  work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
+  work_g_m[0] = memalign(16, sizeof(complex double[nmaps * nrings_half]));
+  work_g_m[1] = memalign(16, sizeof(complex double[nmaps * nrings_half]));
+  
   /* Compute g_m(theta_i), including transpose step for now */
-  for (m = 0; m != mstop - 2; m += mstride) { /* TODO TODO TODO */
+  for (m = mstart; m != mstop - 2; m += mstride) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
-      double complex *target = odd ? plan->work_g_m_odd : plan->work_g_m_even;
       rec = plan->resources->P_matrices + 2 * m + odd;
       check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
-      fastsht_perform_matmul(plan, m, odd, plan->work_a_l, target);
+      fastsht_perform_matmul(plan, m, odd, work_a_l, work_g_m[odd]);
     }
-    fastsht_merge_even_odd_and_transpose(plan, m);
+    fastsht_merge_even_odd_and_transpose(plan, m, work_g_m[0], work_g_m[1]);
   }
+
+  free(work_a_l);
+  free(work_g_m[0]);
+  free(work_g_m[1]);
 }
 
 void fastsht_execute(fastsht_plan plan) {
@@ -403,7 +406,9 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
               nrows, ncols, 2 * plan->nmaps);
 }
 
-void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {
+void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
+                                          double complex *g_m_even,
+                                          double complex *g_m_odd) {
   bfm_index_t mmax, nrings, iring, mid_ring, imap;
   double complex *work;
   int nmaps = plan->nmaps;
@@ -417,17 +422,17 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m) {
   /* Equator */
   work_stride = (2 * mid_ring + 1) * (mmax + 1);
   for (imap = 0; imap != nmaps; ++imap) {
-    work[imap * work_stride + mid_ring * (mmax + 1) + m] = plan->work_g_m_even[imap];
+    work[imap * work_stride + mid_ring * (mmax + 1) + m] = g_m_even[imap];
   }
   /* Ring-pairs */
   for (iring = 1; iring < mid_ring + 1; ++iring) {
     for (imap = 0; imap != nmaps; ++imap) {
       /* Top ring */
       work[imap * work_stride + (mid_ring - iring) * (mmax + 1) + m] = 
-        plan->work_g_m_even[iring * nmaps + imap] + plan->work_g_m_odd[iring * nmaps + imap];
+        g_m_even[iring * nmaps + imap] + g_m_odd[iring * nmaps + imap];
       /* Bottom ring -- switch odd sign */
       work[imap * work_stride + (mid_ring + iring) * (mmax + 1) + m] =
-        plan->work_g_m_even[iring * nmaps + imap] - plan->work_g_m_odd[iring * nmaps + imap];
+        g_m_even[iring * nmaps + imap] - g_m_odd[iring * nmaps + imap];
     }
   }
 }

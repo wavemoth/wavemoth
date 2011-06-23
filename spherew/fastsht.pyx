@@ -32,6 +32,7 @@ cdef extern from "fastsht.h":
     void fastsht_execute(fastsht_plan plan)
     void fastsht_configure(char *resource_dir)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
+    void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride)
 
 
 cdef extern from "fastsht_private.h":
@@ -89,6 +90,11 @@ cdef class ShtPlan:
 
     def perform_backward_ffts(self, int ring_start, int ring_end):
         fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)
+
+    def perform_legendre_transform(self, mstart, mstop, mstride, int repeat=1):
+        cdef int k
+        for k in range(repeat):
+            fastsht_legendre_transform(self.plan, mstart, mstop, mstride)
 
 #    def perform_matmul(self, bfm_index_t m, int odd):
 #        cdef int n = (self.plan.lmax - m) / 2, i

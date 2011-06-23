@@ -52,10 +52,11 @@ struct _fastsht_plan {
 Goes from plan->input to plan->work_g_m_even/odd; that is, evaluate
 g_m(theta) in the Ass. Legendre roots for the given m and odd.
 */
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd);
+void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, double complex *work_a_l, double complex *output);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, bfm_index_t m);
 
+void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride);
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end);
 

@@ -361,30 +361,30 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
   return N * 2; /* count mul and add seperately */
 }
 
-void fastsht_execute(fastsht_plan plan) {
-  bfm_index_t m, mmax;
+void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride) {
+  bfm_index_t m;
   int odd;
   m_resource_t *rec;
-  mmax = plan->mmax;
   /* Compute g_m(theta_i), including transpose step for now */
-  for (m = 0; m != mmax + 1 - 2; ++m) { /* TODO TODO TODO */
+  for (m = 0; m != mstop - 2; m += mstride) { /* TODO TODO TODO */
     for (odd = 0; odd != 2; ++odd) {
+      double complex *target = odd ? plan->work_g_m_odd : plan->work_g_m_even;
       rec = plan->resources->P_matrices + 2 * m + odd;
-      if (rec->matrix_data == NULL) {
-        /* Only during benchmarks, so computed values are unimportant. */
-        continue;
-      }
-      fastsht_perform_matmul(plan, m, odd);
+      check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
+      fastsht_perform_matmul(plan, m, odd, plan->work_a_l, target);
     }
     fastsht_merge_even_odd_and_transpose(plan, m);
   }
+}
+
+void fastsht_execute(fastsht_plan plan) {
+  fastsht_legendre_transform(plan, 0, plan->mmax + 1, 1);
   /* Backward FFTs from plan->work to plan->output */
   fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
 }
 
-}
-
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
+void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
+                            double complex *work_a_l, double complex *output) {
   bfm_index_t ncols, nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
   double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
   double complex *target;
@@ -393,14 +393,13 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd) {
   ncols = 0;
   for (l = m + odd; l <= lmax; l += 2) {
     for (j = 0; j != nmaps; ++j) {
-      plan->work_a_l[ncols * nmaps + j] = input_m[(l - m) * nmaps + j];
+      work_a_l[ncols * nmaps + j] = input_m[(l - m) * nmaps + j];
     }
     ++ncols;
   }
-  target = odd ? plan->work_g_m_odd : plan->work_g_m_even;
   nrows = plan->grid->nrings - plan->grid->mid_ring;
   /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
-  bfm_apply_d(rec->matrix_data, (double*)plan->work_a_l, (double*)target,
+  bfm_apply_d(rec->matrix_data, (double*)work_a_l, (double*)output,
               nrows, ncols, 2 * plan->nmaps);
 }
 

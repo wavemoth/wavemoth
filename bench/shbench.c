@@ -183,12 +183,7 @@ void execute_sht(int threadnum) {
 }
 
 void execute_legendre(int threadnum) {
-  int m, odd;
-  for (m = 0; m != sht_plan->mmax + 1; ++m) {
-    for (odd = 0; odd != 2; ++odd) {
-      fastsht_perform_matmul(sht_plan, m, odd);
-    }
-  }
+  fastsht_legendre_transform(sht_plan, 0, lmax + 1, 1);
 }
 
 void finish_legendre(double dt) {

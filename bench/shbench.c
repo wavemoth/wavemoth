@@ -24,12 +24,9 @@ C program to benchmark spherical harmonic transforms
 #include <psht.h>
 #include <psht_geomhelpers.h>
 
-
-#define PROFILE_TIME 2.0
-
 int Nside, lmax;
 char *sht_resourcefile;
-
+int do_ffts;
 
 int N_threads;
 
@@ -49,12 +46,13 @@ static double *zeros(size_t n) {
   return buf;
 }
 
-static void printtime(char* msg, int n, double time) {
+static char ftime_buf[200];
+
+static char* dangerous_ftime(double time) {
   char *units;
-  time /= n;
   if (time < 1e-06) {
     units = "ns";
-    time *= 1e9;
+    time = 1e9;
   } else if (time < 1e-03) {
     units = "us";
     time *= 1e6;
@@ -64,80 +62,15 @@ static void printtime(char* msg, int n, double time) {
   } else {
     units = "s";
   }
-  printf("%s%d times, avg: %.1f %s\n", msg, n, time, units);
+  sprintf(ftime_buf, "%.1f %s", time, units);
+  return ftime_buf;
 }
 
-
-/*
-Benchmark memory throughput
-*/
-double *mem_buf;
-size_t N_mem = 200 * 1024 * 1024 / sizeof(double);
-
-void setup_memory_benchmark() {
-  /* zero buffer, so that we won't hit denormal numbers in reading loop */
-  mem_buf = zeros(N_threads * N_mem);
+static void printtime(char* msg, int n, double time) {
+  char *units;
+  time /= n;
+  printf("%s%d times, avg: %s\n", msg, n, dangerous_ftime(time));
 }
-
-void finish_memory_benchmark(double dt) {
-  printf("  Bandwidth: %.3f GB/s = %.3f giga-doubles/s\n ",
-         N_threads * N_mem * sizeof(double) / dt / (1024 * 1024 * 1024),
-         N_threads * N_mem / dt / (1024 * 1024 * 1024));
-  free(mem_buf);
-}
-
-void execute_memory_benchmark(int threadnum) {
-  /* Simply accumulate the buffer in a double -- we're going to be very
-     IO-bound so we can basically ignore the addition put in in order to
-     avoid optimizing things out.   */
-  int j;
-  size_t n = N_mem;
-  double acc = 0;
-  double *buf = mem_buf;
-  for (j = 0; j != n; j += 2) {
-    acc += buf[threadnum * n + j];
-  }
-  if (acc != 0.0) printf("dummy\n");
-}
-
-/*
-FLOPS benchmark
-*/
-size_t N_dgemm = 200;
-double **A, **B, **Y;
-
-void execute_dgemm(int threadnum) {
-  dgemm_rrr(A[threadnum], B[threadnum], Y[threadnum],
-            N_dgemm, N_dgemm, N_dgemm, 1.0);
-}
-
-void setup_dgemm() {
-  int i;
-  A = malloc(sizeof(void*) * N_threads);
-  B = malloc(sizeof(void*) * N_threads);
-  Y = malloc(sizeof(void*) * N_threads);
-  for (i = 0; i != N_threads; ++i) {
-    A[i] = zeros(N_dgemm * N_dgemm);
-    B[i] = zeros(N_dgemm * N_dgemm);
-    Y[i] = zeros(N_dgemm * N_dgemm);
-  }
-}
-
-void finish_dgemm(double dt) {
-  int i;
-  size_t flops = N_threads * N_dgemm * N_dgemm * N_dgemm * 2;
-  printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9);
-  for (i = 0; i != N_threads; ++i) {
-    free(A[i]);
-    free(B[i]);
-    free(Y[i]);
-  }
-  free(A);
-  free(B);
-  free(Y);
-}
-
-
 
 /*
 Butterfly SHT benchmark
@@ -175,32 +108,36 @@ void free_sht_buffers() {
   free(sht_work);
 }
 
-void execute_sht(int threadnum) {
+void execute_sht() {
   double t_compute, t_load;
-  /*  fastsht_execute_out_of_core(sht_plan, &t_compute, &t_load);
-      printf("compute:load: %f %f\n", t_compute, t_load);*/
-  fastsht_execute(sht_plan);
+  if (do_ffts) {
+    fastsht_execute(sht_plan); 
+  } else {
+    fastsht_legendre_transform(sht_plan, 0, lmax + 1, sht_m_stride);
+  }
 }
 
-void execute_legendre(int threadnum) {
-  fastsht_legendre_transform(sht_plan, 0, lmax + 1, 1);
+void execute_legendre() {
 }
 
 void finish_legendre(double dt) {
   int64_t flops = 0;
   int m, odd;
+  double stridefudge;
   for (m = 0; m != sht_plan->mmax + 1; ++m) {
     for (odd = 0; odd != 2; ++odd) {
       flops += fastsht_get_legendre_flops(sht_plan, m, odd) * 2;
     }
   }
-  printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9);
+  printf("  Per map: %s", dangerous_ftime(dt / sht_nmaps));
+  stridefudge = (double)(lmax / sht_m_stride) / lmax;
+  printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9 * stridefudge);
 }
 
-void _setup_sht(int nmaps) {
+void setup_sht() {
+  int nmaps = sht_nmaps;
   FILE *fd;
   printf("  Initializing (incl. FFTW)\n");
-  sht_nmaps = nmaps;
   /* Import FFTW plan if it exists */
   fd = fopen("fftw.wisdom", "r");
   if (fd != NULL) {
@@ -223,22 +160,6 @@ void _setup_sht(int nmaps) {
   }
 }
 
-void setup_sht1() {
-  _setup_sht(1);
-}
-
-void setup_sht2() {
-  _setup_sht(2);
-}
-
-void setup_sht10() {
-  _setup_sht(10);
-}
-
-void setup_sht20() {
-  _setup_sht(20);
-}
-
 void finish_sht(double dt) {
   fastsht_destroy_plan(sht_plan);
   free_sht_buffers();
@@ -252,7 +173,6 @@ PSHT
 /*
 Inserted our own hack in PSHT...
 */
-//void _psht_set_m_stride(int m_stride);
 
 psht_alm_info *benchpsht_alm_info;
 psht_geom_info *benchpsht_geom_info;
@@ -265,50 +185,31 @@ ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
   return m * (2 * lmax - m + 3) / 2 + (l - m);
 }
 
-void _setup_psht(int nmaps) {
+void setup_psht() {
   int m;
   int marr[lmax + 1];
   int j;
   ptrdiff_t npix = 12 * Nside * Nside;
-  ptrdiff_t stride;
   for (m = 0; m < lmax + 1; m += 1) {
     marr[m] = m;
   }
   check(Nside >= 0, "Invalid Nside");
-  sht_nmaps = nmaps;
   /* Setup m-major alm info */
   /* Input is strided/interleaved in m-major triangular order;
      output has one map after the other (non-interleaved). We support
      skipping some m's to speed benchmarks up.
   */
   setup_sht_buffers();
-  _psht_set_benchmark_parameters(0, lmax + 1, sht_m_stride, 1);
-  stride = nmaps;
-  psht_make_general_alm_info(lmax, lmax + 1, stride, marr, sht_mstart, &benchpsht_alm_info);
+  _psht_set_benchmark_parameters(0, lmax + 1, sht_m_stride, do_ffts);
+  psht_make_general_alm_info(lmax, lmax + 1, sht_nmaps, marr, sht_mstart, &benchpsht_alm_info);
   /* The rest is standard */
   psht_make_healpix_geom_info(Nside, 1, &benchpsht_geom_info);
   pshtd_make_joblist(&benchpsht_joblist);
 
-  for (j = 0; j != nmaps; ++j) {
+  for (j = 0; j != sht_nmaps; ++j) {
     pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input + j,
                           sht_output + j * npix, 0);
   }
-}
-
-void setup_psht1() {
-  _setup_psht(1);
-}
-
-void setup_psht2() {
-  _setup_psht(2);
-}
-
-void setup_psht10() {
-  _setup_psht(10);
-}
-
-void setup_psht20() {
-  _setup_psht(20);
 }
 
 void finish_psht() {
@@ -319,7 +220,7 @@ void finish_psht() {
   free_sht_buffers();
 }
 
-void execute_psht(int threadnum) {
+void execute_psht() {
   pshtd_execute_jobs(benchpsht_joblist, benchpsht_geom_info, benchpsht_alm_info);
 }
 
@@ -332,30 +233,16 @@ Main
 typedef struct {
   char *name;
   void (*setup)(void); 
-  void (*execute)(int threadnum);
+  void (*execute)(void);
   void (*finish)(double dt);
 } benchmark_t;
 
 benchmark_t benchmarks[] = {
-  {"sht1", setup_sht1, execute_sht, finish_sht},
-  {"sht2", setup_sht2, execute_sht, finish_sht},
-  {"sht10", setup_sht10, execute_sht, finish_sht},
-  {"sht20", setup_sht20, execute_sht, finish_sht},
-  {"psht1", setup_psht1, execute_psht, finish_psht},
-  {"psht2", setup_psht2, execute_psht, finish_psht},
-  {"psht10", setup_psht10, execute_psht, finish_psht},
-  {"psht20", setup_psht20, execute_psht, finish_psht},
-  {"legendre", setup_sht1, execute_legendre, finish_legendre},
-  {"memread", setup_memory_benchmark, execute_memory_benchmark, finish_memory_benchmark},
-  {"dgemm", setup_dgemm, execute_dgemm, finish_dgemm},
-  {"dgemm-single", setup_dgemm, execute_dgemm, finish_dgemm},
+  {"sht", setup_sht, execute_sht, finish_sht},
+  {"psht", setup_psht, execute_psht, finish_psht},
   {NULL, NULL, NULL}
 };
 
-
-char *usage[] = {
-  "usage: shbench [-p] [-r resourcefile] [benchmarknames...]",
-};
 
 #define MAXPATH 2048
 
@@ -370,39 +257,37 @@ int main(int argc, char *argv[]) {
   char *resourcename;
 
   int c;
+  int got_threads, miniter;
+  double mintime;
 
-  int should_profile = 0;
-  int got_threads;
-
-
+  /* Parse options */
   nthreads = omp_get_max_threads();
   sht_resourcefile = NULL;
   Nside = -1;
-
+  miniter = 1;
+  mintime = 0;
   opterr = 0;
-  while ((c = getopt (argc, argv, "pr:N:j:")) != -1) {
+  sht_nmaps = 1;
+  do_ffts = -1;
+
+  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:")) != -1) {
     switch (c) {
-    case 'p':
-#ifndef HAS_PPROF
-      fprintf(stderr, "ERROR: Profiling requested but not compiled with Google perftools!\n");
-      return -1;
-#else
-      should_profile = 1;
+    case 'r': sht_resourcefile = optarg; break;
+    case 'N': Nside = atoi(optarg);  break;
+    case 'j': N_threads = atoi(optarg); break;
+    case 'n': miniter = atoi(optarg); break;
+    case 't': mintime = atof(optarg); break;
+    case 'S': 
+      sht_m_stride = atoi(optarg); 
+      do_ffts = 0;
       break;
-#endif
-    case 'r':
-      sht_resourcefile = optarg;
-      break;
-    case 'N':
-      Nside = atoi(optarg);
-      break;
-    case 'j':
-      N_threads = atoi(optarg);
-      break;
+    case 'k': sht_nmaps = atoi(optarg); break;
     }
   }
   argv += (optind - 1);
   argc -= (optind - 1);
+
+  if (do_ffts == -1) do_ffts = 1;
 
   /* Resource configuration */
   fastsht_configure("/home/dagss/code/spherew/resources");
@@ -412,6 +297,7 @@ int main(int argc, char *argv[]) {
     lmax = 2 * Nside;
   }
 
+  /* Set up multithreading asked for */
   omp_set_dynamic(0);
   omp_set_num_threads(N_threads);
 #pragma omp parallel shared(got_threads)
@@ -421,8 +307,10 @@ int main(int argc, char *argv[]) {
   if (got_threads < N_threads) {
     fprintf(stderr, "WARNING: Threads available less than requested.\n");
   }
-  fprintf(stderr, "Using %d threads\n", got_threads);
+  fprintf(stderr, "Using %d threads, %d maps, %s, m-thinning %d\n", got_threads, sht_nmaps,
+          do_ffts ? "with FFTs" : "without FFTs", sht_m_stride);
 
+  /* Run requested benchmarks */
   pbench = benchmarks;
   while (pbench->execute != NULL) {
     should_run = 0;
@@ -436,29 +324,23 @@ int main(int argc, char *argv[]) {
       }
     }
     printf("%s:\n", pbench->name);
-    sht_nmaps = -1;
     if (pbench->setup != NULL) pbench->setup();
     #ifdef HAS_PPROF
-    if (should_profile) {
-      snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
-      profilefile[MAXPATH - 1] = '\0';
-      ProfilerStart(profilefile);
-    }
+    snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
+    profilefile[MAXPATH - 1] = '\0';
+    ProfilerStart(profilefile);
     #endif
     t0 = walltime();
     n = 0;
     do {
-      pbench->execute(i);
+      pbench->execute();
       t1 = walltime();
       n++;
-    } while (t1 - t0 < PROFILE_TIME);
+    } while (n < miniter || t1 - t0 < mintime);
     #ifdef HAS_PPROF
     ProfilerStop();
     #endif
     printtime("  ", n, t1 - t0);
-    if (sht_nmaps >= 1) {
-      printtime("  Per map: ", n * sht_nmaps, t1 - t0);
-    }
     if (pbench->finish) pbench->finish((t1 - t0) / n);
     pbench++;
   }

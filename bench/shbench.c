@@ -175,8 +175,18 @@ psht_alm_info *benchpsht_alm_info;
 psht_geom_info *benchpsht_geom_info;
 pshtd_joblist *benchpsht_joblist;
 
+#ifdef PATCHED_LIBPSHT
 void _psht_set_benchmark_parameters(int m_start, int m_stop, int m_stride,
                                     int run_ffts);
+#else
+void _psht_set_benchmark_parameters(int m_start, int m_stop, int m_stride,
+                                    int run_ffts) {
+  if (m_stride != 1 || !run_ffts) {
+    fprintf(stderr, "Requested benchmark requires a patched version of libpsht\n");
+    exit(1);
+  }
+}
+#endif
 
 ptrdiff_t lm_to_idx_mmajor(ptrdiff_t l, ptrdiff_t m) {
   return m * (2 * lmax - m + 3) / 2 + (l - m);

@@ -19,6 +19,8 @@ def options(opt):
                    '(NOTE: must be configured with PIC)')
     opt.add_option('--with-perftools', help='path to google-perftools'
                    '(NOTE: must be configured with PIC)')
+    opt.add_option('--patched-libpsht', action='store_true',
+                   help='libpsht is patched to enable selective benchmarks')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -147,6 +149,9 @@ def check_libpsht(conf):
     conf.env.LINKFLAGS_PSHT = ['-fopenmp']
     conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
     conf.env.INCLUDES_PSHT = [pjoin(prefix, 'include')]
+    if conf.options.patched_libpsht:
+        conf.env.CFLAGS_PSHT = ['-DPATCHED_LIBPSHT=1']
+    # Check presence of libpsht in general
     cfrag = dedent('''\
     #include <psht.h>
     #include <psht_geomhelpers.h>
@@ -166,9 +171,9 @@ def check_libpsht(conf):
         fragment=cfrag,
         features = 'c',
         compile_filename='test.c',
-        use='PSHT',
-        msg='Checking for libpsht')
+        use='PSHT')
     conf.end_msg(prefix if prefix else True)
+
 
 @conf
 def check_fftw3(conf):

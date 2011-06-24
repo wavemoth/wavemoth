@@ -449,7 +449,7 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
   {
     double complex *g_m;
     double *output_ring;
-    int iring, imap, mmax, j, N;
+    int iring, imap, j, N;
     imap = 0;
     for (imap = 0; imap < plan->nmaps; ++imap) {
 #pragma omp for schedule(dynamic, 16) nowait

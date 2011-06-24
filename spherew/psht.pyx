@@ -60,7 +60,7 @@ cdef class PshtMmajorHealpix:
     cdef psht_alm_info *alm_info
     cdef psht_geom_info *geom_info
     cdef pshtd_joblist *joblist
-    cdef readonly int Nside, nmaps
+    cdef readonly int Nside, nmaps, lmax
     
     def __cinit__(self, lmax, Nside, nmaps):
         # fill in alm_info
@@ -77,6 +77,7 @@ cdef class PshtMmajorHealpix:
         psht_make_healpix_geom_info(Nside, 1, &self.geom_info)
         pshtd_make_joblist(&self.joblist)
         self.Nside = Nside
+        self.lmax = lmax
         
     def __dealloc__(self):
         if self.alm_info != NULL:
@@ -91,6 +92,8 @@ cdef class PshtMmajorHealpix:
                 np.ndarray[double, ndim=2, mode='c'] map=None,
                 int repeat=1):
         cdef int j
+        if alm.shape[0] != ((self.lmax + 1) * (self.lmax + 2)) // 2:
+            raise ValueError('alm.shape does not match lmax')
         if map is None:
             map = np.zeros((alm.shape[1], 12 * self.Nside**2), np.double)
         if alm.shape[1] != self.nmaps:
@@ -107,8 +110,6 @@ cdef class PshtMmajorHealpix:
         return map
 
 def alm2map_mmajor(alm, lmax, map=None, Nside=None, repeat=1):
-    if alm.shape[0] != ((lmax + 1) * (lmax + 2)) // 2:
-        raise ValueError('alm.shape does not match lmax')
     nmaps = alm.shape[1]
     if map is not None:
         assert Nside is None

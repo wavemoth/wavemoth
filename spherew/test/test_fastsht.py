@@ -4,6 +4,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy import pi
 from cmb import as_matrix
+import os
 
 from nose import SkipTest
 from nose.tools import eq_, ok_, assert_raises
@@ -17,7 +18,7 @@ from ..roots import associated_legendre_roots
 from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
 from cmb.maps import *
 
-do_plot = False
+do_plot = bool(os.environ.get('P', False))
 Nside = 16
 lmax = 2 * Nside
 

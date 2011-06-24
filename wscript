@@ -75,6 +75,18 @@ def configure(conf):
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
 
 def build(bld):
+    #
+    # Main shared library
+    #
+    bld(target='fastsht',
+        source=['src/fastsht.c', 'src/butterfly.c.in'],
+        use='ATLAS FFTW3 OPENMP',
+        features='c cshlib')
+
+    #
+    # Python wrappers
+    #
+    
     bld(source=(['spherew/legendre.pyx'] +
                 bld.srcnode.ant_glob(incl=['libpshtlight/*.c'])),
         includes=['libpshtlight'],
@@ -94,16 +106,16 @@ def build(bld):
         use='NUMPY',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/butterfly.pyx', 'src/butterfly.c']),
+    bld(source=(['spherew/butterfly.pyx']),
         includes=['src'],
         target='butterfly',
-        use='NUMPY ATLAS fcshlib',
+        use='NUMPY fcshlib fastsht',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/fastsht.pyx', 'src/fastsht.c', 'src/butterfly.c.in']),
+    bld(source=(['spherew/lib.pyx']),
         includes=['src'],
-        target='fastsht',
-        use='NUMPY ATLAS FFTW3',
+        target='lib',
+        use='NUMPY fastsht',
         features='c fc pyext cshlib')
 
     bld(source=(['spherew/psht.pyx']),
@@ -117,20 +129,22 @@ def build(bld):
     ##     use='NUMPY MKL',
     ##     features='c pyext cshlib')
 
+    #
+    # Standalone C programs
+    #
 
-    bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in']),
+    bld(source=['bench/shbench.c'],
         includes=['src'],
-        install_path='bin',
         target='shbench',
-        use='ATLAS FFTW3 RT PSHT OPENMP',
+        use='RT PSHT OPENMP fastsht',
         features='cprogram c')
 
     if bld.env.HAS_PERFTOOLS:
-        bld(source=(['bench/shbench.c', 'src/fastsht.c', 'src/butterfly.c.in']),
+        bld(source=(['bench/shbench.c']),
             includes=['src'],
             install_path='bin',
             target='shbench-prof',
-            use='ATLAS FFTW3 RT PSHT OPENMP PERFTOOLS',
+            use='RT PSHT OPENMP PERFTOOLS fastsht',
             features='cprogram c')
 
 from waflib.Configure import conf

@@ -13,7 +13,7 @@ from numpy.testing import assert_almost_equal
 from cPickle import dumps, loads
 
 from ..fastsht import *
-from .. import fastsht, healpix, psht
+from .. import lib, healpix, psht
 from ..roots import associated_legendre_roots
 from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
 from cmb.maps import *
@@ -142,6 +142,6 @@ def test_interpolation():
     
 
 def test_healpix_phi0():
-    phi0s = fastsht._get_healpix_phi0s(16)
+    phi0s = lib._get_healpix_phi0s(16)
     yield assert_almost_equal, phi0s, healpix.get_ring_phi0(16)
 

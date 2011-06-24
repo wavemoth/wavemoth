@@ -449,7 +449,7 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
   {
     double complex *g_m;
     double *output_ring;
-    int iring, imap, j, N;
+    int iring, imap, j, k, N;
     imap = 0;
     for (imap = 0; imap < plan->nmaps; ++imap) {
 #pragma omp for schedule(dynamic, 16) nowait
@@ -457,6 +457,10 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
         g_m = (double complex*)plan->work + imap * work_stride + (1 + mmax) * iring;
         N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
         phase_shift_ring_inplace(mmax, g_m, grid->phi0s[iring]);
+        /* Zero the rest of the array. TODO TODO: Get rid of the -2. */
+        for (k = mmax - 2; k < N / 2 + 1; ++k) {
+          g_m[k] = 0;
+        }
         output_ring = plan->output + imap * npix + plan->grid->ring_offsets[iring];
         fftw_execute_dft_c2r(plan->fft_plans[iring], g_m, output_ring);
       }

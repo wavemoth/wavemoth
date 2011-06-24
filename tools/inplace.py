@@ -25,7 +25,7 @@ from waflib.TaskGen import after_method, before_method, feature, taskgen_method,
 @feature('cshlib', 'fcshlib', 'pyext')
 @after_method('process_source')
 @before_method('propagate_uselib_vars', 'apply_link', 'init_pyext')
-def apply_inplace_install_path(self):
+def apply_inplace_install_path_shlib(self):
     if self.env['INPLACE_INSTALL'] and not getattr(self, 'install_path', None):
         if 'pyext' in self.features:
             # Scan sources for likely position of extension source
@@ -47,6 +47,12 @@ def apply_inplace_install_path(self):
             self.install_path = self.bld.srcnode.make_node('lib').abspath()
             if not getattr(self, 'rpath', None):
                 self.rpath = '${ORIGIN}'
+
+@feature('cprogram')
+@before_method('process_source')
+def apply_inplace_install_path_cprogram(self):
+    self.install_path = self.bld.srcnode.make_node('bin').abspath()
+    self.rpath = '${ORIGIN}/../lib'
 
 def options(self):
     self.add_option('--inplace', action='store_true',

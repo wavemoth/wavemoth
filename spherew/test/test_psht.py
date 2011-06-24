@@ -8,7 +8,7 @@ def test_basic():
     Nside = 16
     lmax = 2 * Nside
     T = PshtMmajorHealpix(lmax=32, Nside=16, nmaps=nmaps)
-    alm = np.zeros(((lmax + 1)**2, nmaps), dtype=np.complex128)
+    alm = np.zeros((((lmax + 1)*(lmax+2))//2, nmaps), dtype=np.complex128)
     alm[lm_to_idx_mmajor(1, 1, lmax), :] = 1 + 2j
     alm[:, 0] *= 1
     alm[:, 1] *= 1

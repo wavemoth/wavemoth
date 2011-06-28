@@ -21,6 +21,7 @@ def options(opt):
                    '(NOTE: must be configured with PIC)')
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
+    opt.add_option('--no-openmp', action='store_true')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -68,8 +69,9 @@ def configure(conf):
     conf.env.LIB_RT = ['rt']
     conf.env.LIB_MKL = ['mkl_rt']
 
-    conf.env.CFLAGS_OPENMP = ['-fopenmp']
-    conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
+    if not conf.options.no_openmp:
+        conf.env.CFLAGS_OPENMP = ['-fopenmp']
+        conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
     
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']

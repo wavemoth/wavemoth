@@ -204,7 +204,20 @@ class RootNode(object):
         return (self.S_node.size() +
                 sum(np.prod(block.shape) for block in self.D_blocks))
 
+    def get_multilevel_stats(self, out=None):
+        """
+        Returns two arrays:
+         - The interpolation block sizes at each level (in # of floats).
+         - The size of remainder matrices, if compression was stopped
+           at this level.
+
+        The first element in each list corresponds to the level of self.
+        """
+        raise NotImplementedError()
+        
+
     def get_stats(self):
+        # Todo: rename to __repr__ or something...
         if self.nrows == 0 or self.ncols == 0:
             return "empty"
         Plms_size = sum(np.prod(block.shape) for block in self.D_blocks)
@@ -237,6 +250,9 @@ class InterpolationBlock(object):
         write_array(stream, self.interpolant)
 
     def apply(self, x):
+        if len(self.filter) == 0:
+            assert x.shape[0] == 0
+            return x
         y = x[self.filter == 0, :]
         y += np.dot(self.interpolant, x[self.filter == 1, :])
         return y
@@ -370,9 +386,36 @@ def partition_columns(X, numlevels):
         return (partition_columns(X[:, :hmid], numlevels - 1) +
                 partition_columns(X[:, hmid:], numlevels - 1))
 
-def butterfly_compress(A, min_rows=16, eps=1e-10):
-    numlevels = get_number_of_levels(A.shape[0], min_rows)
-    B_list = partition_columns(A, numlevels)
+def partition_columns_given_width(A, column_width):
+    # In addition to splitting up the array, we also need to insert
+    # empty columns to match a power of 2. We start by spliting
+    # the matrix; divide the residual columns over the last two blocs.
+    blocks = []
+
+def pad_with_empty_columns(blocks):
+    n = len(blocks)
+    target_n = 1
+    while n > target_n:
+        target_n *= 2
+    to_add = target_n - n
+    result = []
+    for block in blocks:
+        result.append(block)
+        if to_add > 0:
+            result.append(block[:, -1:-1])
+            to_add -= 1
+    return result
+
+def butterfly_compress(A, partition=None, min_rows=None, eps=1e-10):
+    if min_rows is not None:
+        if not isinstance(A, np.ndarray):
+            raise ValueError()
+        numlevels = get_number_of_levels(A.shape[0], min_rows)
+        B_list = partition_columns(A, numlevels)
+    else:
+        if not isinstance(A, list):
+            raise ValueError()
+        B_list = pad_with_empty_columns(A)
     diagonal_blocks, S_tree = butterfly_core(B_list, eps)
     if isinstance(S_tree, IdentityNode):
         n = S_tree.ncols

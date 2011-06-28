@@ -18,23 +18,24 @@ def plot_map(m):
     from cmb.maps import pixel_sphere_map
     pixel_sphere_map(m[0, :]).plot()
 
-Nsides = [64, 128, 256]
-m_fractions = [0, 0.25, 0.45, 0.9, 1]
+Nsides = [16]#64, 128, 256]
+#m_fractions = [0, 0.25, 0.45, 0.9, 1]
 
 plt.clf()
 
-min_rows = 128
-eps = 1e-15
+min_rows = 129
+eps = 1e-10
 
 for Nside in Nsides:
-    lmax = 2 * Nside
+    lmax = 30#2 * Nside
     odd = 1
 
-    for p in m_fractions:
-        m = int(p * lmax)
+    for m in [20]:#range(lmax + 1):
+#        m = int(p * lmax)
         
         nodes = get_ring_thetas(Nside, positive_only=True)
-        P = compute_normalized_associated_legendre(m, nodes, lmax)[:, odd::2]
+        P = compute_normalized_associated_legendre(m, nodes, lmax,
+                                                   epsilon=1e-30)[:, odd::2]
         print P.shape
         C = butterfly_compress(P, min_rows=min_rows, eps=eps)
         print C.get_stats()

@@ -406,7 +406,7 @@ def pad_with_empty_columns(blocks):
             to_add -= 1
     return result
 
-def butterfly_compress(A, partition=None, min_rows=None, eps=1e-10):
+def butterfly_compress(A, partition=None, min_rows=16, eps=1e-10):
     if min_rows is not None:
         if not isinstance(A, np.ndarray):
             raise ValueError()

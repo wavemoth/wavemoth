@@ -406,12 +406,12 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
 void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
                                           double complex *g_m_even,
                                           double complex *g_m_odd) {
-  bfm_index_t mmax, nrings, iring, mid_ring, imap;
+  bfm_index_t mmax, nrings, iring, mid_ring, imap, idx_top, idx_bottom;
   double complex q_top, q_bottom;
   double *output;
   int nmaps = plan->nmaps;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
-  bfm_index_t n, ring_start, ring_start_top, ring_start_bottom, ring_stop, j, jp;
+  bfm_index_t n, j, jp;
   bfm_index_t npix = 12 * plan->Nside * plan->Nside;
   double *phi0s = plan->grid->phi0s;
   double cos_phi, sin_phi;
@@ -430,12 +430,7 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
      For some rings, mmax < n/2, while for others, mmax > n/2. In the
      former case one must pad with zeros, whereas in the other case,
      the signal must be wrapped around. Let q_m be the phases, and let
-     q_m = 0 for |m| > mmax. Since the exponential function is
-     periodic:
-
-         e^{i * k * 2 * \pi * j / n} = e^{i * k * 2 * \pi (t * n + j) / n}
-
-     for all natural numbers t, we have
+     q_m = 0 for |m| > mmax. Since e^{ik} is periodic, we have
 
          \sum_{m=-\infty}^\infty q_m e^{i * k * 2 * \pi * m / n} =
          
@@ -454,58 +449,52 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
      treatment necesarry.
   */
 
-
-  /*
-  int j = 0;
-  double complex z;
-  for (j = 1; j != n / 2; ++j) {
-    z = ring[j] + I * ring[n - j];
-    z *= (cos(j * phi0) + I * sin(j * phi0));
-    ring[j] = creal(z);
-    ring[n - j] = cimag(z);
-  }
-
-*/
-
   for (iring = 0; iring < mid_ring + 1; ++iring) {
-    ring_start_top = ring_offsets[mid_ring - iring];
-    n = ring_offsets[mid_ring - iring + 1] - ring_start_top;
-    ring_start_bottom = ring_offsets[mid_ring + iring];
+    n = ring_offsets[mid_ring - iring + 1] - ring_offsets[mid_ring - iring];
+
     cos_phi = cos(m * phi0s[mid_ring + iring]);
     sin_phi = sin(m * phi0s[mid_ring + iring]);
-    j = m % n;
+
     for (imap = 0; imap != nmaps; ++imap) {
+      int j1, j2;
+      double complex q_top_1, q_top_2, q_bottom_1, q_bottom_2;
+      idx_top = imap * npix + ring_offsets[mid_ring - iring];
+      idx_bottom = imap * npix + ring_offsets[mid_ring + iring];
+
       /* Merge even/odd, changing the sign of odd part on bottom half */
       q_top = g_m_even[iring * nmaps + imap] + g_m_odd[iring * nmaps + imap];
       q_bottom = g_m_even[iring * nmaps + imap] - g_m_odd[iring * nmaps + imap];
 
-      /* Phase-shift the coefficient before the data is reduced away
-         and can no longer be shifted into view. */
+      /* Phase-shift the coefficients */
       q_top *= cos_phi + I * sin_phi;
       q_bottom *= cos_phi + I * sin_phi;
 
-      jp = j;
-      if (j >= n / 2) {
-        if (j == n / 2) {
-          /* We have to drop the imaginary part. */
-          q_top = creal(q_top);
-          q_bottom = creal(q_bottom);
-        } else {
-          /* When wrapped we end up at a negative m >= -n/2; turn it to a
-             positive m <= n/2. */
-          jp = n - j;
-          q_top = conj(q_top);
-          q_bottom = conj(q_bottom);
+      q_top_1 = q_top;
+      q_top_2 = conj(q_top_1);
+      q_bottom_1 = q_bottom;
+      q_bottom_2 = conj(q_bottom_1);
+
+      j1 = m % n;
+      j2 = (100 * n - m) % n;
+
+      if (j1 <= n / 2) {
+        output[idx_top + j1] += creal(q_top_1);
+        if (j1 > 0) output[idx_top + n - j1] += cimag(q_top_1);
+        if (iring > 0) {
+          output[idx_bottom + j1] += creal(q_bottom_1);
+          if (j1 > 0) output[idx_bottom + n - j1] += cimag(q_bottom_1);
+        }
+      }
+      if (m != 0 && j2 <= n / 2) {
+        output[idx_top + j2] += creal(q_top_2);
+        if (j2 > 0) output[idx_top + n - j2] += cimag(q_top_2);
+        if (iring > 0) {
+          output[idx_bottom + j2] += creal(q_bottom_2);
+          if (j2 > 0) output[idx_bottom + n - j2] += cimag(q_bottom_2);
         }
       }
 
-      output[imap * npix + ring_start_top + jp] += creal(q_top);
-      if (iring > 0) output[imap * npix + ring_start_bottom + jp] += creal(q_bottom);
-      if (jp > 0) {
-        output[imap * npix + ring_start_top + n - jp] += cimag(q_top);
-        if (iring > 0) output[imap * npix + ring_start_bottom + n - jp] += cimag(q_bottom);
-      }
-    }
+   }
   }
 }
 

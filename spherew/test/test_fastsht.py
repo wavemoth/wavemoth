@@ -21,7 +21,7 @@ from ..healpix import get_ring_pixel_counts
 from cmb.maps import *
 
 do_plot = bool(os.environ.get('P', False))
-Nside = 16
+Nside = 4
 lmax = 2 * Nside
 
 def plot_map(m, title=None):
@@ -89,7 +89,7 @@ def test_merge_even_odd_and_transpose():
 
     rings = doit(2)
     #for r in rings: print r
-    assert np.all(rings[0] == [0, 0, 8, 0]), 'imaginary part should be dropped for j=n/2'
+    assert np.all(rings[0] == [0, 0, 16, 0])
     assert np.all(rings[3] == [0, 0, 2, 0, 0, 0, 4, 0])
 
     rings = doit(7)

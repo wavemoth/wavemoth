@@ -281,13 +281,13 @@ void fastsht_release_resource(precomputation_t *data) {
 }
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
-                                     double *input, double *output, double *work,
+                                     double *input, double *output,
                                      int ordering, char *resource_filename) {
   fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
   int nrings, iring;
   int out_Nside;
   fastsht_grid_info *grid;
-  bfm_index_t work_stride = 1 + mmax, start, stop;
+  bfm_index_t start, stop;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
 
   if (resource_filename != NULL) {
@@ -309,7 +309,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->type = PLANTYPE_HEALPIX;
   plan->input = input;
   plan->output = output;
-  plan->work = work;
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
 
@@ -408,11 +407,9 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
                                           double complex *g_m_even,
                                           double complex *g_m_odd) {
   bfm_index_t mmax, nrings, iring, mid_ring, imap;
-  double complex *work;
   double complex q_top, q_bottom;
   double *output;
   int nmaps = plan->nmaps;
-  bfm_index_t work_stride;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
   bfm_index_t n, ring_start, ring_start_top, ring_start_bottom, ring_stop, j, jp;
   bfm_index_t npix = 12 * plan->Nside * plan->Nside;
@@ -423,11 +420,7 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
   mmax = plan->mmax;
   mid_ring = plan->grid->mid_ring;
   nrings = plan->grid->nrings;
-  work = (complex double*)plan->work;
   output = plan->output;
-  /* Add together parts and .  */
-  work_stride = (2 * mid_ring + 1) * (mmax + 1);
-
   /* We take the even and odd parts for the given m, merge then, and
      distribute it to plan->output. Each ring in output is kept in the
      FFTW half-complex format:
@@ -517,25 +510,17 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
-  fastsht_grid_info *grid = plan->grid;
-  int mmax = plan->mmax;
-  size_t work_stride = (2 * plan->grid->mid_ring + 1) * (mmax + 1);
   size_t npix = plan->grid->npix;
   double *output = plan->output;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
-  double *phi0s = plan->grid->phi0s;
 #pragma omp parallel
   {
-    double complex *g_m;
     double *ring_data;
-    int iring, imap, j, k, N;
-    imap = 0;
+    int iring, imap;
     for (imap = 0; imap < plan->nmaps; ++imap) {
 #pragma omp for schedule(dynamic, 16) nowait
       for (iring = ring_start; iring < ring_end; ++iring) {
         ring_data = output + imap * npix + ring_offsets[iring];
-        /*        phase_shift_ring_inplace(ring_offsets[iring + 1] - ring_offsets[iring],
-                  ring_data, phi0s[iring]);*/
         fftw_execute_r2r(plan->fft_plans[iring], ring_data, ring_data);
       }
     }

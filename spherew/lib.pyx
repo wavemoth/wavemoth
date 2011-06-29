@@ -13,7 +13,7 @@ cdef extern from "fastsht.h":
     cdef struct _fastsht_plan:
         int type_ "type"
         int lmax, mmax
-        double complex *output, *input, *work                
+        double complex *output, *input
         int Nside
 
     ctypedef _fastsht_plan *fastsht_plan
@@ -24,7 +24,6 @@ cdef extern from "fastsht.h":
                                          int nmaps,
                                          double *input,
                                          double *output,
-                                         double *work,
                                          int ordering,
                                          char *resourcename)
 
@@ -54,13 +53,12 @@ _resource_dir = b"/home/dagss/code/spherew/resources"
 
 cdef class ShtPlan:
     cdef fastsht_plan plan
-    cdef readonly object input, output, work
+    cdef readonly object input, output
     cdef public int Nside, lmax
     
     def __cinit__(self, int Nside, int lmax, int mmax,
                   np.ndarray[double complex, ndim=2, mode='c'] input,
                   np.ndarray[double, ndim=2, mode='c'] output,
-                  np.ndarray[double complex, ndim=2, mode='c'] work,
                   ordering, phase_shifts=True):
         global _configured
         cdef int flags
@@ -70,8 +68,7 @@ cdef class ShtPlan:
             raise ValueError("Invalid ordering: %s" % ordering)
         self.input = input
         self.output = output
-        self.work = work
-        if not (input.shape[1] == output.shape[0] == work.shape[0]):
+        if not (input.shape[1] == output.shape[0]):
             raise ValueError("Nonconforming arrays")
 
         if not _configured:
@@ -80,7 +77,7 @@ cdef class ShtPlan:
         
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],
                                             <double*>input.data, <double*>output.data,
-                                            <double*>work.data, flags, NULL)
+                                            flags, NULL)
         self.Nside = Nside
         self.lmax = lmax
         if not phase_shifts:

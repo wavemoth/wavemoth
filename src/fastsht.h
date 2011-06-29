@@ -28,7 +28,7 @@ Driver functions. Stable API.
 void fastsht_configure(char *resource_dir);
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
-                                     double *input, double *output, double *work,
+                                     double *input, double *output,
                                      int ordering, char *resource_filename);
 
 void fastsht_destroy_plan(fastsht_plan plan);

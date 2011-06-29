@@ -72,14 +72,14 @@ static void snftime(char *buf, size_t n, double time) {
 Butterfly SHT benchmark
 */
 
-double *sht_input, *sht_output, *sht_work;
+double *sht_input, *sht_output;
 fastsht_plan sht_plan;
 int sht_nmaps;
 int sht_m_stride = 1;
 size_t *sht_mstart;
 
 void setup_sht_buffers() {
-  /* Allocate input, output and work -- in m-major mode with some m's dropped */
+  /* Allocate input, output -- in m-major mode with some m's dropped */
   int m;
   size_t pos;
   pos = 0;
@@ -94,14 +94,12 @@ void setup_sht_buffers() {
   }
   sht_input = zeros(pos * 2 * sht_nmaps);
   sht_output = zeros(12 * Nside * Nside * sht_nmaps);
-  sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2 * sht_nmaps);
 }
 
 void free_sht_buffers() {
   free(sht_mstart);
   free(sht_input);
   free(sht_output);
-  free(sht_work);
 }
 
 void execute_sht() {
@@ -126,9 +124,8 @@ void setup_sht() {
 
   sht_input = zeros((lmax + 1) * (lmax + 1) * 2 * nmaps);
   sht_output = zeros(12 * Nside * Nside * nmaps);
-  sht_work = zeros((lmax + 1) * (4 * Nside - 1) * 2 * nmaps);
   sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, sht_input,
-                                     sht_output, sht_work, FASTSHT_MMAJOR,
+                                     sht_output, FASTSHT_MMAJOR,
                                      sht_resourcefile);
 
   /* Export FFTW wisdom generated during planning */

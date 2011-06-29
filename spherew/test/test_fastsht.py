@@ -34,8 +34,7 @@ def lm_to_idx_mmajor(l, m):
 def make_plan(nmaps, Nside=Nside, lmax=lmax, **kw):
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((nmaps, 12*Nside**2))
-    work = np.zeros((nmaps, (lmax + 1) * (4 * Nside - 1)), dtype=np.complex128)
-    plan = ShtPlan(Nside, lmax, lmax, input, output, work, 'mmajor', **kw)
+    plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor', **kw)
 
     return plan
 

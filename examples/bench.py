@@ -24,9 +24,7 @@ J = 200
 
 input = np.zeros((lmax + 1)**2, dtype=np.complex128)
 output = np.zeros(12*Nside**2)
-work = np.zeros((lmax + 1) * (4 * Nside - 1), dtype=np.complex128)
-plan = ShtPlan(Nside, lmax, lmax, input, output,
-               work.view(np.double), 'mmajor')
+plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor')
 
 
 from cmb.maps import harmonic_sphere_map

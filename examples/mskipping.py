@@ -30,10 +30,9 @@ K_without = 5
 
 input = np.zeros(((lmax + 1) * (lmax + 2) // 2, nmaps), dtype=np.complex128)
 output = np.zeros((nmaps, 12 * Nside**2))
-work = np.zeros((nmaps, (lmax + 1) * (4 * Nside - 1)), dtype=np.complex128)
 
 plan = ShtPlan(Nside, lmax, lmax, input, output,
-               work, 'mmajor')
+               'mmajor')
 
 
 t_with = np.zeros(J)

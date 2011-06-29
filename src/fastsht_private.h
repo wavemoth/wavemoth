@@ -39,7 +39,7 @@ struct _fastsht_plan {
   int type;
   int lmax, mmax;
   int nmaps;
-  double *output, *input, *work;
+  double *output, *input;
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
@@ -47,10 +47,6 @@ struct _fastsht_plan {
   int Nside;
 };
 
-/*
-Goes from plan->input to plan->work_g_m_even/odd; that is, evaluate
-g_m(theta) in the Ass. Legendre roots for the given m and odd.
-*/
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, double complex *work_a_l, double complex *output);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,

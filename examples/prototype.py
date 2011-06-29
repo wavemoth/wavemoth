@@ -104,8 +104,7 @@ def alm2map(m, a_l, Nside):
 
     from spherew.fastsht import ShtPlan
     fake_input = np.zeros(1, dtype=np.cdouble)
-    g_m_theta = g_m_theta.reshape((4 * Nside - 1) * (lmax + 1)).view(np.double)
-    plan = ShtPlan(Nside, lmax, lmax, fake_input, map, g_m_theta, 'mmajor')
+    plan = ShtPlan(Nside, lmax, lmax, fake_input, map, 'mmajor')
     plan.perform_backward_ffts(0, 4 * Nside - 1)
     return map
 

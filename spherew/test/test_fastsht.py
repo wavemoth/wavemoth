@@ -16,43 +16,94 @@ from ..fastsht import *
 from .. import lib, healpix, psht
 from ..roots import associated_legendre_roots
 from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
+from ..healpix import get_ring_pixel_counts
+
 from cmb.maps import *
 
 do_plot = bool(os.environ.get('P', False))
 Nside = 16
 lmax = 2 * Nside
 
+def plot_map(m, title=None):
+    from cmb.maps import pixel_sphere_map
+    pixel_sphere_map(m).plot(title=title)
+
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
-def make_plan(nmaps):
+def make_plan(nmaps, Nside=Nside, lmax=lmax, **kw):
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((nmaps, 12*Nside**2))
     work = np.zeros((nmaps, (lmax + 1) * (4 * Nside - 1)), dtype=np.complex128)
-    plan = ShtPlan(Nside, lmax, lmax, input, output, work, 'mmajor')
+    plan = ShtPlan(Nside, lmax, lmax, input, output, work, 'mmajor', **kw)
 
     return plan
 
 def test_basic():
-    nmaps = 3
+    nmaps = 1
     plan = make_plan(nmaps)
+
     plan.input[0, :] = 10
     plan.input[lm_to_idx_mmajor(1, 0), :] = np.arange(nmaps) * 30
     plan.input[lm_to_idx_mmajor(2, 1), :] = 10 + 5j
-    plan.execute()
+    output = plan.execute()
 
     y2 = psht.alm2map_mmajor(plan.input, lmax=lmax, Nside=Nside)
     if do_plot:
         for i in range(nmaps):
-            pixel_sphere_map(y2[i, :], pixel_order='ring').plot(title='FID %d' % i)
-            pixel_sphere_map(plan.output[i, :], pixel_order='ring').plot(title='%d' % i)
-#            pixel_sphere_map(plan.output[i, :] - y2[i, :], pixel_order='ring').plot(title='delta %d' % i)
+            plot_map(y2[i, :], title='FID %d' % i)
+            plot_map(plan.output[i, :], title=' %d' % i)
+            plot_map(plan.output[i, :] - y2[i, :], title='delta %d' % i)
 
         plt.show()
 
     #print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     for i in range(nmaps):
-        yield assert_almost_equal, y2[i, :], plan.output[i, :]
+        assert_almost_equal(y2[i, :], output[i, :])
+
+
+def test_merge_even_odd_and_transpose():
+    nmaps = 3
+    plan = make_plan(nmaps, Nside=2, lmax=9, phase_shifts=False)
+    counts = get_ring_pixel_counts(2)
+    # Ring counts: [4, 8, 8, 8, 8, 8, 4]
+    iring = np.arange(4)
+    g_m_even = (2 * iring + 1) + 1j * (2 * iring + 2)
+    g_m_even = np.asarray([g_m_even, 10 * g_m_even, 100 * g_m_even]).T.copy()
+    g_m_odd = 1 * np.ones(4) + 2j * np.ones(4)
+    g_m_odd = np.asarray([g_m_odd, 10 * g_m_odd, 100 * g_m_odd]).T.copy()
+
+    def doit(m):
+        plan.output[...] = 0
+        plan.merge_even_odd_and_transpose(m, g_m_even, g_m_odd)
+        # Check that multiple maps work, then focus on the first map in the rest
+        output = plan.output[0, :]
+#        for i in range(1, nmaps):
+#            assert_almost_equal(plan.output[i, :], 10**i * output)
+        # Assemble ring by ring
+        rings = []
+        idx = 0
+        for count in counts:
+            rings.append(output[idx:idx + count])
+            idx += count
+        return rings
+
+    rings = doit(2)
+    #for r in rings: print r
+    assert np.all(rings[0] == [0, 0, 8, 0]), 'imaginary part should be dropped for j=n/2'
+    assert np.all(rings[3] == [0, 0, 2, 0, 0, 0, 4, 0])
+
+    rings = doit(7)
+    assert np.all(rings[0] == [0, 8, 0, -10])
+    assert np.all(rings[-1] == [0, 6, 0, -6])
+    assert np.all(rings[3] == [0, 2, 0, 0, 0, 0, 0, -4])
+
+    rings = doit(9)
+    assert np.all(rings[0] == [0, 8, 0, 10])
+    assert np.all(rings[3] == [0, 2, 0, 0, 0, 0, 0, 4])
+
+    
+    
 
 def test_matmul():
     raise SkipTest("This one was written with interpolation in mind")

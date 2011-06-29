@@ -33,7 +33,10 @@ cdef extern from "fastsht.h":
     void fastsht_configure(char *resource_dir)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
     void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride)
-
+    void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
+                                              double complex *g_m_even,
+                                              double complex *g_m_odd)
+    void fastsht_disable_phase_shifting(fastsht_plan plan)
 
 cdef extern from "fastsht_private.h":
     ctypedef struct fastsht_grid_info:
@@ -52,12 +55,13 @@ _resource_dir = b"/home/dagss/code/spherew/resources"
 cdef class ShtPlan:
     cdef fastsht_plan plan
     cdef readonly object input, output, work
+    cdef public int Nside, lmax
     
     def __cinit__(self, int Nside, int lmax, int mmax,
                   np.ndarray[double complex, ndim=2, mode='c'] input,
                   np.ndarray[double, ndim=2, mode='c'] output,
                   np.ndarray[double complex, ndim=2, mode='c'] work,
-                  ordering):
+                  ordering, phase_shifts=True):
         global _configured
         cdef int flags
         if ordering == 'mmajor':
@@ -77,8 +81,10 @@ cdef class ShtPlan:
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],
                                             <double*>input.data, <double*>output.data,
                                             <double*>work.data, flags, NULL)
-        cdef np.npy_intp *shape = [lmax + 1]
-        shape[0] = 2 * Nside
+        self.Nside = Nside
+        self.lmax = lmax
+        if not phase_shifts:
+            fastsht_disable_phase_shifting(self.plan)
 
     def __dealloc__(self):
         if self.plan != NULL:
@@ -87,6 +93,7 @@ cdef class ShtPlan:
     def execute(self, int repeat=1):
         for i in range(repeat):
             fastsht_execute(self.plan)
+        return self.output
 
     def perform_backward_ffts(self, int ring_start, int ring_end):
         fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)
@@ -95,6 +102,18 @@ cdef class ShtPlan:
         cdef int k
         for k in range(repeat):
             fastsht_legendre_transform(self.plan, mstart, mstop, mstride)
+
+    def merge_even_odd_and_transpose(self, int m,
+                                     np.ndarray[double complex, ndim=2, mode='c'] g_m_even,
+                                     np.ndarray[double complex, ndim=2, mode='c'] g_m_odd):
+        if not (g_m_even.shape[0] == g_m_odd.shape[0] == 2 * self.Nside):
+            raise ValueError("Invalid array length")
+        if  not (g_m_even.shape[1] == g_m_odd.shape[1] == self.output.shape[0]):
+            raise ValueError("Does not conform with nmaps")
+        fastsht_merge_even_odd_and_transpose(self.plan, m, <double complex*>g_m_even.data,
+                                             <double complex*>g_m_odd.data)
+
+        
 
 #    def perform_matmul(self, bfm_index_t m, int odd):
 #        cdef int n = (self.plan.lmax - m) / 2, i

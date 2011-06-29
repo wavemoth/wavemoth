@@ -82,13 +82,6 @@ static char global_resource_path[MAX_RESOURCE_PATH];
 Private
 */
 
-static void phase_shift_ring_inplace(int mmax, complex double *g_m, double phi0) {
-  int m = 0;
-  for (m = 0; m != mmax; ++m) {
-    g_m[m] *= (cos(m * phi0) + I * sin(m * phi0));
-  }
-}
-
 static int read_int64(FILE *fd, int64_t *p_out, size_t n) {
   return fread(p_out, sizeof(int64_t), n, fd) == n;
 }
@@ -328,8 +321,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     start = grid->ring_offsets[iring];
     stop = grid->ring_offsets[iring + 1];
     plan->fft_plans[iring] = 
-      fftw_plan_dft_c2r_1d(stop - start, (fftw_complex*)(work + 2 * work_stride * iring),
-                           output + start, flags);
+      fftw_plan_r2r_1d(stop - start, output + start, output + start, FFTW_HC2R, flags);
   }
   return (fastsht_plan)plan;
 }
@@ -357,6 +349,9 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride) {
   int lmax = plan->lmax, nmaps = plan->nmaps, nrings_half = plan->grid->mid_ring + 1;
 
+  /* We use += to accumulate the phase information in output, so we must
+     zero it up front. */
+  memset(plan->output, 0, 12 * plan->Nside * plan->Nside * nmaps * sizeof(double));
 #pragma omp parallel
   {
     int m, odd;
@@ -366,10 +361,10 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
     work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
     work_g_m_even = memalign(16, sizeof(complex double[nmaps * nrings_half]));
     work_g_m_odd = memalign(16, sizeof(complex double[nmaps * nrings_half]));
-  
+
     /* Compute g_m(theta_i), including transpose step for now */
 #pragma omp for schedule(dynamic,1)
-    for (m = mstart; m < mstop - 2; m += mstride) { /* TODO TODO TODO */
+    for (m = mstart; m < mstop; m += mstride) {
       for (odd = 0; odd != 2; ++odd) {
         rec = plan->resources->P_matrices + 2 * m + odd;
         check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
@@ -414,28 +409,109 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
                                           double complex *g_m_odd) {
   bfm_index_t mmax, nrings, iring, mid_ring, imap;
   double complex *work;
+  double complex q_top, q_bottom;
+  double *output;
   int nmaps = plan->nmaps;
   bfm_index_t work_stride;
+  bfm_index_t *ring_offsets = plan->grid->ring_offsets;
+  bfm_index_t n, ring_start, ring_start_top, ring_start_bottom, ring_stop, j, jp;
+  bfm_index_t npix = 12 * plan->Nside * plan->Nside;
+  double *phi0s = plan->grid->phi0s;
+  double cos_phi, sin_phi;
+
   assert(plan->grid->has_equator);
   mmax = plan->mmax;
   mid_ring = plan->grid->mid_ring;
   nrings = plan->grid->nrings;
   work = (complex double*)plan->work;
-  /* Add together parts and distribute/transpose to plan->work */
-  /* Equator */
+  output = plan->output;
+  /* Add together parts and .  */
   work_stride = (2 * mid_ring + 1) * (mmax + 1);
-  for (imap = 0; imap != nmaps; ++imap) {
-    work[imap * work_stride + mid_ring * (mmax + 1) + m] = g_m_even[imap];
+
+  /* We take the even and odd parts for the given m, merge then, and
+     distribute it to plan->output. Each ring in output is kept in the
+     FFTW half-complex format:
+    
+         r_0, r_1, r_2, ..., r_{n//2}, i_{(n+1)//2 - 1}, ..., i_2, i_1
+
+     For some rings, mmax < n/2, while for others, mmax > n/2. In the
+     former case one must pad with zeros, whereas in the other case,
+     the signal must be wrapped around. Let q_m be the phases, and let
+     q_m = 0 for |m| > mmax. Since the exponential function is
+     periodic:
+
+         e^{i * k * 2 * \pi * j / n} = e^{i * k * 2 * \pi (t * n + j) / n}
+
+     for all natural numbers t, we have
+
+         \sum_{m=-\infty}^\infty q_m e^{i * k * 2 * \pi * m / n} =
+         
+         \sum_{j=0}^n
+               [ \sum_{t = -\infty}^\infty q_{t * n + j} ]
+               e^{i * k * 2 * \pi * j / n}
+
+     So the proper coefficients in the Fourier transform is to sum up
+     q_m for all m divisible by n. However, we need to treat q_m both
+     for negative and positive m (with q_{-m} = q_m^*).  Since we only
+     store one half of the coefficients in the end this complicates
+     the logic somewhat, with an extra case for when m%n > n/2.
+
+     We also process rings in pairs in order to exploit symmetry. For
+     an equator ring we simply rely on all(g_m_odd == 0), no special
+     treatment necesarry.
+  */
+
+
+  /*
+  int j = 0;
+  double complex z;
+  for (j = 1; j != n / 2; ++j) {
+    z = ring[j] + I * ring[n - j];
+    z *= (cos(j * phi0) + I * sin(j * phi0));
+    ring[j] = creal(z);
+    ring[n - j] = cimag(z);
   }
-  /* Ring-pairs */
-  for (iring = 1; iring < mid_ring + 1; ++iring) {
+
+*/
+
+  for (iring = 0; iring < mid_ring + 1; ++iring) {
+    ring_start_top = ring_offsets[mid_ring - iring];
+    n = ring_offsets[mid_ring - iring + 1] - ring_start_top;
+    ring_start_bottom = ring_offsets[mid_ring + iring];
+    cos_phi = cos(m * phi0s[mid_ring + iring]);
+    sin_phi = sin(m * phi0s[mid_ring + iring]);
+    j = m % n;
     for (imap = 0; imap != nmaps; ++imap) {
-      /* Top ring */
-      work[imap * work_stride + (mid_ring - iring) * (mmax + 1) + m] = 
-        g_m_even[iring * nmaps + imap] + g_m_odd[iring * nmaps + imap];
-      /* Bottom ring -- switch odd sign */
-      work[imap * work_stride + (mid_ring + iring) * (mmax + 1) + m] =
-        g_m_even[iring * nmaps + imap] - g_m_odd[iring * nmaps + imap];
+      /* Merge even/odd, changing the sign of odd part on bottom half */
+      q_top = g_m_even[iring * nmaps + imap] + g_m_odd[iring * nmaps + imap];
+      q_bottom = g_m_even[iring * nmaps + imap] - g_m_odd[iring * nmaps + imap];
+
+      /* Phase-shift the coefficient before the data is reduced away
+         and can no longer be shifted into view. */
+      q_top *= cos_phi + I * sin_phi;
+      q_bottom *= cos_phi + I * sin_phi;
+
+      jp = j;
+      if (j >= n / 2) {
+        if (j == n / 2) {
+          /* We have to drop the imaginary part. */
+          q_top = creal(q_top);
+          q_bottom = creal(q_bottom);
+        } else {
+          /* When wrapped we end up at a negative m >= -n/2; turn it to a
+             positive m <= n/2. */
+          j = n - j;
+          q_top = conj(q_top);
+          q_bottom = conj(q_bottom);
+        }
+      }
+
+      output[imap * npix + ring_start_top + j] += creal(q_top);
+      if (iring > 0) output[imap * npix + ring_start_bottom + j] += creal(q_bottom);
+      if (j > 0) {
+        output[imap * npix + ring_start_top + n - j] += cimag(q_top);
+        if (iring > 0) output[imap * npix + ring_start_bottom + n - j] += cimag(q_bottom);
+      }
     }
   }
 }
@@ -445,24 +521,22 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
   int mmax = plan->mmax;
   size_t work_stride = (2 * plan->grid->mid_ring + 1) * (mmax + 1);
   size_t npix = plan->grid->npix;
+  double *output = plan->output;
+  bfm_index_t *ring_offsets = plan->grid->ring_offsets;
+  double *phi0s = plan->grid->phi0s;
 #pragma omp parallel
   {
     double complex *g_m;
-    double *output_ring;
+    double *ring_data;
     int iring, imap, j, k, N;
     imap = 0;
     for (imap = 0; imap < plan->nmaps; ++imap) {
 #pragma omp for schedule(dynamic, 16) nowait
       for (iring = ring_start; iring < ring_end; ++iring) {
-        g_m = (double complex*)plan->work + imap * work_stride + (1 + mmax) * iring;
-        N = grid->ring_offsets[iring + 1] - grid->ring_offsets[iring];
-        phase_shift_ring_inplace(mmax, g_m, grid->phi0s[iring]);
-        /* Zero the rest of the array. TODO TODO: Get rid of the -2. */
-        for (k = mmax - 2; k < N / 2 + 1; ++k) {
-          g_m[k] = 0;
-        }
-        output_ring = plan->output + imap * npix + plan->grid->ring_offsets[iring];
-        fftw_execute_dft_c2r(plan->fft_plans[iring], g_m, output_ring);
+        ring_data = output + imap * npix + ring_offsets[iring];
+        /*        phase_shift_ring_inplace(ring_offsets[iring + 1] - ring_offsets[iring],
+                  ring_data, phi0s[iring]);*/
+        fftw_execute_r2r(plan->fft_plans[iring], ring_data, ring_data);
       }
     }
   }  
@@ -507,4 +581,14 @@ void fastsht_free_grid_info(fastsht_grid_info *info) {
   /* In the constructor we allocate the internal arrays as part of the
      same blob. */
   free((char*)info);
+}
+
+void fastsht_disable_phase_shifting(fastsht_plan plan) {
+  int iring;
+  /* Used for debug purposes.
+     TODO: If the grid starts to get shared across plans we need to think
+     of something else here. */
+  for (iring = 0; iring != plan->grid->nrings; ++iring) {
+    plan->grid->phi0s[iring] = 0;
+  }
 }

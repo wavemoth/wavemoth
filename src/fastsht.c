@@ -493,17 +493,17 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
         } else {
           /* When wrapped we end up at a negative m >= -n/2; turn it to a
              positive m <= n/2. */
-          j = n - j;
+          jp = n - j;
           q_top = conj(q_top);
           q_bottom = conj(q_bottom);
         }
       }
 
-      output[imap * npix + ring_start_top + j] += creal(q_top);
-      if (iring > 0) output[imap * npix + ring_start_bottom + j] += creal(q_bottom);
-      if (j > 0) {
-        output[imap * npix + ring_start_top + n - j] += cimag(q_top);
-        if (iring > 0) output[imap * npix + ring_start_bottom + n - j] += cimag(q_bottom);
+      output[imap * npix + ring_start_top + jp] += creal(q_top);
+      if (iring > 0) output[imap * npix + ring_start_bottom + jp] += creal(q_bottom);
+      if (jp > 0) {
+        output[imap * npix + ring_start_top + n - jp] += cimag(q_top);
+        if (iring > 0) output[imap * npix + ring_start_bottom + n - jp] += cimag(q_bottom);
       }
     }
   }

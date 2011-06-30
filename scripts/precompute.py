@@ -30,7 +30,8 @@ def get_c(l, m):
     d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
     return np.sqrt(n / d)
 
-def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True):
+def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True,
+              eps=1e-15):
     filename = '%s-%d' % (filename, os.getpid())
     thetas = get_ring_thetas(Nside, positive_only=True)
     for odd in [0, 1]:
@@ -77,7 +78,7 @@ def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True):
         P = compute_normalized_associated_legendre(m, grid_for_P, lmax,
                                                    epsilon=1e-30)
         P_subset = P[:, odd::2]
-        compressed = butterfly_compress(P_subset, min_rows=min_rows, eps=1e-15)
+        compressed = butterfly_compress(P_subset, min_rows=min_rows, eps=eps)
         print 'Computed m=%d of %d: %s' % (m, lmax, compressed.get_stats())
         stream = BytesIO()
         compressed.write_to_stream(stream)
@@ -106,7 +107,8 @@ def compute_with_workers(args):
     with ProcessPoolExecutor(max_workers=args.parallel) as proc:
         for m in range(0, args.lmax + 1, args.stride):
             futures.append(proc.submit(compute_m, args.target, m, args.lmax, args.Nside,
-                                       min_rows=args.min_rows, interpolate=args.interpolate))
+                                       min_rows=args.min_rows, interpolate=args.interpolate,
+                                       eps=args.tolerance))
         for fut in futures:
             fut.result()
 
@@ -178,6 +180,8 @@ parser.add_argument('--stride', type=int, default=1,
                     help='Skip m values. Results will be incorrect, '
                     'but useful for benchmarks.')
 parser.add_argument('-m', type=int, default=None, help='Evaluate for a single m')
+parser.add_argument('-e', '--tolerance', type=float, default=1e-15,
+                    help='tolerance')
 parser.add_argument('Nside', type=int, help='Nside parameter')
 parser.add_argument('target', help='target datafile')
 args = parser.parse_args()

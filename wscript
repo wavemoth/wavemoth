@@ -125,6 +125,11 @@ def build(bld):
         use='NUMPY PSHT',
         features='c pyext cshlib')
 
+    bld(source=(['spherew/_openmp.pyx']),
+        target='_openmp',
+        use='OPENMP',
+        features='c pyext cshlib')
+
     ## bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
     ##     target='fmm',
     ##     includes=['src'],

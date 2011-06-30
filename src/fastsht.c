@@ -40,7 +40,16 @@ static INLINE int imin(int a, int b) {
   return (a < b) ? a : b;
 }
 
-
+/** A more useful mod function; the result will have the same sign as
+    the divisor rather than the dividend.
+ */
+static INLINE int imod_divisorsign(int a, int b) {
+  int r;
+  assert(-7 % 4 == -3); /* Behaviour of % is implementation-defined until C99 */
+  r = a % b;
+  r += ((r != 0) & ((r ^ b) < 0)) * b;
+  return r;
+}
 
 /*
 Global storage of precomputed data.
@@ -362,13 +371,14 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
     work_g_m_odd = memalign(16, sizeof(complex double[nmaps * nrings_half]));
 
     /* Compute g_m(theta_i), including transpose step for now */
-#pragma omp for schedule(dynamic,1)
+    #pragma omp for schedule(dynamic,1)
     for (m = mstart; m < mstop; m += mstride) {
       for (odd = 0; odd != 2; ++odd) {
         rec = plan->resources->P_matrices + 2 * m + odd;
         check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
         fastsht_perform_matmul(plan, m, odd, work_a_l, odd ? work_g_m_odd : work_g_m_even);
       }
+      #pragma omp critical
       fastsht_merge_even_odd_and_transpose(plan, m, work_g_m_even, work_g_m_odd);
     }
     free(work_a_l);
@@ -475,7 +485,7 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
       q_bottom_2 = conj(q_bottom_1);
 
       j1 = m % n;
-      j2 = (100 * n - m) % n;
+      j2 = imod_divisorsign(n - m, n);
 
       if (j1 <= n / 2) {
         output[idx_top + j1] += creal(q_top_1);

@@ -11,6 +11,7 @@ from nose.tools import eq_, ok_, assert_raises
 from numpy.testing import assert_almost_equal
 
 from cPickle import dumps, loads
+import hashlib
 
 from ..fastsht import *
 from .. import lib, healpix, psht
@@ -19,6 +20,7 @@ from ..legendre import compute_normalized_associated_legendre, Plm_and_dPlm
 from ..healpix import get_ring_pixel_counts
 
 from cmb.maps import *
+from ..openmp import use_num_threads
 
 do_plot = bool(os.environ.get('P', False))
 Nside = 4
@@ -31,7 +33,9 @@ def plot_map(m, title=None):
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
-def make_plan(nmaps, Nside=Nside, lmax=lmax, **kw):
+def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
+    if lmax is None:
+        lmax = 2 * Nside
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((nmaps, 12*Nside**2))
     plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor', **kw)
@@ -59,6 +63,28 @@ def test_basic():
     #print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     for i in range(nmaps):
         assert_almost_equal(y2[i, :], output[i, :])
+
+def do_deterministic(nthreads):
+    def hash_array(x):
+        h = hashlib.md5()
+        h.update(x.data)
+        return h.hexdigest()
+
+    plan = make_plan(5, Nside=8)
+    plan.input[lm_to_idx_mmajor(10, 4)] = 1 + 1j
+    with use_num_threads(nthreads):
+        h0 = hash_array(plan.execute())
+        for i in range(2000):
+            h1 = hash_array(plan.execute())
+            assert h0 == h1, "Non-deterministic behaviour, %d threads" % nthreads
+
+def test_deterministic():
+    "Smoke-test for deterministic behaviour multi-threaded"
+    do_deterministic(16)
+
+def test_deterministic_singlethread():
+    "Smoke-test for deterministic behaviour single-threaded"
+    do_deterministic(1)
 
 
 def test_merge_even_odd_and_transpose():

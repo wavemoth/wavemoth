@@ -24,6 +24,8 @@
 #include <sys/times.h>
 #include <time.h>
 
+#include "omp.h"
+
 /*
 Every time resource format changes, we increase this, so that
 we can keep multiple resource files around and jump in git
@@ -356,35 +358,93 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 
 void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride) {
   int lmax = plan->lmax, nmaps = plan->nmaps, nrings_half = plan->grid->mid_ring + 1;
+  double complex **q_list;
+  int *ms;
+
+  const int BLOCKWIDTH = 4;
+
+  /* Parallelization: The first loop is trivially parallelizable over
+     m.  However, perform_matmul merge_even_odd_and_transpose needs to
+     be parallelized by ring, because m is taken modulo the number of
+     pixels in each ring => multiple m can end up doing "ringphases[m%n] += q[m]"
+     simultanously.
+
+     What we do is set up a block buffer for q_m, then use
+     merge_even_odd_and_transpose for block transposition.
+
+     This should play well with MPI down the road as well.
+     */
 
   /* We use += to accumulate the phase information in output, so we must
      zero it up front. */
   memset(plan->output, 0, 12 * plan->Nside * plan->Nside * nmaps * sizeof(double));
-#pragma omp parallel
+
+  #pragma omp parallel
   {
-    int m, odd;
+    /* The worksharing is wholly manual, since the parallel algorithm
+       is non-trivial.  */
+    int m, odd, thread_id, m_chunk_start, m_threadchunk_start, m_threadchunk_stop;
+    int numthreads, i_m, i_work;
+    size_t blocksize;
     m_resource_t *rec;
-    double complex *work_g_m_even, *work_g_m_odd, *work_a_l;
+    double complex *work_even, *work_odd, *work_a_l;
+    
+    numthreads = omp_get_num_threads();
+    thread_id = omp_get_thread_num();
+    #pragma omp master
+    {
+      ms = malloc(sizeof(int[BLOCKWIDTH * numthreads]));
+      q_list = malloc(sizeof(void*[2 * BLOCKWIDTH * numthreads]));
+    } 
+
+    #pragma omp barrier
 
     work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
-    work_g_m_even = memalign(16, sizeof(complex double[nmaps * nrings_half]));
-    work_g_m_odd = memalign(16, sizeof(complex double[nmaps * nrings_half]));
+    work_even = memalign(16, sizeof(double complex[nmaps * nrings_half * BLOCKWIDTH]));
+    work_odd = memalign(16, sizeof(double complex[nmaps * nrings_half * BLOCKWIDTH]));
 
-    /* Compute g_m(theta_i), including transpose step for now */
-    #pragma omp for schedule(dynamic,1)
-    for (m = mstart; m < mstop; m += mstride) {
-      for (odd = 0; odd != 2; ++odd) {
-        rec = plan->resources->P_matrices + 2 * m + odd;
-        check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
-        fastsht_perform_matmul(plan, m, odd, work_a_l, odd ? work_g_m_odd : work_g_m_even);
+    for (m_chunk_start = mstart;
+         m_chunk_start < mstop;
+         m_chunk_start += mstride * BLOCKWIDTH * numthreads) {
+      m_threadchunk_start = m_chunk_start + BLOCKWIDTH * thread_id;
+      m_threadchunk_stop = imin(m_threadchunk_start + BLOCKWIDTH, mstop);
+      /* Compute into the buffer */
+      for (i_m = BLOCKWIDTH * thread_id, m = m_threadchunk_start, i_work = 0;
+           m < m_threadchunk_stop;
+           m += mstride, ++i_m, ++i_work) {
+        //        printf("%d: ms[%d] = %d\n", thread_id, i_m, m);
+        ms[i_m] = m;
+        for (odd = 0; odd < 2; ++odd) {
+          double complex *work = odd ? work_odd : work_even;
+          work += i_work * nmaps * nrings_half;
+          q_list[2 * i_m + odd] = work;
+          rec = plan->resources->P_matrices + 2 * m + odd;
+          check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
+          fastsht_perform_matmul(plan, m, odd, work_a_l, work);
+        }
       }
-      #pragma omp critical
-      fastsht_merge_even_odd_and_transpose(plan, m, work_g_m_even, work_g_m_odd);
+      /* Mark m's that are skipped/beyond the end with -1. This
+         interface with assemble_ring facilitates improving 
+         task distribution without changing what is cached in
+         each CPU. */
+      for (; i_m < BLOCKWIDTH * (thread_id + 1); ++i_m) {
+        ms[i_m] = -1;
+        q_list[2 * i_m] = q_list[2 * i_m + 1] = NULL;
+      }
+
+      /* Do the transposition and assembly */
+      //      printf("%d: BEFORE\n", thread_id);
+      #pragma omp barrier
+      //printf("%d: AFTER\n", thread_id);
+      fastsht_assemble_rings_omp_worker(plan, BLOCKWIDTH * numthreads, ms, q_list);
     }
+
     free(work_a_l);
-    free(work_g_m_even);
-    free(work_g_m_odd);
-  }
+    free(work_even);
+    free(work_odd);
+  } /* parallel */
+  free(ms);
+  free(q_list);
 }
 
 void fastsht_execute(fastsht_plan plan) {
@@ -413,24 +473,41 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
               nrows, ncols, 2 * plan->nmaps);
 }
 
-void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
-                                          double complex *g_m_even,
-                                          double complex *g_m_odd) {
-  bfm_index_t mmax, nrings, iring, mid_ring, imap, idx_top, idx_bottom;
-  double complex q_top, q_bottom;
+void fastsht_assemble_rings(fastsht_plan plan,
+                            int ms_len, int *ms,
+                            double complex **q_list) {
+  /* The routine is made for being called by a team of threads;
+     this wrapper is here so that one can call the worker directly
+     if one is already within an parallel section. */
+  #pragma omp parallel
+  {
+    fastsht_assemble_rings_omp_worker(plan, ms_len, ms, q_list);  
+  }
+}
+
+void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
+                                       int ms_len, int *ms,
+                                       double complex **q_list) {
+  /* NOTE: This function can be called from within an OpenMP parallel section. */
+  bfm_index_t mmax, nrings, mid_ring;
   double *output;
   int nmaps = plan->nmaps;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
-  bfm_index_t n, j, jp;
   bfm_index_t npix = 12 * plan->Nside * plan->Nside;
   double *phi0s = plan->grid->phi0s;
+
+
+  int iring, i_m, m, imap;
   double cos_phi, sin_phi;
+  double complex *q_even, *q_odd;
+  size_t n, idx_top, idx_bottom;
 
   assert(plan->grid->has_equator);
   mmax = plan->mmax;
   mid_ring = plan->grid->mid_ring;
   nrings = plan->grid->nrings;
   output = plan->output;
+
   /* We take the even and odd parts for the given m, merge then, and
      distribute it to plan->output. Each ring in output is kept in the
      FFTW half-complex format:
@@ -459,52 +536,58 @@ void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
      treatment necesarry.
   */
 
+  #pragma omp for schedule(dynamic, 4)
   for (iring = 0; iring < mid_ring + 1; ++iring) {
     n = ring_offsets[mid_ring - iring + 1] - ring_offsets[mid_ring - iring];
 
-    cos_phi = cos(m * phi0s[mid_ring + iring]);
-    sin_phi = sin(m * phi0s[mid_ring + iring]);
+    for (i_m = 0; i_m < ms_len; ++i_m) {
+      m = ms[i_m];
+      q_even = q_list[2 * i_m];
+      q_odd = q_list[2 * i_m + 1];
+      if (q_even == NULL) continue;
+        
+      cos_phi = cos(m * phi0s[mid_ring + iring]);
+      sin_phi = sin(m * phi0s[mid_ring + iring]);
 
-    for (imap = 0; imap != nmaps; ++imap) {
-      int j1, j2;
-      double complex q_top_1, q_top_2, q_bottom_1, q_bottom_2;
-      idx_top = imap * npix + ring_offsets[mid_ring - iring];
-      idx_bottom = imap * npix + ring_offsets[mid_ring + iring];
+      for (imap = 0; imap != nmaps; ++imap) {
+        int j1, j2;
+        double complex q_top_1, q_top_2, q_bottom_1, q_bottom_2;
+        idx_top = imap * npix + ring_offsets[mid_ring - iring];
+        idx_bottom = imap * npix + ring_offsets[mid_ring + iring];
+        
+        /* Merge even/odd, changing the sign of odd part on bottom half */
+        q_top_1 = q_even[iring * nmaps + imap] + q_odd[iring * nmaps + imap];
+        q_bottom_1 = q_even[iring * nmaps + imap] - q_odd[iring * nmaps + imap];
 
-      /* Merge even/odd, changing the sign of odd part on bottom half */
-      q_top = g_m_even[iring * nmaps + imap] + g_m_odd[iring * nmaps + imap];
-      q_bottom = g_m_even[iring * nmaps + imap] - g_m_odd[iring * nmaps + imap];
+        /* Phase-shift the coefficients */
+        q_top_1 *= cos_phi + I * sin_phi;
+        q_bottom_1 *= cos_phi + I * sin_phi;
 
-      /* Phase-shift the coefficients */
-      q_top *= cos_phi + I * sin_phi;
-      q_bottom *= cos_phi + I * sin_phi;
+        q_top_2 = conj(q_top_1);
+        q_bottom_2 = conj(q_bottom_1);
 
-      q_top_1 = q_top;
-      q_top_2 = conj(q_top_1);
-      q_bottom_1 = q_bottom;
-      q_bottom_2 = conj(q_bottom_1);
+        j1 = m % n;
+        j2 = imod_divisorsign(n - m, n);
 
-      j1 = m % n;
-      j2 = imod_divisorsign(n - m, n);
-
-      if (j1 <= n / 2) {
-        output[idx_top + j1] += creal(q_top_1);
-        if (j1 > 0) output[idx_top + n - j1] += cimag(q_top_1);
-        if (iring > 0) {
-          output[idx_bottom + j1] += creal(q_bottom_1);
-          if (j1 > 0) output[idx_bottom + n - j1] += cimag(q_bottom_1);
+        if (j1 <= n / 2) {
+          output[idx_top + j1] += creal(q_top_1);
+          if (j1 > 0) output[idx_top + n - j1] += cimag(q_top_1);
+          if (iring > 0) {
+            output[idx_bottom + j1] += creal(q_bottom_1);
+            if (j1 > 0) output[idx_bottom + n - j1] += cimag(q_bottom_1);
+          }
         }
-      }
-      if (m != 0 && j2 <= n / 2) {
-        output[idx_top + j2] += creal(q_top_2);
-        if (j2 > 0) output[idx_top + n - j2] += cimag(q_top_2);
-        if (iring > 0) {
-          output[idx_bottom + j2] += creal(q_bottom_2);
-          if (j2 > 0) output[idx_bottom + n - j2] += cimag(q_bottom_2);
+        if (m != 0 && j2 <= n / 2) {
+          output[idx_top + j2] += creal(q_top_2);
+          if (j2 > 0) output[idx_top + n - j2] += cimag(q_top_2);
+          if (iring > 0) {
+            output[idx_bottom + j2] += creal(q_bottom_2);
+            if (j2 > 0) output[idx_bottom + n - j2] += cimag(q_bottom_2);
+          }
         }
-      }
 
-   }
+      }
+    }
   }
 }
 

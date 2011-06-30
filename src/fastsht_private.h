@@ -49,9 +49,12 @@ struct _fastsht_plan {
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, double complex *work_a_l, double complex *output);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
-void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
-                                          double complex *g_m_even,
-                                          double complex *g_m_odd);
+void fastsht_assemble_rings(fastsht_plan plan,
+                            int ms_len, int *ms,
+                            double complex **q_list);
+void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
+                                       int ms_len, int *ms,
+                                       double complex **q_list);
 
 void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride);
 

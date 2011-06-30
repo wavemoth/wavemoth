@@ -100,7 +100,7 @@ def test_merge_even_odd_and_transpose():
 
     def doit(m):
         plan.output[...] = 0
-        plan.merge_even_odd_and_transpose(m, g_m_even, g_m_odd)
+        plan.assemble_rings(m, g_m_even, g_m_odd)
         # Check that multiple maps work, then focus on the first map in the rest
         output = plan.output[0, :]
 #        for i in range(1, nmaps):

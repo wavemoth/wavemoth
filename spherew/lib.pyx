@@ -32,9 +32,9 @@ cdef extern from "fastsht.h":
     void fastsht_configure(char *resource_dir)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
     void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride)
-    void fastsht_merge_even_odd_and_transpose(fastsht_plan plan, int m,
-                                              double complex *g_m_even,
-                                              double complex *g_m_odd)
+    void fastsht_assemble_rings(fastsht_plan plan,
+                                int ms_len, int *ms,
+                                double complex **q_list)
     void fastsht_disable_phase_shifting(fastsht_plan plan)
 
 cdef extern from "fastsht_private.h":
@@ -100,15 +100,17 @@ cdef class ShtPlan:
         for k in range(repeat):
             fastsht_legendre_transform(self.plan, mstart, mstop, mstride)
 
-    def merge_even_odd_and_transpose(self, int m,
-                                     np.ndarray[double complex, ndim=2, mode='c'] g_m_even,
-                                     np.ndarray[double complex, ndim=2, mode='c'] g_m_odd):
-        if not (g_m_even.shape[0] == g_m_odd.shape[0] == 2 * self.Nside):
+    def assemble_rings(self, int m,
+                       np.ndarray[double complex, ndim=2, mode='c'] q_even,
+                       np.ndarray[double complex, ndim=2, mode='c'] q_odd):
+        cdef double complex *q_list[2]
+        if not (q_even.shape[0] == q_odd.shape[0] == 2 * self.Nside):
             raise ValueError("Invalid array length")
-        if  not (g_m_even.shape[1] == g_m_odd.shape[1] == self.output.shape[0]):
+        if  not (q_even.shape[1] == q_odd.shape[1] == self.output.shape[0]):
             raise ValueError("Does not conform with nmaps")
-        fastsht_merge_even_odd_and_transpose(self.plan, m, <double complex*>g_m_even.data,
-                                             <double complex*>g_m_odd.data)
+        q_list[0] = <double complex*>q_even.data
+        q_list[1] = <double complex*>q_odd.data
+        fastsht_assemble_rings(self.plan, 1, &m, q_list)
 
         
 

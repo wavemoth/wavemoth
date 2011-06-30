@@ -77,7 +77,7 @@ def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True):
         P = compute_normalized_associated_legendre(m, grid_for_P, lmax,
                                                    epsilon=1e-30)
         P_subset = P[:, odd::2]
-        compressed = butterfly_compress(P_subset, min_rows=min_rows)
+        compressed = butterfly_compress(P_subset, min_rows=min_rows, eps=1e-15)
         print 'Computed m=%d of %d: %s' % (m, lmax, compressed.get_stats())
         stream = BytesIO()
         compressed.write_to_stream(stream)

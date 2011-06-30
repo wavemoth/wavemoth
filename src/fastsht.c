@@ -375,15 +375,11 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
      This should play well with MPI down the road as well.
      */
 
-  /* We use += to accumulate the phase information in output, so we must
-     zero it up front. */
-  memset(plan->output, 0, 12 * plan->Nside * plan->Nside * nmaps * sizeof(double));
-
   #pragma omp parallel
   {
     /* The worksharing is wholly manual, since the parallel algorithm
        is non-trivial.  */
-    int m, odd, thread_id, m_chunk_start, m_threadchunk_start, m_threadchunk_stop;
+    int m, odd, thread_id, m_chunk_start, m_threadchunk_start, m_threadchunk_stop, i;
     int numthreads, i_m, i_work;
     size_t blocksize;
     m_resource_t *rec;
@@ -391,14 +387,24 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
     
     numthreads = omp_get_num_threads();
     thread_id = omp_get_thread_num();
+
+    /* We use += to accumulate the phase information in output, so we must
+       zero it up front. Zero it in parallel... */
+    blocksize = (12 * plan->Nside * plan->Nside * nmaps) / plan->Nside;
+    #pragma omp for schedule(static, 16)
+    for (i = 0; i < plan->Nside; ++i) {
+      memset(plan->output + i * blocksize, 0, blocksize * sizeof(double));
+    }
+
+    /* Allocate shared global lists */
     #pragma omp master
     {
       ms = malloc(sizeof(int[BLOCKWIDTH * numthreads]));
       q_list = malloc(sizeof(void*[2 * BLOCKWIDTH * numthreads]));
     } 
-
     #pragma omp barrier
 
+    /* Thread-private buffers */
     work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
     work_even = memalign(16, sizeof(double complex[nmaps * nrings_half * BLOCKWIDTH]));
     work_odd = memalign(16, sizeof(double complex[nmaps * nrings_half * BLOCKWIDTH]));
@@ -412,7 +418,6 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
       for (i_m = BLOCKWIDTH * thread_id, m = m_threadchunk_start, i_work = 0;
            m < m_threadchunk_stop;
            m += mstride, ++i_m, ++i_work) {
-        //        printf("%d: ms[%d] = %d\n", thread_id, i_m, m);
         ms[i_m] = m;
         for (odd = 0; odd < 2; ++odd) {
           double complex *work = odd ? work_odd : work_even;
@@ -433,9 +438,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
       }
 
       /* Do the transposition and assembly */
-      //      printf("%d: BEFORE\n", thread_id);
       #pragma omp barrier
-      //printf("%d: AFTER\n", thread_id);
       fastsht_assemble_rings_omp_worker(plan, BLOCKWIDTH * numthreads, ms, q_list);
     }
 

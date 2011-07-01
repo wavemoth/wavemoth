@@ -121,7 +121,7 @@ static void stack_vectors_d(double *a, bfm_index_t alen, double *b, bfm_index_t 
 static char *apply_interpolation_d(char *head, double *input, double *output,
                                    int32_t k, int32_t n, int32_t nvec) {
   int i;
-  double tmp_vecs[nvec * (n - k)];
+  double tmp_vecs[nvec * (n - k + 1)];
   if (nvec == 2) {
     head = merge_vectors_2(head, input, output, tmp_vecs, k, n - k);
   } else {
@@ -224,7 +224,7 @@ static INLINE char *apply_root_block_d(char *head,
                                        bfm_index_t m, bfm_index_t n,
                                        bfm_index_t nvecs) {
   bfm_index_t k = ((bfm_index_t*)head)[0];
-  double buf[k * nvecs];
+  double buf[(k + 1) * nvecs];
   head += sizeof(bfm_index_t);
   head = apply_interpolation_d(head, input, buf, k, n, nvecs);
   head = skip_padding(head);

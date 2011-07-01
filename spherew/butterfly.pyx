@@ -406,12 +406,22 @@ def pad_with_empty_columns(blocks):
             to_add -= 1
     return result
 
-def butterfly_compress(A, partition=None, min_rows=16, eps=1e-10):
+def partition(P, C):
+    n = P.shape[1]
+    result = []
+    for idx in range(0, n, C):
+        result.append(P[:, idx:idx + C])
+    return result
+
+def butterfly_compress(A, C=None, min_rows=None, eps=1e-10):
     if min_rows is not None:
-        if not isinstance(A, np.ndarray):
+        if not isinstance(A, np.ndarray) or C is not None:
             raise ValueError()
         numlevels = get_number_of_levels(A.shape[0], min_rows)
         B_list = partition_columns(A, numlevels)
+    elif C is not None:
+        B_list = partition(A, C)
+        B_list = pad_with_empty_columns(B_list)
     else:
         if not isinstance(A, list):
             raise ValueError()

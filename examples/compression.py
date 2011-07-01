@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 
 from concurrent.futures import ProcessPoolExecutor
 
-Nside = 2048
+Nside = 1024
 lmax = 2 * Nside
 epsilon_legendre = 1e-30
 epsilon_butterfly = 1e-15
@@ -23,15 +23,14 @@ min_rows = 32
 odd = 1
 nodes = get_ring_thetas(Nside, positive_only=True)
 
-ms = [0, 500, 1000, 1500]
+ms = [0, 500, 1000]
 Cs = range(30, 200, 20)
 
 def partition(P, C):
     n = P.shape[1]
     result = []
-    blocksize = n // C
-    for idx in range(0, n, blocksize):
-        result.append(P[:, idx:idx + blocksize])
+    for idx in range(0, n, C):
+        result.append(P[:, idx:idx + C])
     return result
 
 def doit(m, C, min_rows=None):
@@ -62,9 +61,9 @@ if 1:
                 results[i, j] = next(it).result()
                 
 else:
-    results = []
-    for tup in args:
-        results.append(doit(tup))
+    for i, m in enumerate(ms):
+        for j, C in enumerate(Cs):
+            results[i, j] = doit(m, C)
 
 plt.clf()
 for idx, m in enumerate(ms):

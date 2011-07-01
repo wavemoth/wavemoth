@@ -263,6 +263,7 @@ int main(int argc, char *argv[]) {
   int c;
   int got_threads, miniter;
   double mintime;
+  char *resource_path;
 
   /* Parse options */
   N_threads = 1;
@@ -294,7 +295,9 @@ int main(int argc, char *argv[]) {
   if (do_ffts == -1) do_ffts = 1;
 
   /* Resource configuration */
-  fastsht_configure("/home/dagss/code/spherew/resources");
+  resource_path = getenv("SHTRESOURCES");
+  check(resource_path != NULL, "Please define SHTRESOURCES");
+  fastsht_configure(resource_path);
   if (sht_resourcefile != NULL) {
     fastsht_query_resourcefile(sht_resourcefile, &Nside, &lmax);
   } else {

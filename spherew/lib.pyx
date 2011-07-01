@@ -1,4 +1,6 @@
 cimport numpy as np
+
+import os
 import numpy as np
 
 np.import_array()
@@ -49,7 +51,6 @@ cdef extern from "fastsht_private.h":
     
 
 _configured = False
-_resource_dir = b"/home/dagss/code/spherew/resources"
 
 cdef class ShtPlan:
     cdef fastsht_plan plan
@@ -72,7 +73,7 @@ cdef class ShtPlan:
             raise ValueError("Nonconforming arrays")
 
         if not _configured:
-            fastsht_configure(_resource_dir)
+            fastsht_configure(os.environ['SHTRESOURCES'])
             _configured = True
         
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],

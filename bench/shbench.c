@@ -334,8 +334,8 @@ int main(int argc, char *argv[]) {
     printf("%s:\n", pbench->name);
     if (pbench->setup != NULL) pbench->setup();
     printf("  Warming up\n");
-    printf("  Executing\n");
     pbench->execute();
+    printf("  Executing\n");
     #ifdef HAS_PPROF
     snprintf(profilefile, MAXPATH, "profiles/%s.prof", pbench->name);
     profilefile[MAXPATH - 1] = '\0';

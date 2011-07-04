@@ -116,9 +116,10 @@ def pad128(stream):
         stream.write(b'\0' * (16 - m))
 
 class IdentityNode(object):
-    def __init__(self, n):
+    def __init__(self, n, remainder_height):
         self.ncols = self.nrows = n
         self.block_heights = [n]
+        self.remainder_height = remainder_height
         
     def write_to_stream(self, stream):
         write_index_t(stream, self.ncols)
@@ -131,6 +132,9 @@ class IdentityNode(object):
 
     def count_blocks(self):
         return 0
+
+    def get_multilevel_stats(self):
+        return [0], [self.ncols * self.remainder_height]
 
 def unroll_pairs(pairs):
     result = []
@@ -204,7 +208,7 @@ class RootNode(object):
         return (self.S_node.size() +
                 sum(np.prod(block.shape) for block in self.D_blocks))
 
-    def get_multilevel_stats(self, out=None):
+    def get_multilevel_stats(self):
         """
         Returns two arrays:
          - The interpolation block sizes at each level (in # of floats).
@@ -213,8 +217,7 @@ class RootNode(object):
 
         The first element in each list corresponds to the level of self.
         """
-        raise NotImplementedError()
-        
+        return self.S_node.get_multilevel_stats()        
 
     def get_stats(self):
         # Todo: rename to __repr__ or something...
@@ -261,7 +264,7 @@ class InterpolationBlock(object):
         return np.prod(self.interpolant.shape)
     
 class InnerNode(object):
-    def __init__(self, blocks, children):
+    def __init__(self, blocks, children, remainder_heights):
         if 2**int(np.log2(len(blocks))) != len(blocks):
             raise ValueError("len(blocks) not a power of 2")
         if len(children) != 2:
@@ -277,6 +280,7 @@ class InnerNode(object):
         self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
                                  for T_ip, B_ip in blocks], [])
         self.nrows = sum(self.block_heights)
+        self.remainder_heights = remainder_heights
 
     def write_to_stream(self, stream):
         L, R = self.children
@@ -332,7 +336,25 @@ class InnerNode(object):
 
     def count_blocks(self):
         return 2 * len(self.blocks) + sum([child.count_blocks() for child in self.children])
-        
+
+
+    def get_multilevel_stats(self):
+        ip_sizes, remainder_sizes = self.children[0].get_multilevel_stats()
+        for c in self.children[1:]:
+            ip_sizes_2, remainder_sizes_2 = c.get_multilevel_stats()
+            for j in range(len(ip_sizes)):
+                ip_sizes[j] += ip_sizes_2[j]
+                remainder_sizes[j] += remainder_sizes_2[j]
+
+        ip_sizes.append(sum([A_ip.size() + B_ip.size() for A_ip, B_ip in self.blocks]) +
+                        ip_sizes[-1] if len(ip_sizes) > 0 else 0)
+
+        rsize = 0
+        for h, w in zip(self.remainder_heights, self.block_heights):
+            rsize += h * w
+        remainder_sizes.append(rsize)
+        return ip_sizes, remainder_sizes
+
 
 def permutations_to_filter(alst, blst):
     filter = np.zeros(len(alst) + len(blst), dtype=np.int8)
@@ -348,26 +370,32 @@ def butterfly_core(A_k_blocks, eps):
     if len(A_k_blocks) == 1:
         # No compression achieved anyway at this stage when split
         # into odd l/even l
-        return A_k_blocks, IdentityNode(A_k_blocks[0].shape[1])
+        return A_k_blocks, IdentityNode(A_k_blocks[0].shape[1],
+                                        remainder_height=A_k_blocks[0].shape[0])
     mid = len(A_k_blocks) // 2
     left_blocks, left_node = butterfly_core(A_k_blocks[:mid], eps)
     right_blocks, right_node = butterfly_core(A_k_blocks[mid:], eps)
     out_blocks = []
     out_interpolants = []
+    remainder_heights = [] # for statistics purposes
     for L, R in zip(left_blocks, right_blocks):
+        
         # Horizontal join
         LR = np.hstack([L, R])
         # Vertical split & compress
         vmid = LR.shape[0] // 2
         T = LR[:vmid, :]
         B = LR[vmid:, :]
+        remainder_heights.append(vmid)
+        remainder_heights.append(LR.shape[0] - vmid)
         T_k, T_ip = matrix_interpolative_decomposition(T, eps)
         B_k, B_ip = matrix_interpolative_decomposition(B, eps)
         assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
         out_interpolants.append((T_ip, B_ip))
         out_blocks.append(T_k)
         out_blocks.append(B_k)
-    return out_blocks, InnerNode(out_interpolants, (left_node, right_node))
+    return out_blocks, InnerNode(out_interpolants, (left_node, right_node),
+                                 remainder_heights)
 
 def get_number_of_levels(n, min):
     levels = 0

@@ -413,7 +413,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
          m_chunk_start < mstop;
          m_chunk_start += mstride * BLOCKWIDTH * numthreads) {
       m_threadchunk_start = m_chunk_start + BLOCKWIDTH * thread_id;
-      m_threadchunk_stop = imin(m_threadchunk_start + BLOCKWIDTH, mstop);
+      m_threadchunk_stop = imin(m_threadchunk_start + mstride * BLOCKWIDTH, mstop);
       /* Compute into the buffer */
       for (i_m = BLOCKWIDTH * thread_id, m = m_threadchunk_start, i_work = 0;
            m < m_threadchunk_stop;

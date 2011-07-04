@@ -140,6 +140,12 @@ def build(bld):
     # Standalone C programs
     #
 
+    bld(source=['bench/cpubench.c'],
+        includes=['src'],
+        target='cpubench',
+        use='ATLAS OPENMP',
+        features='cprogram c')
+
     bld(source=['bench/shbench.c'],
         includes=['src'],
         target='shbench',

@@ -6,6 +6,8 @@ BLAS, since that appears to be slightly more portable than CLAPACK.
 #ifndef _BLAS_WRAPPER_H
 #define _BLAS_WRAPPER_H
 
+#include <stdint.h>
+
 /*
 We rely on this header only being included once for correct
 results both with and without INLINE being defined.
@@ -18,6 +20,7 @@ results both with and without INLINE being defined.
 #  define INLINE
 # endif
 #endif
+
 
 
 void dgemm_(char *transa, char *transb, int *m, int *n,

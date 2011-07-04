@@ -118,9 +118,20 @@ static void stack_vectors_d(double *a, bfm_index_t alen, double *b, bfm_index_t 
   
   input is n-by-nvec, output is k-by-nvec
 */
+volatile char globchar;
+static void access_mem(char *head, size_t size) {
+  char r = 0;
+  int i;
+  for (i = 0; i < size; i += 64) {
+    r += head[i];
+  }
+  globchar = r;
+}
+
 static char *apply_interpolation_d(char *head, double *input, double *output,
                                    int32_t k, int32_t n, int32_t nvec) {
   int i;
+  char *next_head;
   double tmp_vecs[nvec * (n - k + 1)];
   if (nvec == 2) {
     head = merge_vectors_2(head, input, output, tmp_vecs, k, n - k);
@@ -128,6 +139,7 @@ static char *apply_interpolation_d(char *head, double *input, double *output,
     head = merge_vectors(head, input, output, tmp_vecs, k, n - k, nvec);
   }
   head = skip_padding(head);
+  access_mem(head, k * (n - k));
   dgemm_rrr((double*)head, tmp_vecs, output, k, nvec, n - k, 1.0);
   head += sizeof(double[k * (n - k)]);
   return head;
@@ -191,7 +203,7 @@ static char *apply_butterfly_node_d(char *head, bfm_index_t order, double *input
                                     bfm_index_t nrows, bfm_index_t ncols,
                                     bfm_index_t nvecs) {
   bfm_index_t *block_heights, *block_widths_first, *block_widths_second;
-  bfm_index_t i;
+  bfm_index_t i, k;
   double *data_from_first, *data_from_second;
 
   head = recurse_d(head, order, input, nrows, ncols, nvecs, buffer, output,

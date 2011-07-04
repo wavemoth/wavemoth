@@ -361,7 +361,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
   double complex **q_list;
   int *ms;
 
-  const int BLOCKWIDTH = 4;
+  const int BLOCKWIDTH = 16;
 
   /* Parallelization: The first loop is trivially parallelizable over
      m.  However, perform_matmul merge_even_odd_and_transpose needs to

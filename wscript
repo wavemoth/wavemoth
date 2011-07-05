@@ -114,6 +114,12 @@ def build(bld):
         use='NUMPY fcshlib fastsht',
         features='c pyext cshlib')
 
+    bld(source=(['spherew/butterflylib.pyx']),
+        includes=['src'],
+        target='butterflylib',
+        use='NUMPY fcshlib fastsht',
+        features='c pyext cshlib')
+
     bld(source=(['spherew/lib.pyx']),
         includes=['src'],
         target='lib',

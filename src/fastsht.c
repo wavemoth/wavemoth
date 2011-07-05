@@ -390,9 +390,9 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
 
     /* We use += to accumulate the phase information in output, so we must
        zero it up front. Zero it in parallel... */
-    blocksize = (12 * plan->Nside * plan->Nside * nmaps) / plan->Nside;
-    #pragma omp for schedule(static, 16)
-    for (i = 0; i < plan->Nside; ++i) {
+    blocksize = (12 * nmaps * plan->Nside * plan->Nside) / (12 * nmaps);
+    #pragma omp for schedule(static, 1)
+    for (i = 0; i < 12 * nmaps; ++i) {
       memset(plan->output + i * blocksize, 0, blocksize * sizeof(double));
     }
 

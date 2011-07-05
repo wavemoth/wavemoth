@@ -95,6 +95,7 @@ if 1:
         tot /= tot[0]
         plt.plot(tot, label=str(m), color=c)
         plt.plot(rlst, linestyle='dotted', color=c)
+        plt.plot(rlst / tot, linestyle='dashed', color=c)
         plt.legend()
 
 else:

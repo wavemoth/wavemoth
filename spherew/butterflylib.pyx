@@ -14,13 +14,13 @@ cdef extern from "butterfly.h":
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
 
-    const_char *post_projection_ "post_projection"(char *mask, 
+    const_char *post_interpolation_ "post_interpolation"(char *mask, 
                           double *target1,
                           double *target2,
                           double *a,
                           double *b,
                           int len1, int len2, int nvecs)
-    const_char *post_projection_2(char *mask, 
+    const_char *post_interpolation_2(char *mask, 
                                   double *target1,
                                   double *target2,
                                   double *a,
@@ -30,12 +30,12 @@ cdef extern from "butterfly.h":
 #
 # Wrappers around individual parts for unit testing
 #
-def do_post_projection(np.ndarray[char, mode='c'] mask,
-                       np.ndarray[double, ndim=2, mode='c'] target1,
-                       np.ndarray[double, ndim=2, mode='c'] target2,
-                       np.ndarray[double, ndim=2, mode='c'] a,
-                       np.ndarray[double, ndim=2, mode='c'] b,
-                       int repeat=1):
+def do_post_interpolation(np.ndarray[char, mode='c'] mask,
+                          np.ndarray[double, ndim=2, mode='c'] target1,
+                          np.ndarray[double, ndim=2, mode='c'] target2,
+                          np.ndarray[double, ndim=2, mode='c'] a,
+                          np.ndarray[double, ndim=2, mode='c'] b,
+                          int repeat=1):
     cdef int i
     cdef const_char *retval
     nvecs = target1.shape[1]
@@ -48,17 +48,16 @@ def do_post_projection(np.ndarray[char, mode='c'] mask,
 
     if nvecs == 2:
         for i in range(repeat):
-            retval = post_projection_2(<char*>mask.data,
-                                       <double*>target1.data, <double*>target2.data,
-                                       <double*>a.data, <double*>b.data,
-                                       target1.shape[0], target2.shape[0])
+            retval = post_interpolation_2(<char*>mask.data,
+                                          <double*>target1.data, <double*>target2.data,
+                                          <double*>a.data, <double*>b.data,
+                                          target1.shape[0], target2.shape[0])
     else:
         for i in range(repeat):
-            retval = post_projection_(<char*>mask.data,
-                                      <double*>target1.data, <double*>target2.data,
-                                      <double*>a.data, <double*>b.data,
-                                      target1.shape[0], target2.shape[0],
-                                      nvecs)
-#    print <int>retval, <int><char*>mask.data, mask.shape[0]
-    assert <char*>mask.data + mask.shape[0] == retval
+            retval = post_interpolation_(<char*>mask.data,
+                                         <double*>target1.data, <double*>target2.data,
+                                         <double*>a.data, <double*>b.data,
+                                         target1.shape[0], target2.shape[0],
+                                         nvecs)
+    return <char*>mask.data + mask.shape[0] - retval
 

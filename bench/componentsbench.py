@@ -22,5 +22,5 @@ target2 = np.zeros((N - 20, nvecs))
 
 J = 5000000
 with benchmark('post_projection', J, profile=True):
-    do_post_projection(mask, target1, target2, a, b, repeat=J)
+    do_post_interpolation(mask, target1, target2, a, b, repeat=J)
 

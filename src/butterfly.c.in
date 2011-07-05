@@ -73,17 +73,17 @@ The lengths of each of the buffer parts is in units of nvecs.
 */
 
 {{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
-const char *post_projection{{suffix}}(const char *restrict mask, 
-                            double *restrict target1,
-                            double *restrict target2,
-                            const double *restrict a,
-                            const double *restrict b,
-                            int len1, int len2{{trailing_args}}) {
+const char *post_interpolation{{suffix}}(const char *restrict mask, 
+                                         double *restrict target1,
+                                         double *restrict target2,
+                                         const double *restrict a,
+                                         const double *restrict b,
+                                         int len1, int len2{{trailing_args}}) {
   {{define}}
   /* Time spent is this routine is likely due to cache effects...be
      sure to profile on in-cache data.
 
-     This implementation appears to be fastest; tried playing with
+     This implementation appears to be rather fast; tried playing with
      eliminating branches through bit operations etc. and it did not give
      speedups.  Best way forward to speed this up is likely to pack
      more information into each char in the mask, and use a switch to
@@ -106,14 +106,15 @@ const char *post_projection{{suffix}}(const char *restrict mask,
         val = _mm_load_si128((m128i*)b);
         b += 2;
         _mm_store_si128((m128i*)target{{idx}}, val);
+        target{{idx}} += 2;
       }
     } else {
       for (j = 0; j != nvecs / 2; ++j) {
         val = _mm_load_si128((m128i*)a);
         a += 2;
         _mm_store_si128((m128i*)target{{idx}}, val);
+        target{{idx}} += 2;
       }
-      target{{idx}} += 2;
     }
   }
   {{endfor}}

@@ -69,8 +69,11 @@ cdef class ShtPlan:
             raise ValueError("Invalid ordering: %s" % ordering)
         self.input = input
         self.output = output
-        if not (input.shape[1] == output.shape[0]):
+        if not (input.shape[1] == output.shape[1]):
             raise ValueError("Nonconforming arrays")
+        if output.shape[0] != 12 * Nside * Nside:
+            raise ValueError("Output must have shape (Npix, nmaps), has %r" %
+                             (<object>output).shape)
 
         if not _configured:
             fastsht_configure(os.environ['SHTRESOURCES'])
@@ -107,7 +110,7 @@ cdef class ShtPlan:
         cdef double complex *q_list[2]
         if not (q_even.shape[0] == q_odd.shape[0] == 2 * self.Nside):
             raise ValueError("Invalid array length")
-        if  not (q_even.shape[1] == q_odd.shape[1] == self.output.shape[0]):
+        if  not (q_even.shape[1] == q_odd.shape[1] == self.output.shape[1]):
             raise ValueError("Does not conform with nmaps")
         q_list[0] = <double complex*>q_even.data
         q_list[1] = <double complex*>q_odd.data

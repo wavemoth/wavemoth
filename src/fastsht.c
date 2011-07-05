@@ -300,6 +300,9 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   fastsht_grid_info *grid;
   bfm_index_t start, stop;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
+  int n_ring_list[nmaps];
+  fftw_r2r_kind kind_list[nmaps];
+  int i;
 
   if (resource_filename != NULL) {
     /* Used in debugging/benchmarking */
@@ -330,8 +333,14 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   for (iring = 0; iring != grid->nrings; ++iring) {
     start = grid->ring_offsets[iring];
     stop = grid->ring_offsets[iring + 1];
-    plan->fft_plans[iring] = 
-      fftw_plan_r2r_1d(stop - start, output + start, output + start, FFTW_HC2R, flags);
+    for (i = 0; i != nmaps; ++i) {
+      n_ring_list[i] = stop - start;
+      kind_list[i] = FFTW_HC2R;
+    }
+    plan->fft_plans[iring] = fftw_plan_many_r2r(1, n_ring_list, nmaps,
+                                                output + nmaps * start, n_ring_list, nmaps, 1,
+                                                output + nmaps * start, n_ring_list, nmaps, 1,
+                                                kind_list, flags);
   }
   return (fastsht_plan)plan;
 }
@@ -555,8 +564,8 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
       for (imap = 0; imap != nmaps; ++imap) {
         int j1, j2;
         double complex q_top_1, q_top_2, q_bottom_1, q_bottom_2;
-        idx_top = imap * npix + ring_offsets[mid_ring - iring];
-        idx_bottom = imap * npix + ring_offsets[mid_ring + iring];
+        idx_top = nmaps * ring_offsets[mid_ring - iring];
+        idx_bottom = nmaps * ring_offsets[mid_ring + iring];
         
         /* Merge even/odd, changing the sign of odd part on bottom half */
         q_top_1 = q_even[iring * nmaps + imap] + q_odd[iring * nmaps + imap];
@@ -573,19 +582,19 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
         j2 = imod_divisorsign(n - m, n);
 
         if (j1 <= n / 2) {
-          output[idx_top + j1] += creal(q_top_1);
-          if (j1 > 0) output[idx_top + n - j1] += cimag(q_top_1);
+          output[idx_top + j1 * nmaps + imap] += creal(q_top_1);
+          if (j1 > 0) output[idx_top + (n - j1) * nmaps + imap] += cimag(q_top_1);
           if (iring > 0) {
-            output[idx_bottom + j1] += creal(q_bottom_1);
-            if (j1 > 0) output[idx_bottom + n - j1] += cimag(q_bottom_1);
+            output[idx_bottom + j1 * nmaps + imap] += creal(q_bottom_1);
+            if (j1 > 0) output[idx_bottom + (n - j1) * nmaps + imap] += cimag(q_bottom_1);
           }
         }
         if (m != 0 && j2 <= n / 2) {
-          output[idx_top + j2] += creal(q_top_2);
-          if (j2 > 0) output[idx_top + n - j2] += cimag(q_top_2);
+          output[idx_top + j2 * nmaps + imap] += creal(q_top_2);
+          if (j2 > 0) output[idx_top + (n - j2) * nmaps + imap] += cimag(q_top_2);
           if (iring > 0) {
-            output[idx_bottom + j2] += creal(q_bottom_2);
-            if (j2 > 0) output[idx_bottom + n - j2] += cimag(q_bottom_2);
+            output[idx_bottom + j2 * nmaps + imap] += creal(q_bottom_2);
+            if (j2 > 0) output[idx_bottom + (n - j2) * nmaps + imap] += cimag(q_bottom_2);
           }
         }
 
@@ -595,19 +604,17 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end) {
-  size_t npix = plan->grid->npix;
+  int nmaps = plan->nmaps;
   double *output = plan->output;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
-#pragma omp parallel
+  #pragma omp parallel
   {
     double *ring_data;
     int iring, imap;
-    for (imap = 0; imap < plan->nmaps; ++imap) {
-#pragma omp for schedule(dynamic, 16) nowait
-      for (iring = ring_start; iring < ring_end; ++iring) {
-        ring_data = output + imap * npix + ring_offsets[iring];
-        fftw_execute_r2r(plan->fft_plans[iring], ring_data, ring_data);
-      }
+    #pragma omp for schedule(dynamic, 16)
+    for (iring = ring_start; iring < ring_end; ++iring) {
+      ring_data = output + nmaps * ring_offsets[iring];
+      fftw_execute_r2r(plan->fft_plans[iring], ring_data, ring_data);
     }
   }  
 }

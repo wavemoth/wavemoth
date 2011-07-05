@@ -37,7 +37,7 @@ def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
     if lmax is None:
         lmax = 2 * Nside
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
-    output = np.zeros((nmaps, 12*Nside**2))
+    output = np.zeros((12*Nside**2, nmaps))
     plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor', **kw)
 
     return plan
@@ -50,19 +50,18 @@ def test_basic():
     plan.input[lm_to_idx_mmajor(1, 0), :] = np.arange(nmaps) * 30
     plan.input[lm_to_idx_mmajor(2, 1), :] = 10 + 5j
     output = plan.execute()
-
     y2 = psht.alm2map_mmajor(plan.input, lmax=lmax, Nside=Nside)
     if do_plot:
-        for i in range(nmaps):
-            plot_map(y2[i, :], title='FID %d' % i)
-            plot_map(plan.output[i, :], title=' %d' % i)
-            plot_map(plan.output[i, :] - y2[i, :], title='delta %d' % i)
+        for i in [0]:#nmaps):
+            plot_map(y2[:, i], title='FID %d' % i)
+            plot_map(output[:, i].copy('C'), title=' %d' % i)
+            plot_map(output[:, i].copy('C') - y2[:, i], title='delta %d' % i)
 
         plt.show()
 
     #print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     for i in range(nmaps):
-        assert_almost_equal(y2[i, :], output[i, :])
+        assert_almost_equal(y2[:, i], output[:, i])
 
 def do_deterministic(nthreads):
     def hash_array(x):
@@ -98,20 +97,29 @@ def test_merge_even_odd_and_transpose():
     g_m_odd = 1 * np.ones(4) + 2j * np.ones(4)
     g_m_odd = np.asarray([g_m_odd, 10 * g_m_odd, 100 * g_m_odd]).T.copy()
 
-    def doit(m):
-        plan.output[...] = 0
-        plan.assemble_rings(m, g_m_even, g_m_odd)
-        # Check that multiple maps work, then focus on the first map in the rest
-        output = plan.output[0, :]
-#        for i in range(1, nmaps):
-#            assert_almost_equal(plan.output[i, :], 10**i * output)
+    def to_rings(map):
         # Assemble ring by ring
         rings = []
         idx = 0
         for count in counts:
-            rings.append(output[idx:idx + count])
+            rings.append(map[idx:idx + count])
             idx += count
         return rings
+
+    def print_rings(map):
+        for ring in to_rings(map):
+            print ring
+
+    def doit(m):
+        plan.output[...] = 0
+        plan.assemble_rings(m, g_m_even, g_m_odd)
+        # Check that multiple maps work, then focus on the first map in the rest
+        first_map = plan.output[:, 0]
+        #print_rings(first_map)
+        for i in range(1, nmaps):
+            #print_rings(plan.output[:, i])
+            assert_almost_equal(plan.output[:, i], 10**i * first_map)
+        return to_rings(first_map)
 
     rings = doit(2)
     #for r in rings: print r

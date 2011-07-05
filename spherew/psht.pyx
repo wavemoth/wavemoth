@@ -89,21 +89,23 @@ cdef class PshtMmajorHealpix:
 
     def alm2map(self,
                 np.ndarray[double complex, ndim=2, mode='c'] alm,
-                np.ndarray[double, ndim=2, mode='c'] map=None,
+                np.ndarray[double, ndim=2, mode='fortran'] map=None,
                 int repeat=1):
         cdef int j
         if alm.shape[0] != ((self.lmax + 1) * (self.lmax + 2)) // 2:
             raise ValueError('alm.shape does not match lmax')
         if map is None:
-            map = np.zeros((alm.shape[1], 12 * self.Nside**2), np.double)
+            map = np.zeros((12 * self.Nside**2, alm.shape[1]), np.double, order='F')
         if alm.shape[1] != self.nmaps:
             raise ValueError('Number of maps does not match nmaps passed in constructor')
-        if not (alm.shape[1] == map.shape[0]):
+        if not (alm.shape[1] == map.shape[1]):
             raise ValueError('Arrays not conforming')
-        for j in range(map.shape[0]):
+        if map.shape[0] != 12 * self.Nside**2:
+            raise ValueError('map must have shape (npix, nmaps)')
+        for j in range(map.shape[1]):
             pshtd_add_job_alm2map(self.joblist,
                                   <pshtd_cmplx*>alm.data + j,
-                                  <double*>map.data + j * map.shape[1], 0)
+                                  <double*>map.data + j * map.shape[0], 0)
         for i in range(repeat):
             pshtd_execute_jobs(self.joblist, self.geom_info, self.alm_info)
         pshtd_clear_joblist(self.joblist)
@@ -113,7 +115,7 @@ def alm2map_mmajor(alm, lmax, map=None, Nside=None, repeat=1):
     nmaps = alm.shape[1]
     if map is not None:
         assert Nside is None
-        Nside = int(np.sqrt(map.shape[1] // 12))
+        Nside = int(np.sqrt(map.shape[0] // 12))
     return PshtMmajorHealpix(lmax, Nside, nmaps).alm2map(alm, map, repeat)
 
         

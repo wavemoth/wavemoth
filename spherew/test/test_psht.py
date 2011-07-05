@@ -13,11 +13,11 @@ def test_basic():
     alm[:, 0] *= 1
     alm[:, 1] *= 1
     alm[:, 2] *= -1
-    map = np.zeros((nmaps, 12 * Nside**2), dtype=np.double)
+    map = np.zeros((12 * Nside**2, nmaps), dtype=np.double, order='F')
     T.alm2map(alm, map, repeat=2)
     if 0:
-        pixel_sphere_map(map[0, :]).plot()
-        pixel_sphere_map(map[1, :]).plot()
-        pixel_sphere_map(map[2, :]).plot()
+        pixel_sphere_map(map[:, 0]).plot()
+        pixel_sphere_map(map[:, 1]).plot()
+        pixel_sphere_map(map[:, 2]).plot()
         plt.show()
     

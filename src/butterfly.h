@@ -129,4 +129,18 @@ char *bfm_filter_vector_d(char *filter, double *input,
                           double *output_a, double *output_b);
 
 
+
+const char *post_projection(const char *restrict mask, 
+                            double *restrict target1,
+                            double *restrict target2,
+                            const double *restrict a,
+                            const double *restrict b,
+                            int len1, int len2, int nvecs);
+const char *post_projection_2(const char *restrict mask, 
+                              double *restrict target1,
+                              double *restrict target2,
+                              const double *restrict a,
+                              const double *restrict b,
+                              int len1, int len2);
+
 #endif

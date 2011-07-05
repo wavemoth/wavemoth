@@ -9,6 +9,12 @@
 #include "fastsht_error.h"
 
 typedef __m128d m128d;
+typedef __m128i m128i;
+typedef __m128 m128;
+typedef union {
+  char c[16];
+  m128i v;
+} v16c;
 
 /*
 Spread and merge
@@ -68,16 +74,19 @@ The lengths of each of the buffer parts is in units of nvecs.
 Will read memory nvecs elements beyond the end of a and b,
 in the name of simpler code.
 */
-const char *post_projection(const char *restrict mask, 
+
+{{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
+const char *post_projection{{suffix}}(const char *restrict mask, 
                             double *restrict target1,
                             double *restrict target2,
                             const double *restrict a,
                             const double *restrict b,
-                            int len1, int len2, int nvecs) {
+                            int len1, int len2{{trailing_args}}) {
+  {{define}}
   int j;
   const char *restrict end;
   int m, not_m;
-  m128d val_a, val_b;
+  m128i val_a, val_b;
   assert(nvecs % 2 == 0);
   assert((size_t)target1 % 16 == 0);
   assert((size_t)target2 % 16 == 0);
@@ -88,23 +97,23 @@ const char *post_projection(const char *restrict mask,
   while (mask != end) {
     m = *mask++;
     for (j = 0; j != nvecs / 2; ++j) {
-      val_a = _mm_load_pd(a);
-      val_b = _mm_load_pd(b);
+      val_a = _mm_load_si128((m128i*)a);
+      val_b = _mm_load_si128((m128i*)b);
       if (m) {
         b += 2;
+        _mm_store_si128((m128i*)target{{idx}}, val_b);
       } else {
         a += 2;
+        _mm_store_si128((m128i*)target{{idx}}, val_a);
       }
-      /*      a += 2 & ~(2 * m);
-              b += 2 * m;*/
-      _mm_store_pd(target{{idx}}, m ? val_b : val_a);
       target{{idx}} += 2;
     }
   }
   {{endfor}}
   return mask;
-
+  {{undefine}}
 }
+{{endfor}}
 
 
 /*

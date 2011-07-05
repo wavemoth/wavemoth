@@ -21,10 +21,10 @@ def ftime(t):
 def benchmark(name, divisor, profile=False):
     if profile:
         import yep
-        yep.start("%s.prof" % name)
+        yep.start("profiles/%s.prof" % name)
     t0 = clock()
     yield
     t1 = clock()
-    print '%s : %s' % (name, ftime((t1 - t0) / divisor))
+    print '%s, %d iterations: %s per iteration' % (name, divisor, ftime((t1 - t0) / divisor))
     if profile:
         yep.stop()

@@ -116,7 +116,7 @@ def pad128(stream):
         stream.write(b'\0' * (16 - m))
 
 class IdentityNode(object):
-    def __init__(self, n, remainder_height):
+    def __init__(self, n, remainder_height=None):
         self.ncols = self.nrows = n
         self.block_heights = [n]
         self.remainder_height = remainder_height
@@ -264,7 +264,7 @@ class InterpolationBlock(object):
         return np.prod(self.interpolant.shape)
     
 class InnerNode(object):
-    def __init__(self, blocks, children, remainder_heights):
+    def __init__(self, blocks, children, remainder_heights=None):
         if 2**int(np.log2(len(blocks))) != len(blocks):
             raise ValueError("len(blocks) not a power of 2")
         if len(children) != 2:

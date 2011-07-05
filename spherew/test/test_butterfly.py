@@ -25,7 +25,7 @@ def get_test_data():
 
 def test_pickle_compressed():
     P, a_l = get_test_data()
-    M = butterfly_compress(P)
+    M = butterfly_compress(P, C=10)
     C = serialize_butterfly_matrix(M) 
     yield assert_almost_equal, C.apply(a_l), loads(dumps(C)).apply(a_l)
     
@@ -40,7 +40,7 @@ def test_permutations_to_filter():
 def test_butterfly_apply():
     P, a_l = get_test_data()
 
-    M = butterfly_compress(P)
+    M = butterfly_compress(P, C=10)
     y1 = M.apply(a_l)
     y2 = np.dot(P, a_l)
     yield assert_almost_equal, y1, y2
@@ -114,7 +114,7 @@ def test_butterfly_compressed():
     "Test with a real, big matrix"
     P, a_l = get_test_data()
 
-    M = butterfly_compress(P)
+    M = butterfly_compress(P, C=10)
     MC = serialize_butterfly_matrix(M)
     y1 = MC.apply(a_l)
     y2 = M.apply(a_l)

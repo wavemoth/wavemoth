@@ -8,6 +8,9 @@
 #include "blas.h"
 #include "fastsht_error.h"
 
+/* Common page size on AMD64 */
+#define BUF_ALIGN 4096
+
 typedef __m128d m128d;
 typedef __m128i m128i;
 typedef __m128 m128;
@@ -366,9 +369,103 @@ int bfm_apply_d(char *head, double *x, double *y,
   return 0;
 }
 
-  /*
-static char *apply_interpolation_d(char *head, double *input, double *output,
-                                   int32_t k, int32_t n, int32_t nvec) {
-static INLINE void dgemm_crr(double *A, double *X, double *Y,
-                              int32_t m, int32_t n, int32_t k, beta) {
+
+
+bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs) {
+  bfm_plan *plan;
+  size_t i;
+  plan = malloc(sizeof(bfm_plan));
+  plan->k_max = k_max;
+  plan->nblocks_max = nblocks_max;
+  plan->nvecs = nvecs;
+  plan->vector_chunk_list = malloc(sizeof(double*) * (nblocks_max + 2));
+  for (i = 0; i != nblocks_max + 2; ++i) {
+    plan->vector_chunk_list[i] = memalign(BUF_ALIGN, k_max * nvecs);
+  }
+  plan->y_buf = memalign(BUF_ALIGN, 2 * k_max * nvecs);
+}
+
+void bfm_destroy_plan(bfm_plan *plan) {
+  int i;
+  for (i = 0; i != plan->nblocks_max + 2; ++i) {
+    free(plan->vector_chunk_list[i]);
+  }
+  free((double *)plan->vector_chunk_list);
+  free(plan->y_buf);
+  free(plan);
+}
+
+
+struct _bfm_transpose_apply_context {
+  pull_func_t pull_func;
+  push_func_t push_func;
+  void *caller_ctx;
+  const char *matrix_data;
+  const char **node_heap;
+  int add_push;
+};
+
+static inline const char* get_parent(const char *heap[], size_t index) {
+  return heap[index / 2];
+}
+
+static inline const char* get_left_child(const char *heap[], size_t index) {
+  return heap[index * 2];
+}
+
+static inline const char* get_right_child(const char *heap[], size_t index) {
+  return heap[index * 2 + 1];
+}
+
+int bfm_transpose_apply_d(bfm_plan *plan,
+                          const char *matrix_data,
+                          size_t nrows, 
+                          size_t ncols,
+                          pull_func_t pull_func,
+                          push_func_t push_func,
+                          void *caller_ctx) {
+  bfm_transpose_apply_context ctx;
+  const char *head = matrix_data;
+  ctx.caller_ctx = caller_ctx;
+  ctx.pull_func = pull_func;
+  ctx.push_func = push_func;
+  ctx.matrix_data = matrix_data;
+
+  /* Read in tree. Shape of the S-matrix forest is determined by the
+     start level and stop level. Offsets to each node is stored in a
+     heap structure that is present; we translate it to pointers in
+     memory.
+
+     The heap base pointer is the virtual zero level, i.e., it
+     incorporates the subtraction of the first index.
   */
+  size_t first_level_size = ((int32_t*)head)[0];
+  size_t first_level_order = ((int32_t*)head)[1];
+  size_t heap_size = ((int32_t*)head)[2];
+  size_t node_heap_first_index = ((int32_t*)head)[4];
+  head += sizeof(int32_t[4]);
+  const char *heap_buf[heap_size];
+  ctx.node_heap = heap_buf - node_heap_first_index;
+
+  for (size_t i = 0; i != heap_size; ++i) {
+    heap_buf[i] = matrix_data + ((int64_t*)head)[i];
+  }
+
+  /* Start to apply the root level. 
+
+     We signal whether we're in the first iteration using the add_push
+     flag, which the caller can inspect and (optionally) zero the output buffer.
+  */
+  ctx.add_push = 0; /* */
+  for (size_t inode = node_heap_first_index;
+       inode != node_heap_first_index + first_level_size;
+       ++inode) {
+    /*   */
+    //    ctx.pull_func(buf, start, stop, nvecs, ctx.caller_ctx);
+
+    ctx.add_push = 1; /* Any remaining root nodes require addition. */
+  }
+  
+  
+
+}

@@ -74,7 +74,7 @@ The lengths of each of the buffer parts is in units of nvecs.
 {{for should_add in [False, True]}}
 {{for should_not in [False, True]}}
 {{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
-const char *bfm_scatter{{'not' * should_not}}{{'_add' * should_add}}{{suffix}}(
+const char *bfm_scatter{{'_complement' * should_not}}{{'_add' * should_add}}{{suffix}}(
     const char *restrict mask, 
     double *restrict target1,
     double *restrict target2,

@@ -116,10 +116,10 @@ def pad128(stream):
         stream.write(b'\0' * (16 - m))
 
 class IdentityNode(object):
-    def __init__(self, n, remainder_height=None):
+    def __init__(self, n, remainder_block=None):
         self.ncols = self.nrows = n
         self.block_heights = [n]
-        self.remainder_height = remainder_height
+        self.remainder_blocks = [remainder_block]
         
     def write_to_stream(self, stream):
         write_index_t(stream, self.ncols)
@@ -134,7 +134,7 @@ class IdentityNode(object):
         return 0
 
     def get_multilevel_stats(self):
-        return [0], [self.ncols * self.remainder_height]
+        return [0], [np.prod(self.remainder_blocks[0].shape)]
 
 def unroll_pairs(pairs):
     result = []
@@ -264,7 +264,7 @@ class InterpolationBlock(object):
         return np.prod(self.interpolant.shape)
     
 class InnerNode(object):
-    def __init__(self, blocks, children, remainder_heights=None):
+    def __init__(self, blocks, children, remainder_blocks=None):
         if 2**int(np.log2(len(blocks))) != len(blocks):
             raise ValueError("len(blocks) not a power of 2")
         if len(children) != 2:
@@ -280,7 +280,15 @@ class InnerNode(object):
         self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
                                  for T_ip, B_ip in blocks], [])
         self.nrows = sum(self.block_heights)
-        self.remainder_heights = remainder_heights
+        self.remainder_blocks = remainder_blocks
+        if remainder_blocks is not None:
+            if not isinstance(remainder_blocks, list):
+                raise TypeError("expected list for remainder_blocks")
+            if len(remainder_blocks) != len(self.block_heights):
+                raise ValueError("remainder_blocks has wrong length")
+            for R, bh in zip(remainder_blocks, self.block_heights):
+                if R.shape[1] != bh:
+                    raise ValueError("nonconforming remainder block")
 
     def write_to_stream(self, stream):
         L, R = self.children
@@ -350,8 +358,8 @@ class InnerNode(object):
                         ip_sizes[-1] if len(ip_sizes) > 0 else 0)
 
         rsize = 0
-        for h, w in zip(self.remainder_heights, self.block_heights):
-            rsize += h * w
+        for b in self.remainder_blocks:
+            rsize += b.shape[0] * b.shape[1]
         remainder_sizes.append(rsize)
         return ip_sizes, remainder_sizes
 
@@ -366,36 +374,50 @@ def matrix_interpolative_decomposition(A, eps):
     filter = permutations_to_filter(iden_list, ipol_list)
     return A_k, InterpolationBlock(filter, A_ip)
 
-def butterfly_core(A_k_blocks, eps):
+def butterfly_core(A_k_blocks, eps, max_levels):
     if len(A_k_blocks) == 1:
         # No compression achieved anyway at this stage when split
         # into odd l/even l
-        return A_k_blocks, IdentityNode(A_k_blocks[0].shape[1],
-                                        remainder_height=A_k_blocks[0].shape[0])
+        return 0, IdentityNode(A_k_blocks[0].shape[1], remainder_block=A_k_blocks[0])
     mid = len(A_k_blocks) // 2
-    left_blocks, left_node = butterfly_core(A_k_blocks[:mid], eps)
-    right_blocks, right_node = butterfly_core(A_k_blocks[mid:], eps)
-    out_blocks = []
-    out_interpolants = []
-    remainder_heights = [] # for statistics purposes
-    for L, R in zip(left_blocks, right_blocks):
+    sublevel, left_node = butterfly_core(A_k_blocks[:mid], eps, max_levels)
+    sublevel2, right_node = butterfly_core(A_k_blocks[mid:], eps, max_levels)
+    assert sublevel == sublevel2
+    if 0:#sublevel == max_levels:
+        pass
+#        # Stop compression
+#        return left_blocks + right_blocks, InnerNode(
+    else:
+        # Compress further
+        out_blocks = []
+        out_interpolants = []
+        for L, R in zip(left_node.remainder_blocks,
+                        right_node.remainder_blocks):
         
-        # Horizontal join
-        LR = np.hstack([L, R])
-        # Vertical split & compress
-        vmid = LR.shape[0] // 2
-        T = LR[:vmid, :]
-        B = LR[vmid:, :]
-        remainder_heights.append(vmid)
-        remainder_heights.append(LR.shape[0] - vmid)
-        T_k, T_ip = matrix_interpolative_decomposition(T, eps)
-        B_k, B_ip = matrix_interpolative_decomposition(B, eps)
-        assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
-        out_interpolants.append((T_ip, B_ip))
-        out_blocks.append(T_k)
-        out_blocks.append(B_k)
-    return out_blocks, InnerNode(out_interpolants, (left_node, right_node),
-                                 remainder_heights)
+            # Horizontal join
+            LR = np.hstack([L, R])
+            # Vertical split & compress
+            vmid = LR.shape[0] // 2
+            T = LR[:vmid, :]
+            B = LR[vmid:, :]
+            if sublevel >= max_levels:
+                T_k = T
+                B_k = B
+                n = T.shape[1]
+                T_ip = InterpolationBlock(np.zeros(n, dtype=np.int8),
+                                          np.zeros((n, 0)))
+                n = B.shape[1]
+                B_ip = InterpolationBlock(np.zeros(n, dtype=np.int8),
+                                          np.zeros((n, 0)))
+            else:
+                T_k, T_ip = matrix_interpolative_decomposition(T, eps)
+                B_k, B_ip = matrix_interpolative_decomposition(B, eps)
+            assert T_ip.shape[1] == B_ip.shape[1] == LR.shape[1]       
+            out_interpolants.append((T_ip, B_ip))
+            out_blocks.append(T_k)
+            out_blocks.append(B_k)
+    return sublevel + 1, InnerNode(out_interpolants, (left_node, right_node),
+                                   out_blocks)
 
 def get_number_of_levels(n, min):
     levels = 0
@@ -441,7 +463,7 @@ def partition(P, C):
         result.append(P[:, idx:idx + C])
     return result
 
-def butterfly_compress(A, C=None, min_rows=None, eps=1e-10):
+def butterfly_compress(A, C=None, min_rows=None, eps=1e-10, max_levels=1e10):
     if min_rows is not None:
         if not isinstance(A, np.ndarray) or C is not None:
             raise ValueError()
@@ -454,7 +476,7 @@ def butterfly_compress(A, C=None, min_rows=None, eps=1e-10):
         if not isinstance(A, list):
             raise ValueError()
         B_list = pad_with_empty_columns(A)
-    diagonal_blocks, S_tree = butterfly_core(B_list, eps)
+    numlevels, S_tree = butterfly_core(B_list, eps, max_levels=max_levels)
     if isinstance(S_tree, IdentityNode):
         n = S_tree.ncols
         filter = np.zeros(S_tree.ncols)
@@ -463,11 +485,15 @@ def butterfly_compress(A, C=None, min_rows=None, eps=1e-10):
         I1 = IdentityNode(n)
         I2 = IdentityNode(0)
         S_tree = InnerNode([(IP1, IP2)], (I1, I2))
-        diagonal_blocks.append(np.zeros((0, 0)))
-    result = RootNode(diagonal_blocks, S_tree)
+        result = RootNode(np.zeros((0, 0)), S_tree)
+    else:
+        result = RootNode(S_tree.remainder_blocks, S_tree)
     return result
 
 def serialize_butterfly_matrix(M):
     data = BytesIO()
     M.write_to_stream(data)
     return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
+
+
+

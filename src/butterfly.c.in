@@ -71,15 +71,15 @@ and 'b' to the locations marked with 1.
 The target buffer is the concatenation of target1 and target2.
 The lengths of each of the buffer parts is in units of nvecs.
 */
-
+{{for should_add in [False, True]}}
+{{for should_not in [False, True]}}
 {{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
-const char *post_interpolation{{suffix}}(const char *restrict mask, 
-                                         double *restrict target1,
-                                         double *restrict target2,
-                                         const double *restrict a,
-                                         const double *restrict b,
-                                         int len1, int len2{{trailing_args}}) {
-  {{define}}
+const char *bfm_scatter{{'not' * should_not}}{{'_add' * should_add}}{{suffix}}(
+    const char *restrict mask, 
+    double *restrict target1,
+    double *restrict target2,
+    const double *restrict source,
+    int len1, int len2{{trailing_args}}) {
   /* Time spent is this routine is likely due to cache effects...be
      sure to profile on in-cache data.
 
@@ -88,41 +88,44 @@ const char *post_interpolation{{suffix}}(const char *restrict mask,
      speedups.  Best way forward to speed this up is likely to pack
      more information into each char in the mask, and use a switch to
      dispatch to multiple load/stores. */
+  {{define}}
   int j;
   const char *restrict end;
   int m;
-  m128i val;
+  int x = 0;
+  m128d val;
+  {{if should_add}}m128d tmp;{{endif}}
   assert(nvecs % 2 == 0);
   assert((size_t)target1 % 16 == 0);
   assert((size_t)target2 % 16 == 0);
-  assert((size_t)a % 16 == 0);
-  assert((size_t)b % 16 == 0);
+  assert((size_t)source % 16 == 0);
   {{for idx in [1, 2]}}
   end = mask + len{{idx}};
   while (mask != end) {
     m = *mask++;
-    if (m) {
+    if ({{'!' * should_not}}m) {
       for (j = 0; j != nvecs / 2; ++j) {
-        val = _mm_load_si128((m128i*)b);
-        b += 2;
-        _mm_store_si128((m128i*)target{{idx}}, val);
+        val = _mm_load_pd(source);
+        source += 2;
+        {{if should_add}}
+        tmp = _mm_load_pd(target{{idx}});
+        val = _mm_add_pd(val, tmp);
+        {{endif}}
+        _mm_store_pd(target{{idx}}, val);
         target{{idx}} += 2;
       }
     } else {
-      for (j = 0; j != nvecs / 2; ++j) {
-        val = _mm_load_si128((m128i*)a);
-        a += 2;
-        _mm_store_si128((m128i*)target{{idx}}, val);
-        target{{idx}} += 2;
-      }
+      target{{idx}} += nvecs;
     }
+    x++;
   }
   {{endfor}}
   return mask;
   {{undefine}}
 }
 {{endfor}}
-
+{{endfor}}
+{{endfor}}
 
 /*
 Utils

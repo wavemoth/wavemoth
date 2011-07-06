@@ -80,10 +80,18 @@ def build(bld):
     #
     # Main shared library
     #
+    bld(target='src/butterfly.h',
+        source=['src/butterfly.h.in'],
+        rule=run_tempita)
+    
     bld(target='fastsht',
         source=['src/fastsht.c', 'src/butterfly.c.in'],
         use='ATLAS FFTW3 OPENMP',
         features='c cshlib')
+
+    bld.add_manual_dependency(
+        bld.path.find_resource('src/butterfly.c'),
+        bld.path.find_resource('src/butterfly.h.in'))
 
     #
     # Python wrappers

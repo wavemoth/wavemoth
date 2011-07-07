@@ -147,7 +147,7 @@ def get_d(l, m):
     return num / den
 
 def test_legendre_transform():
-    nvecs = 4
+    nvecs = 2
     Nside = 2048
     ixmin, ixmax = 340, 500
     m = 10
@@ -164,34 +164,23 @@ def test_legendre_transform():
     c_inv = 1 / c
     x_squared = np.cos(nodes)**2
 
-    a = ((-1)**ls)[:, None] * np.arange(4)[None, :]
+    a = ((-1)**ls)[:, None] * np.arange(1, nvecs  + 1)[None, :]
     a = a.astype(np.double)
-    y = np.zeros((x_squared.shape[0], a.shape[1]))
 
     il_start = np.zeros(x_squared.shape[0], dtype=np.int64)
-    
-    associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv,
-                                  P[0, :].copy('C'), P[1, :].copy('C'))
+
     y0 = np.dot(a.T, P).T
-    for j in range(nvecs):
-        #print np.linalg.norm(y0[:, j] - y[:, j]) / np.linalg.norm(y0[:, j])
-        assert_almost_equal(y0[:, j], y[:, j])
-    #plt.plot(y0[:, 1])
-    #plt.plot(y[:, 1])
-    plt.show()
+    for use_sse in [False, True]:
+        y = np.zeros((x_squared.shape[0], a.shape[1]))
+        associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv,
+                                      P[0, :].copy('C'), P[1, :].copy('C'), use_sse=use_sse)
+        for j in range(nvecs):
+            print np.linalg.norm(y0[:, j] - y[:, j]) / np.linalg.norm(y0[:, j])
+            assert_almost_equal(y0[:, j], y[:, j])
 
-
-
-
-
-
-
-
-
-
-
-
-
+            #plt.plot(y0[:, 1])
+            #plt.plot(y[:, 1])
+            plt.show()
 
     
     

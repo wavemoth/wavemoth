@@ -20,5 +20,14 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
                                            double *c_inv,
                                            double *P, double *Pp1);
 
+void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
+                                               size_t nvecs,
+                                               size_t *il_start, 
+                                               double *a_l,
+                                               double *y,
+                                               double *x_squared, 
+                                               double *c, double *d,
+                                               double *c_inv,
+                                               double *P, double *Pp1);
 
 #endif

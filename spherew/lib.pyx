@@ -59,6 +59,15 @@ cdef extern from "legendre_transform.h":
                                                double *c, double *d,
                                                double *c_inv,
                                                double *P, double *Pp1)
+    void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
+                                                   size_t nvecs,
+                                                   size_t *il_start, 
+                                                   double *a_l,
+                                                   double *y,
+                                                   double *x_squared, 
+                                                   double *c, double *d,
+                                                   double *c_inv,
+                                                   double *P, double *Pp1)
     
 
 _configured = False
@@ -158,7 +167,7 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
                                   np.ndarray[double, ndim=1, mode='c'] c_inv,
                                   np.ndarray[double, ndim=1, mode='c'] P,
                                   np.ndarray[double, ndim=1, mode='c'] Pp1,
-                                  int repeat=1):
+                                  int repeat=1, use_sse=False):
     cdef size_t nx, nl, nvecs
     cdef int i
     
@@ -173,15 +182,30 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
         raise ValueError("nonconforming arrays")
 
 
-    for i in range(repeat):
-        fastsht_associated_legendre_transform(
-            nx, nl, nvecs,
-            <size_t*>il_start.data,
-            <double*>a.data,
-            <double*>y.data,
-            <double*>x_squared.data,
-            <double*>c.data,
-            <double*>d.data,
-            <double*>c_inv.data,
-            <double*>P.data,
-            <double*>Pp1.data)
+    if use_sse:
+        for i in range(repeat):
+            fastsht_associated_legendre_transform_sse(
+                nx, nl, nvecs,
+                <size_t*>il_start.data,
+                <double*>a.data,
+                <double*>y.data,
+                <double*>x_squared.data,
+                <double*>c.data,
+                <double*>d.data,
+                <double*>c_inv.data,
+                <double*>P.data,
+                <double*>Pp1.data)
+    else:
+        for i in range(repeat):
+            fastsht_associated_legendre_transform(
+                nx, nl, nvecs,
+                <size_t*>il_start.data,
+                <double*>a.data,
+                <double*>y.data,
+                <double*>x_squared.data,
+                <double*>c.data,
+                <double*>d.data,
+                <double*>c_inv.data,
+                <double*>P.data,
+                <double*>Pp1.data)
+            

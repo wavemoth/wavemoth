@@ -64,7 +64,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
     m128d P_1i = _mm_load_pd(Pp1 + i);
     m128d P_1i_l = _mm_unpacklo_pd(P_1i, P_1i);
     m128d P_1i_h = _mm_unpackhi_pd(P_1i, P_1i);
-    m128d a_1j = _mm_load_pd(a + (k + 1) * nvecs);
+    m128d a_1j = _mm_load_pd(a + k * nvecs);
     y_ij = _mm_add_pd(y_ij, _mm_mul_pd(a_1j, P_1i_l));
     y_ijp = _mm_add_pd(y_ijp, _mm_mul_pd(a_1j, P_1i_h));
 

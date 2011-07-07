@@ -164,7 +164,7 @@ def test_legendre_transform():
     c_inv = 1 / c
     x_squared = np.cos(nodes)**2
 
-    a = ((-1)**ls)[:, None] * np.arange(1, nvecs  + 1)[None, :]
+    a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs  + 1)[None, :]
     a = a.astype(np.double)
 
     il_start = np.zeros(x_squared.shape[0], dtype=np.int64)

@@ -47,8 +47,10 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
        0 to keep things brief. */
     k = k_start[i];
 
-    /* We loop over k and compute y_ij = y[i, j] and y_ijp = y[i, j + 1]. */
-    m128d y_ij, y_ijp;
+    m128d xsq_i = _mm_load_pd(x_squared + i);
+
+    /* We loop over k and compute y_ij = y[i, j] and y_ipj = y[i + 1, j]. */
+    m128d y_ij, y_ipj;
 
     /* k=0 and k=1 needs special treatment as they are already computed (starting values) */
     /* y_ij = a_0i * P_0i for all j. */
@@ -57,7 +59,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
     m128d P_0i_h = _mm_unpackhi_pd(P_0i, P_0i);
     m128d a_0j = _mm_load_pd(a + k * nvecs);
     y_ij = _mm_mul_pd(a_0j, P_0i_l);
-    y_ijp = _mm_mul_pd(a_0j, P_0i_h);
+    y_ipj = _mm_mul_pd(a_0j, P_0i_h);
 
     /* y_ij += a_1i * P_1i for all j */
     ++k;
@@ -66,35 +68,39 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
     m128d P_1i_h = _mm_unpackhi_pd(P_1i, P_1i);
     m128d a_1j = _mm_load_pd(a + k * nvecs);
     y_ij = _mm_add_pd(y_ij, _mm_mul_pd(a_1j, P_1i_l));
-    y_ijp = _mm_add_pd(y_ijp, _mm_mul_pd(a_1j, P_1i_h));
-
+    y_ipj = _mm_add_pd(y_ipj, _mm_mul_pd(a_1j, P_1i_h));
 
     /* Loop over k = 2..nl-1 */
     ++k;
+    m128d P_sub2 = P_0i;
+    m128d P_sub1 = P_1i;
+    m128d P_cur;
     for (; k < nl; ++k) {
       /* Load auxiliary data */
+      m128d t = _mm_load_pd(auxdata + 4 * (k - 2));
+      m128d c_sub2 = _mm_unpacklo_pd(t, t);
+      m128d cinv_sub1 = _mm_unpackhi_pd(t, t);
+      t = _mm_load_pd(auxdata + 4 * (k - 2) + 2);
+      m128d d_sub1 = _mm_unpacklo_pd(t, t); /* 4th component is padding */
+      
+      t = _mm_sub_pd(xsq_i, d_sub1);
+      t = _mm_mul_pd(t, P_sub1);
+      P_cur = _mm_mul_pd(P_sub2, c_sub2);
+      P_sub2 = P_sub1;
+      P_cur = _mm_sub_pd(t, P_cur);
+      P_cur = _mm_mul_pd(P_cur, cinv_sub1);
+      P_sub1 = P_cur;
+
+      m128d P_l = _mm_unpacklo_pd(P_cur, P_cur);
+      m128d P_h = _mm_unpackhi_pd(P_cur, P_cur);
+      
+      m128d a_kj = _mm_load_pd(a + k * nvecs);
+      y_ij = _mm_add_pd(y_ij, _mm_mul_pd(a_kj, P_l));
+      y_ipj = _mm_add_pd(y_ipj, _mm_mul_pd(a_kj, P_h));
     }
 
     _mm_store_pd(y + i * nvecs, y_ij);
-    _mm_store_pd(y + (i + 1) * nvecs, y_ijp);
-
-    for (int it = 0; it != 2; ++it) {
-      k = k_start[i] + 1;
-      Pval_prevprev = P[i + it];
-      Pval_prev = Pp1[i + it];
-      ++k;
-      for (; k < nl; ++k) {
-        double c_sub2 = auxdata[4 * (k - 2) + 0];
-        double cinv_sub1 = auxdata[4 * (k - 2) + 1];
-        double d_sub1 = auxdata[4 * (k - 2) + 2];
-        Pval = cinv_sub1 * ((x_squared[i + it] - d_sub1) * Pval_prev - c_sub2 * Pval_prevprev);
-        Pval_prevprev = Pval_prev;
-        Pval_prev = Pval;
-        for (j = 0; j != nvecs; ++j) {
-          y[(i + it) * nvecs + j] += Pval * a[k * nvecs + j];        
-        }
-      }
-    }
+    _mm_store_pd(y + (i + 1) * nvecs, y_ipj);
   }
   #undef nvecs
 }

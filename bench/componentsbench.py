@@ -28,8 +28,8 @@ def post_projection_scatter():
 
 def legendre_transform():
     nvecs = 2
-    nx = 4000
-    nl = 4000
+    nx = 2000
+    nl = 2000
     c = np.zeros(nl)
     d = np.zeros(nl)
     c_inv = np.zeros(nl)
@@ -42,10 +42,14 @@ def legendre_transform():
 
     associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
                                   repeat=1)
-    J = 10
+    J = 20
     with benchmark('lt', J):
         associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
                                       repeat=J)
+    J = 50
+    with benchmark('lt_sse', J, profile=True):
+        associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
+                                      repeat=J, use_sse=True)
 
 if sys.argv[1] == 'pps':
     post_projection_scatter()

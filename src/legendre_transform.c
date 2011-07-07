@@ -17,16 +17,19 @@ void _printreg(char *msg, m128d r) {
 
 #define printreg(x) _printreg(#x, x)
 
+#define IDX_C 0
+#define IDX_CINV 1
+#define IDX_D 2
+
 void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                size_t _nvecs,
                                                size_t *k_start, 
                                                double *a,
                                                double *y,
                                                double *x_squared, 
-                                               double *c, double *d,
-                                               double *c_inv,
+                                               double *auxdata,
                                                double *P, double *Pp1) {
-  size_t ix, il, j, il_start_val, k;
+  size_t i, il, j, il_start_val, k;
   double Pval, Pval_prev, Pval_prevprev;
   m128d rp0, rp1, rp00, rp01, rp10, rp11, ry0, ry1, ra, tmp;
   #define nvecs 2
@@ -35,23 +38,21 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
   assert(nx % 2 == 0);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
-  assert((size_t)c % 16 == 0);
-  assert((size_t)d % 16 == 0);
-  assert((size_t)c_inv % 16 == 0);
+  assert((size_t)auxdata % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
-  for (ix = 0; ix != nx; ix += 2) {
-    assert(k_start[ix] == k_start[ix + 1]);
+  for (i = 0; i != nx; i += 2) {
+    assert(k_start[i] == k_start[i + 1]);
     /* In comments and variable names we will assume that k starts on
        0 to keep things brief. */
-    k = k_start[ix];
+    k = k_start[i];
 
     /* We loop over k and compute y_ij = y[i, j] and y_ijp = y[i, j + 1]. */
     m128d y_ij, y_ijp;
 
     /* k=0 and k=1 needs special treatment as they are already computed (starting values) */
     /* y_ij = a_0i * P_0i for all j. */
-    m128d P_0i = _mm_load_pd(P + ix);
+    m128d P_0i = _mm_load_pd(P + i);
     m128d P_0i_l = _mm_unpacklo_pd(P_0i, P_0i);
     m128d P_0i_h = _mm_unpackhi_pd(P_0i, P_0i);
     m128d a_0j = _mm_load_pd(a + k * nvecs);
@@ -60,7 +61,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
 
     /* y_ij += a_1i * P_1i for all j */
     ++k;
-    m128d P_1i = _mm_load_pd(Pp1 + ix);
+    m128d P_1i = _mm_load_pd(Pp1 + i);
     m128d P_1i_l = _mm_unpacklo_pd(P_1i, P_1i);
     m128d P_1i_h = _mm_unpackhi_pd(P_1i, P_1i);
     m128d a_1j = _mm_load_pd(a + (k + 1) * nvecs);
@@ -68,55 +69,33 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
     y_ijp = _mm_add_pd(y_ijp, _mm_mul_pd(a_1j, P_1i_h));
 
 
-    _mm_store_pd(y + ix * nvecs, y_ij);
-    _mm_store_pd(y + (ix + 1) * nvecs, y_ijp);
+    /* Loop over k = 2..nl-1 */
+    ++k;
+    for (; k < nl; ++k) {
+      /* Load auxiliary data */
+    }
 
-    for (int ixp = 0; ixp != 2; ++ixp) {
-      k = k_start[ix] + 1;
-      Pval_prevprev = P[ix + ixp];
-      Pval_prev = Pp1[ix + ixp];
+    _mm_store_pd(y + i * nvecs, y_ij);
+    _mm_store_pd(y + (i + 1) * nvecs, y_ijp);
+
+    for (int it = 0; it != 2; ++it) {
+      k = k_start[i] + 1;
+      Pval_prevprev = P[i + it];
+      Pval_prev = Pp1[i + it];
       ++k;
       for (; k < nl; ++k) {
-        Pval = c_inv[k - 1] * ((x_squared[ix + ixp] - d[k - 1]) * Pval_prev - c[k - 2] * Pval_prevprev);
+        double c_sub2 = auxdata[4 * (k - 2) + 0];
+        double cinv_sub1 = auxdata[4 * (k - 2) + 1];
+        double d_sub1 = auxdata[4 * (k - 2) + 2];
+        Pval = cinv_sub1 * ((x_squared[i + it] - d_sub1) * Pval_prev - c_sub2 * Pval_prevprev);
         Pval_prevprev = Pval_prev;
         Pval_prev = Pval;
         for (j = 0; j != nvecs; ++j) {
-          y[(ix + ixp) * nvecs + j] += Pval * a[k * nvecs + j];        
+          y[(i + it) * nvecs + j] += Pval * a[k * nvecs + j];        
         }
       }
     }
   }
-    /* Make rp[lx] contain [P_i(x), P_i(x)] */
-    /*    m128d P_0i = _mm_load_pd(P + ix);
-    m128d P_0il = _mm_unpacklo_pd(P_0i, P_0i);
-    m128d P_0ih = _mm_unpackhi_pd(P_0i, P_0i);*/
-
-    /* Multiply rp00 and rp01 with a_l's for all j */
-    /*    m128d a_0j = _mm_load_pd(a + k * nvecs);
-    m128d y_ij = _mm_mul_pd(a_0j, P_0il);
-    _mm_store_pd(y + ix * nvecs, y_ij);
-    y_ij = _mm_mul_pd(a_0j, P_0ih);
-    _mm_store_pd(y + (ix + 1) * nvecs, y_ij);
-
-    printreg(P_0i);
-    printreg(P_0il);
-    printreg(P_0ih);
-    printreg(a_0j);
-    printreg(y_ij);
-    printf("%f\n", *(P + ix));*/
-    //    abort();
-    /*
-    y[ix * nvecs] = P[ix] * a[k * nvecs];
-    y[ix * nvecs + 1] = P[ix] * a[k * nvecs + 1];
-    y[ix * nvecs + 2] = P[ix + 1] * a[k * nvecs];
-    y[ix * nvecs + 3] = P[ix + 1] * a[k * nvecs + 1];
-
-    */
-    //    abort();
-
-    /*    rp10 = _mm_load_pd(Pp1 + ix);
-    rp11 = _mm_shuffle_pd(rp11, rp10, SHUFCONST(1, 1));
-    rp11 = _mm_shuffle_pd(rp11, rp10, SHUFCONST(0, 0));*/
   #undef nvecs
 }
 
@@ -126,32 +105,34 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
                                            double *a,
                                            double *y,
                                            double *x_squared, 
-                                           double *c, double *d,
-                                           double *c_inv,
+                                           double *auxdata,
                                            double *P, double *Pp1) {
-  size_t ix, k, j, k_start_val;
+  size_t i, k, j, k_start_val;
   double Pval, Pval_prev, Pval_prevprev;
 
   assert(nl >= 2);
-  for (ix = 0; ix != nx; ++ix) {
+  for (i = 0; i != nx; ++i) {
     /* First get away with the precomputed values. This also zeros the output buffer. */
-    k = k_start[ix];
-    Pval_prevprev = P[ix];
-    Pval_prev = Pp1[ix];
+    k = k_start[i];
+    Pval_prevprev = P[i];
+    Pval_prev = Pp1[i];
     for (j = 0; j != nvecs; ++j) {
-      y[ix * nvecs + j] = Pval_prevprev * a[k * nvecs + j];
+      y[i * nvecs + j] = Pval_prevprev * a[k * nvecs + j];
     }
     ++k;
     for (j = 0; j != nvecs; ++j) {
-      y[ix * nvecs + j] += Pval_prev * a[k * nvecs + j];
+      y[i * nvecs + j] += Pval_prev * a[k * nvecs + j];
     }
     ++k;
     for (; k < nl; ++k) {
-      Pval = c_inv[k - 1] * ((x_squared[ix] - d[k - 1]) * Pval_prev - c[k - 2] * Pval_prevprev);
+      double c_sub2 = auxdata[4 * (k - 2) + 0];
+      double cinv_sub1 = auxdata[4 * (k - 2) + 1];
+      double d_sub1 = auxdata[4 * (k - 2) + 2];
+      Pval = cinv_sub1 * ((x_squared[i] - d_sub1) * Pval_prev - c_sub2 * Pval_prevprev);
       Pval_prevprev = Pval_prev;
       Pval_prev = Pval;
       for (j = 0; j != nvecs; ++j) {
-        y[ix * nvecs + j] += Pval * a[k * nvecs + j];        
+        y[i * nvecs + j] += Pval * a[k * nvecs + j];        
       }
     }
   }

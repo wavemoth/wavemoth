@@ -56,8 +56,7 @@ cdef extern from "legendre_transform.h":
                                                double *a_l,
                                                double *y,
                                                double *x_squared, 
-                                               double *c, double *d,
-                                               double *c_inv,
+                                               double *c_and_cinv_and_d,
                                                double *P, double *Pp1)
     void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                    size_t nvecs,
@@ -65,8 +64,7 @@ cdef extern from "legendre_transform.h":
                                                    double *a_l,
                                                    double *y,
                                                    double *x_squared, 
-                                                   double *c, double *d,
-                                                   double *c_inv,
+                                                   double *c_and_cinv_and_d,
                                                    double *P, double *Pp1)
     
 
@@ -169,7 +167,7 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
                                   np.ndarray[double, ndim=1, mode='c'] Pp1,
                                   int repeat=1, use_sse=False):
     cdef size_t nx, nl, nvecs
-    cdef int i
+    cdef Py_ssize_t i
     
     nx = x_squared.shape[0]
     if not nx == il_start.shape[0] == P.shape[0] == Pp1.shape[0]:
@@ -181,6 +179,15 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
     if not nvecs == y.shape[1]:
         raise ValueError("nonconforming arrays")
 
+    # Pack the auxiliary data here, just to keep testcases and benchmarks
+    # from having to change when internals change.
+    cdef np.ndarray[double, mode='c'] auxdata = np.empty(4 * (nl - 2))
+    cdef double NaN = np.nan
+    for i in range(2, nl):
+        auxdata[4 * (i - 2)] = c[i - 2]
+        auxdata[4 * (i - 2) + 1] = c_inv[i - 1]
+        auxdata[4 * (i - 2) + 2] = d[i - 1]
+        auxdata[4 * (i - 2) + 3] = NaN
 
     if use_sse:
         for i in range(repeat):
@@ -190,9 +197,7 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
                 <double*>a.data,
                 <double*>y.data,
                 <double*>x_squared.data,
-                <double*>c.data,
-                <double*>d.data,
-                <double*>c_inv.data,
+                <double*>auxdata.data,
                 <double*>P.data,
                 <double*>Pp1.data)
     else:
@@ -203,9 +208,7 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
                 <double*>a.data,
                 <double*>y.data,
                 <double*>x_squared.data,
-                <double*>c.data,
-                <double*>d.data,
-                <double*>c_inv.data,
+                <double*>auxdata.data,
                 <double*>P.data,
                 <double*>Pp1.data)
             

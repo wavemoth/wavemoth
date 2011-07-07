@@ -90,7 +90,7 @@ def build(bld):
         features='c cshlib')
 
     bld.add_manual_dependency(
-        bld.path.find_resource('src/butterfly.c'),
+        bld.path.find_resource('src/butterfly.c.in'),
         bld.path.find_resource('src/butterfly.h.in'))
 
     #
@@ -133,6 +133,10 @@ def build(bld):
         target='lib',
         use='NUMPY fastsht',
         features='c fc pyext cshlib')
+    for x in ['src/fastsht.h', 'src/butterfly.h.in']:
+        bld.add_manual_dependency(
+            bld.path.find_resource('spherew/lib.pyx'),
+            bld.path.find_resource(x))
 
     bld(source=(['spherew/psht.pyx']),
         target='psht',

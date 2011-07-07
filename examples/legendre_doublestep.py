@@ -22,8 +22,8 @@ np.seterr(all='raise')
 Nside = 2048
 lmax = 2 * Nside
 epsilon_legendre = 1e-30
-odd = 0
-m = 0
+odd = 1
+m = 567
 
 nodes = get_ring_thetas(Nside, positive_only=True)
 x_list = np.cos(nodes)
@@ -62,8 +62,8 @@ for idx in range(2, ls.shape[0]):
     Ptilde[idx, :] = - (a + b) / c_l[idx - 1]
     
 
-
-print np.max(np.abs(P - Ptilde) / np.abs(P))
+    
+#print np.max(np.abs(P - Ptilde) / np.abs(P))
 print np.max(np.abs(P - Ptilde))
 print np.linalg.norm(P - Ptilde) / np.linalg.norm(P)
 

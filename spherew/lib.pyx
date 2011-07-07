@@ -48,6 +48,17 @@ cdef extern from "fastsht_private.h":
     void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end)
     fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
     void fastsht_free_grid_info(fastsht_grid_info *info)
+
+cdef extern from "legendre_transform.h":
+    void fastsht_associated_legendre_transform(size_t nx, size_t nl,
+                                               size_t nvecs,
+                                               size_t *il_start, 
+                                               double *a_l,
+                                               double *y,
+                                               double *x_squared, 
+                                               double *c, double *d,
+                                               double *c_inv,
+                                               double *P, double *Pp1)
     
 
 _configured = False
@@ -138,3 +149,39 @@ def _get_healpix_phi0s(Nside):
     
 
 
+def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_start,
+                                  np.ndarray[double, ndim=2, mode='c'] a,
+                                  np.ndarray[double, ndim=2, mode='c'] y,
+                                  np.ndarray[double, ndim=1, mode='c'] x_squared,
+                                  np.ndarray[double, ndim=1, mode='c'] c,
+                                  np.ndarray[double, ndim=1, mode='c'] d,
+                                  np.ndarray[double, ndim=1, mode='c'] c_inv,
+                                  np.ndarray[double, ndim=1, mode='c'] P,
+                                  np.ndarray[double, ndim=1, mode='c'] Pp1,
+                                  int repeat=1):
+    cdef size_t nx, nl, nvecs
+    cdef int i
+    
+    nx = x_squared.shape[0]
+    if not nx == il_start.shape[0] == P.shape[0] == Pp1.shape[0]:
+        raise ValueError("nonconforming arrays")
+    nl = a.shape[0]
+    if not nl == c.shape[0] == d.shape[0] == c_inv.shape[0]:
+        raise ValueError("nonconforming arrays")
+    nvecs = a.shape[1]
+    if not nvecs == y.shape[1]:
+        raise ValueError("nonconforming arrays")
+
+
+    for i in range(repeat):
+        fastsht_associated_legendre_transform(
+            nx, nl, nvecs,
+            <size_t*>il_start.data,
+            <double*>a.data,
+            <double*>y.data,
+            <double*>x_squared.data,
+            <double*>c.data,
+            <double*>d.data,
+            <double*>c_inv.data,
+            <double*>P.data,
+            <double*>Pp1.data)

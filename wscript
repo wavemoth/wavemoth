@@ -85,7 +85,7 @@ def build(bld):
         rule=run_tempita)
     
     bld(target='fastsht',
-        source=['src/fastsht.c', 'src/butterfly.c.in'],
+        source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c'],
         use='ATLAS FFTW3 OPENMP',
         features='c cshlib')
 

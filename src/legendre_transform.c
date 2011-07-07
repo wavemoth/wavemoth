@@ -42,25 +42,39 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
   assert((size_t)Pp1 % 16 == 0);
   for (ix = 0; ix != nx; ix += 2) {
     assert(k_start[ix] == k_start[ix + 1]);
+    /* In comments and variable names we will assume that k starts on
+       0 to keep things brief. */
     k = k_start[ix];
 
-    m128d P_0i = _mm_load_pd(P + ix);
-    m128d P_0il = _mm_unpacklo_pd(P_0i, P_0i);
-    m128d P_0ih = _mm_unpackhi_pd(P_0i, P_0i);
+    /* We loop over k and compute y_ij = y[i, j] and y_ijp = y[i, j + 1]. */
+    m128d y_ij, y_ijp;
 
+    /* k=0 and k=1 needs special treatment as they are already computed (starting values) */
+    /* y_ij = a_0i * P_0i for all j. */
+    m128d P_0i = _mm_load_pd(P + ix);
+    m128d P_0i_l = _mm_unpacklo_pd(P_0i, P_0i);
+    m128d P_0i_h = _mm_unpackhi_pd(P_0i, P_0i);
     m128d a_0j = _mm_load_pd(a + k * nvecs);
-    m128d y_ij = _mm_mul_pd(a_0j, P_0il);
+    y_ij = _mm_mul_pd(a_0j, P_0i_l);
+    y_ijp = _mm_mul_pd(a_0j, P_0i_h);
+
+    /* y_ij += a_1i * P_1i for all j */
+    ++k;
+    m128d P_1i = _mm_load_pd(Pp1 + ix);
+    m128d P_1i_l = _mm_unpacklo_pd(P_1i, P_1i);
+    m128d P_1i_h = _mm_unpackhi_pd(P_1i, P_1i);
+    m128d a_1j = _mm_load_pd(a + (k + 1) * nvecs);
+    y_ij = _mm_add_pd(y_ij, _mm_mul_pd(a_1j, P_1i_l));
+    y_ijp = _mm_add_pd(y_ijp, _mm_mul_pd(a_1j, P_1i_h));
+
+
     _mm_store_pd(y + ix * nvecs, y_ij);
-    y_ij = _mm_mul_pd(a_0j, P_0ih);
-    _mm_store_pd(y + (ix + 1) * nvecs, y_ij);
+    _mm_store_pd(y + (ix + 1) * nvecs, y_ijp);
 
     for (int ixp = 0; ixp != 2; ++ixp) {
       k = k_start[ix] + 1;
       Pval_prevprev = P[ix + ixp];
       Pval_prev = Pp1[ix + ixp];
-      for (j = 0; j != nvecs; ++j) {
-        y[(ix + ixp) * nvecs + j] += Pval_prev * a[k * nvecs + j];
-      }
       ++k;
       for (; k < nl; ++k) {
         Pval = c_inv[k - 1] * ((x_squared[ix + ixp] - d[k - 1]) * Pval_prev - c[k - 2] * Pval_prevprev);

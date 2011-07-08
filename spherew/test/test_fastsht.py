@@ -138,7 +138,7 @@ def test_merge_even_odd_and_transpose():
 def test_legendre_transform():
     nvecs = 2
     Nside = 2048
-    ixmin, ixmax = 340, 500
+    ixmin, ixmax = 340, 340 + 180
     m = 10
     lmin, lmax = m + 200, m + 300
     ls = np.arange(lmin, lmax, 2)

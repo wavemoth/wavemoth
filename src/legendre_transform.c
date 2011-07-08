@@ -1,4 +1,3 @@
-//#undef NDEBUG
 #include <assert.h>
 #include <xmmintrin.h>
 #include <emmintrin.h>
@@ -26,13 +25,32 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                double *x_squared, 
                                                double *auxdata,
                                                double *P, double *Pp1) {
-  #define nvecs 2
-  #define NS 2
+  /* We compute:
 
+        y_{k,j} = sum_k  P_{k, i} a_{k,j}
+
+     Overall strategy: Compute P with three-term recurrence relation
+     in k and multiply results with a as we go. We compute with 6
+     columns of P at the time (NS=3 strips, each strip uses SSE
+     128-bit register), which is what we can fit in the 16 registers
+     available without spilling. The shuffling&loading of 'a' and
+     auxiliary data (alpha, beta, gamma) is amortized over these 6
+     columns. 'x_squared' is streamed in again and again (once per row
+     of P) to conserve registers -- letting NS=2 or spilling registers
+     into stack were both significantly slower).
+
+     The output 'y' sits in 6 SSE accumulation registers (12 values
+     at the time) and is transposed and stored only after each
+     loop over k.
+    
+  */
+
+  #define nvecs 2
+  #define NS 3
   size_t i, j, k, s;
   assert(nl >= 2);
   assert(_nvecs == 2);
-  assert(nx % 2 == 0);
+  assert(nx % (2 * NS) == 0);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
   assert((size_t)auxdata % 16 == 0);
@@ -46,10 +64,6 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
        using. */
     for (s = 1; s != 2 * NS; ++s) assert(k_start[i] == k_start[i + s]);
     k = k_start[i];
-
-    /* The xsq_i only needs to be loaded once per strip. */
-    m128d xsq_i[NS];
-    for (s = 0; s != NS; ++s) xsq_i[s] = _mm_load_pd(x_squared + i + 2 * s);
 
     /* We loop over k in the inner-most loop and fully compute y_ij
        before storing it. The registers store y_ij transposed of the
@@ -130,28 +144,33 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
          loop, but gcc (v4.4.5) was not able to see through it. Templating
          should be used instead.
 
-         NOTE: Reordering instructions that does not change the logic
-         below does change the running times.  This would be a
-         candidate for manually tuned assembly. On my current computer
-         it is at 73% of DGEMM in terms of GFLOPS/s, counting all
-         mul and adds.
-
-         NOTE: This is better compiled at -O3 without -funroll-loops.
+         NOTE: This is better compiled WITHOUT -funroll-loops (or at
+         least don't assume it doesn't make things
+         worse). Profile-guided optimization made things worse as
+         well.
        */
 
       /* Load auxiliary data. */
       m128d aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
       m128d aux2 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 2);
-      m128d aux3 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 4);
 
       m128d alpha = _mm_unpacklo_pd(aux1, aux1);
       m128d beta = _mm_unpackhi_pd(aux1, aux1);
       m128d gamma = _mm_unpacklo_pd(aux2, aux2);
 
-      /* Use the recurrence relation */
+      /* x_squared is streamed in as we go in order to conserve
+         registers, so that we can let NS == 3 instead of 2. The extra
+         loads we spend here are worth it so that the loads&shuffles of
+         alpha, beta, gamma, and a can be reused over 3 stripes instead
+         of 2.
+
+         This had a noticeable impact on performance, from around 75%
+         of peak GFLOP to 85%.
+      */
       m128d w[NS];
       for (s = 0; s != NS; ++s) {
-        w[s] = _mm_add_pd(xsq_i[s], alpha);
+        w[s] = _mm_load_pd(x_squared + i + 2 * s);
+        w[s] = _mm_add_pd(w[s], alpha);
         w[s] = _mm_mul_pd(w[s], beta);
         w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
 
@@ -169,6 +188,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
         y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
       }
 
+      m128d aux3 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 4);
       ++k;
 
       /* Iteration 2 */
@@ -178,7 +198,8 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
       gamma = _mm_unpackhi_pd(aux3, aux3);
 
       for (s = 0; s != NS; ++s) {
-        w[s] = _mm_add_pd(xsq_i[s], alpha);
+        w[s] = _mm_load_pd(x_squared + i + 2 * s);
+        w[s] = _mm_add_pd(w[s], alpha);
         w[s] = _mm_mul_pd(w[s], beta);
         w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
 

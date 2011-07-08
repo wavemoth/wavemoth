@@ -28,7 +28,8 @@ def post_projection_scatter():
 
 def legendre_transform():
     nvecs = 2
-    nx = 2 * 2048
+    nx = 2 * 2048 * 10
+    nx -= nx % 6
     nl = 2 * 2048 // 2
     x_squared = np.zeros(nx)
     k_start = np.zeros(nx, dtype=np.int64)
@@ -43,7 +44,7 @@ def legendre_transform():
     with benchmark('lt', J):
         associated_legendre_transform(0, 0, k_start, a, y, x_squared, p0, p1,
                                       repeat=J)
-    J = 50
+    J = 40
     with benchmark('lt_sse', J, profile=True):
         associated_legendre_transform(0, 0, k_start, a, y, x_squared, p0, p1,
                                       repeat=J, use_sse=True)

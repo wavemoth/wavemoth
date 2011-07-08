@@ -1,4 +1,4 @@
-#undef NDEBUG
+//#undef NDEBUG
 #include <assert.h>
 #include <xmmintrin.h>
 #include <emmintrin.h>
@@ -17,10 +17,6 @@ void _printreg(char *msg, m128d r) {
 
 #define printreg(x) _printreg(#x, x)
 
-#define IDX_C 0
-#define IDX_CINV 1
-#define IDX_D 2
-
 void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                size_t _nvecs,
                                                size_t *k_start, 
@@ -29,10 +25,10 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                double *x_squared, 
                                                double *auxdata,
                                                double *P, double *Pp1) {
-  size_t i, il, j, il_start_val, k;
-  double Pval, Pval_prev, Pval_prevprev;
-  m128d rp0, rp1, rp00, rp01, rp10, rp11, ry0, ry1, ra, tmp;
   #define nvecs 2
+  #define NS 2
+
+  size_t i, j, k, s;
   assert(nl >= 2);
   assert(_nvecs == 2);
   assert(nx % 2 == 0);
@@ -41,40 +37,75 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
   assert((size_t)auxdata % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
-  for (i = 0; i != nx; i += 2) {
-    assert(k_start[i] == k_start[i + 1]);
+  for (i = 0; i != nx; i += 2 * NS) {
     /* In comments and variable names we will assume that k starts on
-       0 to keep things brief. */
+       0 to keep things brief; however, this is a dynamic quantity to
+       support ignoring near-zero parts of P. The precomputation should
+       ensure that k_start is constant over the block-sizes we end up
+       using. */
+    for (s = 1; s != 2 * NS; ++s) assert(k_start[i] == k_start[i + s]);
     k = k_start[i];
 
-    m128d xsq_i = _mm_load_pd(x_squared + i);
+    /* The xsq_i only needs to be loaded once per strip. */
+    m128d xsq_i[NS];
+    for (s = 0; s != NS; ++s) xsq_i[s] = _mm_load_pd(x_squared + i + 2 * s);
 
-    /* We loop over k and compute y_ij = y[i, j] and y_ipj = y[i + 1, j]. */
-    m128d y_ij, y_ipj;
+    /* We loop over k in the inner-most loop and fully compute y_ij
+       before storing it. The registers store y_ij transposed of the
+       final order, the transpose happens right before storing to
+       memory. I.e., for each strip i,
 
-    /* k=0 and k=1 needs special treatment as they are already computed (starting values) */
-    /* y_ij = a_0i * P_0i for all j. */
-    m128d P_0i = _mm_load_pd(P + i);
-    m128d P_0i_l = _mm_unpacklo_pd(P_0i, P_0i);
-    m128d P_0i_h = _mm_unpackhi_pd(P_0i, P_0i);
-    m128d a_0j = _mm_load_pd(a + k * nvecs);
-    y_ij = _mm_mul_pd(a_0j, P_0i_l);
-    y_ipj = _mm_mul_pd(a_0j, P_0i_h);
+       y_ij  = [y_{i,j}     y_{i+1, j}    ]
+       y_ijp = [y_{i,j + 1} y_{i+1, j + 1}]      
 
-    /* y_ij += a_1i * P_1i for all j */
+    */
+    m128d y_ij[NS], y_ijp[NS];
+#define MULADD(z, a, b) _mm_add_pd(z, _mm_mul_pd(a, b))
+
+    /* For each strip of two x's, we keep
+
+       P_ki =   [P_{k,i} P_{k,i+1}],
+       Pp_ki =  [Pp_{k-1,i} P_{k-1,i+1}]
+       Ppp_ki = [Pp_{k-2,i} P_{k-2,i+1}]
+     */
+    m128d P_ki[NS], Pp_ki[NS], Ppp_ki[NS];
+
+    /* a_kj is loaded and shuffled for each k -- a load brings
+       in a_{k,j} and a_{k,j+1}, which we duplicate in registers
+       so that they can be multiplied with P_ki.
+
+       a_kj  = [ a_{k,j}  a_{k,j} ]
+       a_kjp = [ a_{k,j+1}  a_{k,j+1} ]
+    */
+    m128d a_kj, a_kjp;
+#define LOAD_A(k) { \
+  a_kj = _mm_load_pd(a + k * nvecs); \
+  a_kjp = _mm_unpackhi_pd(a_kj, a_kj); \
+  a_kj = _mm_unpacklo_pd(a_kj, a_kj); \
+  }
+
+    /* First two values of k needs special treatment as they are
+       already computed (starting values). For the first k we
+       initialize y_ij, and after that we accumulate in y_ij.
+    */
+
+    LOAD_A(k);
+    for (s = 0; s != NS; ++s) {
+      Ppp_ki[s] = _mm_load_pd(P + i + 2 * s);
+      y_ij[s] = _mm_mul_pd(Ppp_ki[s], a_kj);
+      y_ijp[s] = _mm_mul_pd(Ppp_ki[s], a_kjp);
+    }
     ++k;
-    m128d P_1i = _mm_load_pd(Pp1 + i);
-    m128d P_1i_l = _mm_unpacklo_pd(P_1i, P_1i);
-    m128d P_1i_h = _mm_unpackhi_pd(P_1i, P_1i);
-    m128d a_1j = _mm_load_pd(a + k * nvecs);
-    y_ij = _mm_add_pd(y_ij, _mm_mul_pd(a_1j, P_1i_l));
-    y_ipj = _mm_add_pd(y_ipj, _mm_mul_pd(a_1j, P_1i_h));
+
+    LOAD_A(k);
+    for (s = 0; s != NS; ++s) {
+      Pp_ki[s] = _mm_load_pd(Pp1 + i + 2 * s);
+      y_ij[s] = MULADD(y_ij[s], Pp_ki[s], a_kj);
+      y_ijp[s] = MULADD(y_ijp[s], Pp_ki[s], a_kjp);
+    }
+    ++k;
 
     /* Loop over k = 2..nl-1 */
-    ++k;
-    m128d P_sub2 = P_0i;
-    m128d P_sub1 = P_1i;
-    m128d P_cur;
     for (; k < nl; ++k) {
       /* Load auxiliary data */
       m128d t = _mm_load_pd(auxdata + 4 * (k - 2));
@@ -82,25 +113,37 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
       m128d cinv_sub1 = _mm_unpackhi_pd(t, t);
       t = _mm_load_pd(auxdata + 4 * (k - 2) + 2);
       m128d d_sub1 = _mm_unpacklo_pd(t, t); /* 4th component is padding */
-      
-      t = _mm_sub_pd(xsq_i, d_sub1);
-      t = _mm_mul_pd(t, P_sub1);
-      P_cur = _mm_mul_pd(P_sub2, c_sub2);
-      P_sub2 = P_sub1;
-      P_cur = _mm_sub_pd(t, P_cur);
-      P_cur = _mm_mul_pd(P_cur, cinv_sub1);
-      P_sub1 = P_cur;
 
-      m128d P_l = _mm_unpacklo_pd(P_cur, P_cur);
-      m128d P_h = _mm_unpackhi_pd(P_cur, P_cur);
-      
-      m128d a_kj = _mm_load_pd(a + k * nvecs);
-      y_ij = _mm_add_pd(y_ij, _mm_mul_pd(a_kj, P_l));
-      y_ipj = _mm_add_pd(y_ipj, _mm_mul_pd(a_kj, P_h));
+      /* Use the recurrence relation */
+      m128d w[NS];
+      for (s = 0; s != NS; ++s) {
+        w[s] = _mm_sub_pd(xsq_i[s], d_sub1);
+        w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
+
+        P_ki[s] = _mm_mul_pd(Ppp_ki[s], c_sub2);
+        Ppp_ki[s] = Pp_ki[s];
+        
+        P_ki[s] = _mm_sub_pd(w[s], P_ki[s]);
+        P_ki[s] = _mm_mul_pd(P_ki[s], cinv_sub1);
+        Pp_ki[s] = P_ki[s];
+      }
+
+      LOAD_A(k);
+
+      for (s = 0; s != NS; ++s) {
+        y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
+        y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
+      }
     }
 
-    _mm_store_pd(y + i * nvecs, y_ij);
-    _mm_store_pd(y + (i + 1) * nvecs, y_ipj);
+    /* Finally, transpose and store the computed y_ij's. */
+    m128d ycol_i[s], ycol_ip[s];
+    for (s = 0; s != NS; ++s) {
+      ycol_i[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(0, 0));
+      ycol_ip[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(1, 1));
+      _mm_store_pd(y + (i + 2 * s) * nvecs, ycol_i[s]);
+      _mm_store_pd(y + (i + 2 * s + 1) * nvecs, ycol_ip[s]);
+    }
   }
   #undef nvecs
 }

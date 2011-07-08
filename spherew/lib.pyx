@@ -167,7 +167,7 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
                                   np.ndarray[double, ndim=1, mode='c'] Pp1,
                                   int repeat=1, use_sse=False):
     cdef size_t nx, nl, nvecs
-    cdef Py_ssize_t i
+    cdef Py_ssize_t i, k
     
     nx = x_squared.shape[0]
     if not nx == il_start.shape[0] == P.shape[0] == Pp1.shape[0]:
@@ -183,11 +183,11 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
     # from having to change when internals change.
     cdef np.ndarray[double, mode='c'] auxdata = np.empty(4 * (nl - 2))
     cdef double NaN = np.nan
-    for i in range(2, nl):
-        auxdata[4 * (i - 2)] = c[i - 2]
-        auxdata[4 * (i - 2) + 1] = c_inv[i - 1]
-        auxdata[4 * (i - 2) + 2] = d[i - 1]
-        auxdata[4 * (i - 2) + 3] = NaN
+    for k in range(2, nl):
+        auxdata[4 * (k - 2)] = -d[k - 1] # alpha
+        auxdata[4 * (k - 2) + 1] = 1 / c[k - 1] # beta
+        auxdata[4 * (k - 2) + 2] = -c[k - 2] / c[k - 1] # gamma
+        auxdata[4 * (k - 2) + 3] = NaN
 
     if use_sse:
         for i in range(repeat):

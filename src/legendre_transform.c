@@ -107,24 +107,39 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
 
     /* Loop over k = 2..nl-1 */
     for (; k < nl; ++k) {
-      /* Load auxiliary data */
-      m128d t = _mm_load_pd(auxdata + 4 * (k - 2));
-      m128d c_sub2 = _mm_unpacklo_pd(t, t);
-      m128d cinv_sub1 = _mm_unpackhi_pd(t, t);
-      t = _mm_load_pd(auxdata + 4 * (k - 2) + 2);
-      m128d d_sub1 = _mm_unpacklo_pd(t, t); /* 4th component is padding */
+      /* The recurrence relation we compute is, for each x_i,
+
+         P_{k} = (x^2 + [-d_{k-1}]) * [1/c_{k-1}] P_{k-1} + [-c_{k-2}/c_{k-1}] P_{k-2}
+
+         which we write
+
+         P_k = (x^2 + alpha) * beta * P_{k-2} + gamma * P_{k-2}
+
+         The terms in []-brackets are precomputed and available packed
+         in auxdata; they must be unpacked into registers. Storing
+         c_{k-2}/c_{k-1} seperately removes one dependency in the chain
+         to hopefully improve pipelining.
+       */
+
+      /* Load auxiliary data. */
+      m128d aux1 = _mm_load_pd(auxdata + 4 * (k - 2));
+      m128d aux2 = _mm_load_pd(auxdata + 4 * (k - 2) + 2);
+
+      m128d alpha = _mm_unpacklo_pd(aux1, aux1);
+      m128d beta = _mm_unpackhi_pd(aux1, aux1);
+      m128d gamma = _mm_unpacklo_pd(aux2, aux2);
 
       /* Use the recurrence relation */
       m128d w[NS];
       for (s = 0; s != NS; ++s) {
-        w[s] = _mm_sub_pd(xsq_i[s], d_sub1);
+        w[s] = _mm_add_pd(xsq_i[s], alpha);
+        w[s] = _mm_mul_pd(w[s], beta);
         w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
 
-        P_ki[s] = _mm_mul_pd(Ppp_ki[s], c_sub2);
+        P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
+        P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
+
         Ppp_ki[s] = Pp_ki[s];
-        
-        P_ki[s] = _mm_sub_pd(w[s], P_ki[s]);
-        P_ki[s] = _mm_mul_pd(P_ki[s], cinv_sub1);
         Pp_ki[s] = P_ki[s];
       }
 
@@ -174,10 +189,10 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
     }
     ++k;
     for (; k < nl; ++k) {
-      double c_sub2 = auxdata[4 * (k - 2) + 0];
-      double cinv_sub1 = auxdata[4 * (k - 2) + 1];
-      double d_sub1 = auxdata[4 * (k - 2) + 2];
-      Pval = cinv_sub1 * ((x_squared[i] - d_sub1) * Pval_prev - c_sub2 * Pval_prevprev);
+      double alpha = auxdata[4 * (k - 2) + 0];
+      double beta = auxdata[4 * (k - 2) + 1];
+      double gamma = auxdata[4 * (k - 2) + 2];
+      Pval = (x_squared[i] + alpha) * beta * Pval_prev + gamma * Pval_prevprev;
       Pval_prevprev = Pval_prev;
       Pval_prev = Pval;
       for (j = 0; j != nvecs; ++j) {

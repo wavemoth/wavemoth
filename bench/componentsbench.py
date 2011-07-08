@@ -28,10 +28,10 @@ def post_projection_scatter():
 
 def legendre_transform():
     nvecs = 2
-    nx = 2000
-    nl = 2000
-    c = np.zeros(nl)
-    d = np.zeros(nl)
+    nx = 2 * 2048 * 10
+    nl = 2048
+    c = np.ones(nl)
+    d = np.ones(nl)
     c_inv = np.zeros(nl)
     x_squared = np.zeros(nx)
     il_start = np.zeros(nx, dtype=np.int64)
@@ -42,7 +42,7 @@ def legendre_transform():
 
     associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
                                   repeat=1)
-    J = 20
+    J = 1
     with benchmark('lt', J):
         associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
                                       repeat=J)

@@ -35,6 +35,7 @@ def configure(conf):
     conf.add_os_flags('STLIBPATH')
     conf.add_os_flags('FWRAPFLAGS')
     conf.add_os_flags('CFLAGS')
+    conf.add_os_flags('LINKFLAGS')
 
     if not conf.env.CFLAGS:
         raise RuntimeError("Set CFLAGS while developing")
@@ -68,6 +69,11 @@ def configure(conf):
 
     conf.env.LIB_RT = ['rt']
     conf.env.LIB_MKL = ['mkl_rt']
+
+    conf.env.CFLAGS_PROFILEGEN = ['-fprofile-generate']
+    conf.env.LINKFLAGS_PROFILEGEN = ['-fprofile-generate']
+    conf.env.CFLAGS_PROFILEUSE = ['-fprofile-use']
+    conf.env.LINKFLAGS_PROFILEUSE = ['-fprofile-use']
 
     if not conf.options.no_openmp:
         conf.env.CFLAGS_OPENMP = ['-fopenmp']

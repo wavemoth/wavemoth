@@ -4,6 +4,7 @@
 #include <emmintrin.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "legendre_transform.h"
 
@@ -246,5 +247,36 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
         y[i * nvecs + j] += Pval * a[k * nvecs + j];        
       }
     }
+  }
+}
+
+/*
+  Compute auxiliary data for the associated Legendre transform. The size
+  of the output 'auxdata' buffer should be at least 3 * (nk - 2).
+  The first chunk of auxiliary data is for computing P_{lmin + 4}^m.
+*/
+void fastsht_associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
+                                                   double *auxdata) {
+  size_t k, l;
+  double c, cp, cpp, d, dp, x, y;
+  for (k = 0, l = lmin; k != nk; ++k, l += 2) {
+    /* Compute c */
+    x = (l - m + 1) * (l - m + 2) * (l + m + 1) * (l + m + 2);
+    y = (2 * l + 1) * (2 * l + 3) * (2 * l + 3) * (2 * l + 5);
+    c = sqrt(x / y);
+    /* Compute d */
+    x = 2 * l * (l + 1) - 2 * m * m - 1;
+    y = (2 * l - 1) * (2 * l + 3);
+    d = x / y;
+
+    if (k >= 2) {
+      /* Compute and store auxiliary quantities */
+      auxdata[3 * (k - 2)] = -dp; /* alpha */
+      auxdata[3 * (k - 2) + 1] = 1 / cp; /* beta */
+      auxdata[3 * (k - 2) + 2] = -cpp / cp; /* gamma */
+    }
+    dp = d;
+    cpp = cp;
+    cp = c;
   }
 }

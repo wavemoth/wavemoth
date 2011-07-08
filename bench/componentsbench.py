@@ -28,27 +28,24 @@ def post_projection_scatter():
 
 def legendre_transform():
     nvecs = 2
-    nx = 2 * 2048 * 10
-    nl = 2048
-    c = np.ones(nl)
-    d = np.ones(nl)
-    c_inv = np.zeros(nl)
+    nx = 2 * 2048
+    nl = 2 * 2048 // 2
     x_squared = np.zeros(nx)
-    il_start = np.zeros(nx, dtype=np.int64)
+    k_start = np.zeros(nx, dtype=np.int64)
     a = np.zeros((nl, nvecs))
     y = np.zeros((nx, nvecs))
     p0 = np.zeros(nx)
     p1 = np.zeros(nx)
 
-    associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
+    associated_legendre_transform(0, 0, k_start, a, y, x_squared, p0, p1,
                                   repeat=1)
     J = 1
     with benchmark('lt', J):
-        associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
+        associated_legendre_transform(0, 0, k_start, a, y, x_squared, p0, p1,
                                       repeat=J)
     J = 50
     with benchmark('lt_sse', J, profile=True):
-        associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
+        associated_legendre_transform(0, 0, k_start, a, y, x_squared, p0, p1,
                                       repeat=J, use_sse=True)
     flops = nx * nl * 9
     print 'Number of GFLOPS performed', flops / 1e9

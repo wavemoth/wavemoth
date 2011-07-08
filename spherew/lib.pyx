@@ -52,7 +52,7 @@ cdef extern from "fastsht_private.h":
 cdef extern from "legendre_transform.h":
     void fastsht_associated_legendre_transform(size_t nx, size_t nl,
                                                size_t nvecs,
-                                               size_t *il_start, 
+                                               size_t *k_start, 
                                                double *a_l,
                                                double *y,
                                                double *x_squared, 
@@ -60,13 +60,16 @@ cdef extern from "legendre_transform.h":
                                                double *P, double *Pp1)
     void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                    size_t nvecs,
-                                                   size_t *il_start, 
+                                                   size_t *k_start, 
                                                    double *a_l,
                                                    double *y,
                                                    double *x_squared, 
                                                    double *c_and_cinv_and_d,
                                                    double *P, double *Pp1)
     
+    void fastsht_associated_legendre_transform_auxdata(
+        size_t m, size_t lmin, size_t nk,
+        double *auxdata)
 
 _configured = False
 
@@ -156,43 +159,35 @@ def _get_healpix_phi0s(Nside):
     
 
 
-def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_start,
+def associated_legendre_transform(int m, int lmin,
+                                  np.ndarray[np.int64_t, ndim=1, mode='c'] k_start,
                                   np.ndarray[double, ndim=2, mode='c'] a,
                                   np.ndarray[double, ndim=2, mode='c'] y,
                                   np.ndarray[double, ndim=1, mode='c'] x_squared,
-                                  np.ndarray[double, ndim=1, mode='c'] c,
-                                  np.ndarray[double, ndim=1, mode='c'] d,
-                                  np.ndarray[double, ndim=1, mode='c'] c_inv,
                                   np.ndarray[double, ndim=1, mode='c'] P,
                                   np.ndarray[double, ndim=1, mode='c'] Pp1,
                                   int repeat=1, use_sse=False):
-    cdef size_t nx, nl, nvecs
+    cdef size_t nx, nk, nvecs
     cdef Py_ssize_t i, k
     
     nx = x_squared.shape[0]
-    if not nx == il_start.shape[0] == P.shape[0] == Pp1.shape[0]:
+    if not nx == k_start.shape[0] == P.shape[0] == Pp1.shape[0]:
         raise ValueError("nonconforming arrays")
-    nl = a.shape[0]
-    if not nl == c.shape[0] == d.shape[0] == c_inv.shape[0]:
-        raise ValueError("nonconforming arrays")
+    nk = a.shape[0]
     nvecs = a.shape[1]
     if not nvecs == y.shape[1]:
         raise ValueError("nonconforming arrays")
 
     # Pack the auxiliary data here, just to keep testcases and benchmarks
     # from having to change when internals change.
-    cdef np.ndarray[double, mode='c'] auxdata = np.empty(3 * (nl - 2))
-    cdef double NaN = np.nan
-    for k in range(2, nl):
-        auxdata[3 * (k - 2)] = -d[k - 1] # alpha
-        auxdata[3 * (k - 2) + 1] = 1 / c[k - 1] # beta
-        auxdata[3 * (k - 2) + 2] = -c[k - 2] / c[k - 1] # gamma
+    cdef np.ndarray[double, mode='c'] auxdata = np.empty(3 * (nk - 2))
+    fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>auxdata.data)
 
     if use_sse:
         for i in range(repeat):
             fastsht_associated_legendre_transform_sse(
-                nx, nl, nvecs,
-                <size_t*>il_start.data,
+                nx, nk, nvecs,
+                <size_t*>k_start.data,
                 <double*>a.data,
                 <double*>y.data,
                 <double*>x_squared.data,
@@ -202,8 +197,8 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
     else:
         for i in range(repeat):
             fastsht_associated_legendre_transform(
-                nx, nl, nvecs,
-                <size_t*>il_start.data,
+                nx, nk, nvecs,
+                <size_t*>k_start.data,
                 <double*>a.data,
                 <double*>y.data,
                 <double*>x_squared.data,

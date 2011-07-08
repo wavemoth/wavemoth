@@ -135,17 +135,6 @@ def test_merge_even_odd_and_transpose():
     assert np.all(rings[0] == [0, 8, 0, 10])
     assert np.all(rings[3] == [0, 2, 0, 0, 0, 0, 0, 4])
 
-
-def get_c(l, m):
-    n = (l - m + 1) * (l - m + 2) * (l + m + 1) * (l + m + 2)
-    d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
-    return np.sqrt(n / d)
-
-def get_d(l, m):
-    num = 2 * l * (l + 1) - 2 * m * m - 1
-    den = (2 * l - 1) * (2 * l + 3)
-    return num / den
-
 def test_legendre_transform():
     nvecs = 2
     Nside = 2048
@@ -159,23 +148,20 @@ def test_legendre_transform():
     P = compute_normalized_associated_legendre(m, nodes, lmax, epsilon=1e-30)
     P = (P.T)[(lmin - m):(lmax - m):2, :].copy('C')
     
-    c = get_c(ls, m)
-    d = get_d(ls, m)
-    c_inv = 1 / c
     x_squared = np.cos(nodes)**2
 
     a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs  + 1)[None, :]
     a = a.astype(np.double)
 
-    il_start = np.zeros(x_squared.shape[0], dtype=np.int64)
+    k_start = np.zeros(x_squared.shape[0], dtype=np.int64)
 
     y0 = np.dot(a.T, P).T
     for use_sse in [False, True]:
         y = np.zeros((x_squared.shape[0], a.shape[1]))
-        associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv,
+        associated_legendre_transform(m, lmin, k_start, a, y, x_squared,
                                       P[0, :].copy('C'), P[1, :].copy('C'), use_sse=use_sse)
         for j in range(nvecs):
-            print np.linalg.norm(y0[:, j] - y[:, j]) / np.linalg.norm(y0[:, j])
+            #print np.linalg.norm(y0[:, j] - y[:, j]) / np.linalg.norm(y0[:, j])
             assert_almost_equal(y0[:, j], y[:, j])
 
             #plt.plot(y0[:, 1])

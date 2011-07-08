@@ -181,13 +181,12 @@ def associated_legendre_transform(np.ndarray[np.int64_t, ndim=1, mode='c'] il_st
 
     # Pack the auxiliary data here, just to keep testcases and benchmarks
     # from having to change when internals change.
-    cdef np.ndarray[double, mode='c'] auxdata = np.empty(4 * (nl - 2))
+    cdef np.ndarray[double, mode='c'] auxdata = np.empty(3 * (nl - 2))
     cdef double NaN = np.nan
     for k in range(2, nl):
-        auxdata[4 * (k - 2)] = -d[k - 1] # alpha
-        auxdata[4 * (k - 2) + 1] = 1 / c[k - 1] # beta
-        auxdata[4 * (k - 2) + 2] = -c[k - 2] / c[k - 1] # gamma
-        auxdata[4 * (k - 2) + 3] = NaN
+        auxdata[3 * (k - 2)] = -d[k - 1] # alpha
+        auxdata[3 * (k - 2) + 1] = 1 / c[k - 1] # beta
+        auxdata[3 * (k - 2) + 2] = -c[k - 2] / c[k - 1] # gamma
 
     if use_sse:
         for i in range(repeat):

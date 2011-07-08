@@ -50,6 +50,8 @@ def legendre_transform():
     with benchmark('lt_sse', J, profile=True):
         associated_legendre_transform(il_start, a, y, x_squared, c, d, c_inv, p0, p1,
                                       repeat=J, use_sse=True)
+    flops = nx * nl * 9
+    print 'Number of GFLOPS performed', flops / 1e9
 
 if sys.argv[1] == 'pps':
     post_projection_scatter()

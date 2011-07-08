@@ -10,7 +10,7 @@
 typedef __m128d m128d;
 typedef __m128 m128;
 
-void _printreg(char *msg, m128d r) {
+static void _printreg(char *msg, m128d r) {
   double *pd = (double*)&r;
   printf("%s = [%f %f]\n", msg, pd[0], pd[1]);
 }
@@ -106,7 +106,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
     ++k;
 
     /* Loop over k = 2..nl-1 */
-    for (; k < nl; ++k) {
+    while (k < nl) {
       /* The recurrence relation we compute is, for each x_i,
 
          P_{k} = (x^2 + [-d_{k-1}]) * [1/c_{k-1}] P_{k-1} + [-c_{k-2}/c_{k-1}] P_{k-2}
@@ -119,11 +119,29 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
          in auxdata; they must be unpacked into registers. Storing
          c_{k-2}/c_{k-1} seperately removes one dependency in the chain
          to hopefully improve pipelining.
+
+         Data packing: To save memory, and in at least one benchmark 2% running
+         time, the data is stored in memory as [(alpha beta) (gamma alpha) (beta gamma) ...].
+         That is, we unroll 2 iterations of the loop and load the auxiliary
+         data in different ways each time.
+
+         NOTE: I tried to write the logic using an extra two-iteration
+         loop, but gcc (v4.4.5) was not able to see through it. Templating
+         should be used instead.
+
+         NOTE: Reordering instructions that does not change the logic
+         below does change the running times.  This would be a
+         candidate for manually tuned assembly. On my current computer
+         it is at 73% of DGEMM in terms of GFLOPS/s, counting all
+         mul and adds.
+
+         NOTE: This is better compiled at -O3 without -funroll-loops.
        */
 
       /* Load auxiliary data. */
-      m128d aux1 = _mm_load_pd(auxdata + 4 * (k - 2));
-      m128d aux2 = _mm_load_pd(auxdata + 4 * (k - 2) + 2);
+      m128d aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
+      m128d aux2 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 2);
+      m128d aux3 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 4);
 
       m128d alpha = _mm_unpacklo_pd(aux1, aux1);
       m128d beta = _mm_unpackhi_pd(aux1, aux1);
@@ -149,6 +167,35 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
         y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
         y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
       }
+
+      ++k;
+
+      /* Iteration 2 */
+
+      alpha = _mm_unpackhi_pd(aux2, aux2);
+      beta = _mm_unpacklo_pd(aux3, aux3);
+      gamma = _mm_unpackhi_pd(aux3, aux3);
+
+      for (s = 0; s != NS; ++s) {
+        w[s] = _mm_add_pd(xsq_i[s], alpha);
+        w[s] = _mm_mul_pd(w[s], beta);
+        w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
+
+        P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
+        P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
+
+        Ppp_ki[s] = Pp_ki[s];
+        Pp_ki[s] = P_ki[s];
+      }
+
+      LOAD_A(k);
+
+      for (s = 0; s != NS; ++s) {
+        y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
+        y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
+      }
+
+      ++k;
     }
 
     /* Finally, transpose and store the computed y_ij's. */
@@ -189,9 +236,9 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
     }
     ++k;
     for (; k < nl; ++k) {
-      double alpha = auxdata[4 * (k - 2) + 0];
-      double beta = auxdata[4 * (k - 2) + 1];
-      double gamma = auxdata[4 * (k - 2) + 2];
+      double alpha = auxdata[3 * (k - 2) + 0];
+      double beta = auxdata[3 * (k - 2) + 1];
+      double gamma = auxdata[3 * (k - 2) + 2];
       Pval = (x_squared[i] + alpha) * beta * Pval_prev + gamma * Pval_prevprev;
       Pval_prevprev = Pval_prev;
       Pval_prev = Pval;

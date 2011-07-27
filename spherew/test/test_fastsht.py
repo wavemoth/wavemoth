@@ -138,24 +138,20 @@ def test_merge_even_odd_and_transpose():
 def test_legendre_transform():
     nvecs = 2
     Nside = 2048
-    ixmin, ixmax = 340, 340 + 180
+    ixmin = 340
     m = 10
-    lmin, lmax_even = m + 200, m + 300
+    lmin = m + 200
 
-    for odd_k in [0, 1]:
-        lmax = lmax_even + odd_k
+    def test(nx, nk):
+        lmax = lmin + nk
+        ixmax = ixmin + nx
         ls = np.arange(lmin, lmax, 2)
         nodes = get_ring_thetas(Nside, positive_only=True)[ixmin:ixmax]
         P = compute_normalized_associated_legendre(m, nodes, lmax, epsilon=1e-30)
         P = (P.T)[(lmin - m):(lmax - m):2, :].copy('C')
-
         x_squared = np.cos(nodes)**2
-
-        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs  + 1)[None, :]
-        a = a.astype(np.double)
-
+        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs  + 1)[None, :].astype(np.double)
         k_start = np.zeros(x_squared.shape[0], dtype=np.int64)
-
         y0 = np.dot(a.T, P).T
         for use_sse in [False, True]:
             y = np.zeros((x_squared.shape[0], a.shape[1]))
@@ -169,8 +165,9 @@ def test_legendre_transform():
                 #plt.plot(y[:, 1])
                 plt.show()
 
-    
-    
+    for xcase in [0, 2, 4, 6, 8]:
+        for kcase in [0, 1]:
+            test(20 + xcase, 10 + kcase)
 
 def test_matmul():
     raise SkipTest("This one was written with interpolation in mind")

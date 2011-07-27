@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include <assert.h>
 #include <xmmintrin.h>
 #include <emmintrin.h>
@@ -17,7 +18,10 @@ static void _printreg(char *msg, m128d r) {
 
 #define printreg(x) _printreg(#x, x)
 
-void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
+#define MULADD(z, a, b) _mm_add_pd(z, _mm_mul_pd(a, b))
+
+
+void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
                                                size_t _nvecs,
                                                size_t *k_start, 
                                                double *a,
@@ -25,19 +29,22 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                double *x_squared, 
                                                double *auxdata,
                                                double *P, double *Pp1) {
+  #define nvecs 2
+  #define NS 6
+  size_t i, j, k, s;
+
   /* We compute:
 
         y_{k,j} = sum_k  P_{k, i} a_{k,j}
 
      Overall strategy: Compute P with three-term recurrence relation
-     in k and multiply results with a as we go. We compute with 6
-     columns of P at the time (NS=3 strips, each strip uses SSE
-     128-bit register), which is what we can fit in the 16 registers
-     available without spilling. The shuffling&loading of 'a' and
-     auxiliary data (alpha, beta, gamma) is amortized over these 6
-     columns. 'x_squared' is streamed in again and again (once per row
-     of P) to conserve registers -- letting NS=2 or spilling registers
-     into stack were both significantly slower).
+     in k and multiply results with a as we go. We compute with NS=6
+     columns of P at the time, which is what we can fit in the 16
+     registers available without spilling. The shuffling&loading of
+     'a' and auxiliary data (alpha, beta, gamma) is amortized over
+     these 6 columns. 'x_squared' is streamed in again and again (once
+     per row of P) to conserve registers -- letting NS=4 or spilling
+     registers into stack were both significantly slower).
 
      The output 'y' sits in 6 SSE accumulation registers (12 values
      at the time) and is transposed and stored only after each
@@ -45,24 +52,89 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
     
   */
 
-  #define nvecs 2
-  #define NS 3
-  size_t i, j, k, s;
-  assert(nl >= 2);
+  /*** Subroutine templates w/ associated variable declarations ***/
+
+  /* load_a template
+
+     a_kj is loaded and shuffled for each k -- a load brings
+     in a_{k,j} and a_{k,j+1}, which we duplicate in registers
+     so that they can be multiplied with P_ki.
+
+     a_kj  = [ a_{k,j}  a_{k,j} ]
+     a_kjp = [ a_{k,j+1}  a_{k,j+1} ]
+    */
+  m128d a_kj, a_kjp;
+  {{def load_a(kexpr)}}
+  a_kj = _mm_load_pd(a + {{kexpr}} * nvecs);
+  a_kjp = _mm_unpackhi_pd(a_kj, a_kj);
+  a_kj = _mm_unpacklo_pd(a_kj, a_kj);
+  {{enddef}}
+
+  /* loop_body_strip template
+
+     Uses recurrence relation and does matmul for a strip of NS
+     elements.
+
+     Assumes that alpha, beta, gamma (for a given k) are loaded.  A
+     variable 'i' is passed in so that strips corresponding to
+     x_squared[i:i + NS] is processed.
+
+     x_squared is streamed in as we go in order to conserve
+     registers, so that we can let NS == 6 instead of 4. The extra
+     loads we spend here are worth it so that the loads&shuffles of
+     alpha, beta, gamma, and a can be reused over 3 stripes instead
+     of 2.
+         
+     This had a noticeable impact on performance, from around 75%
+     of peak GFLOP to 85%.
+   */
+
+  m128d alpha, beta, gamma;
+  {{def loop_body_strip(iexpr, kexpr)}}
+  {
+    size_t _i = {{iexpr}};
+    m128d w[NS / 2];
+    for (s = 0; s != NS / 2; ++s) {
+      /* 
+      */
+      w[s] = _mm_load_pd(x_squared + _i + 2 * s);
+      w[s] = _mm_add_pd(w[s], alpha);
+      w[s] = _mm_mul_pd(w[s], beta);
+      w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
+      
+      P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
+      P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
+      
+      Ppp_ki[s] = Pp_ki[s];
+      Pp_ki[s] = P_ki[s];
+    }
+  }
+  {{load_a(kexpr)}}
+
+  for (s = 0; s != NS / 2; ++s) {
+    y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
+    y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
+  }
+  {{enddef}}
+  
+
+  /* Function body */
+
+  assert(nk >= 2);
   assert(_nvecs == 2);
-  assert(nx % (2 * NS) == 0);
+  assert(nx % NS == 0);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
   assert((size_t)auxdata % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
-  for (i = 0; i != nx; i += 2 * NS) {
+  for (i = 0; i != nx; i += NS) {
     /* In comments and variable names we will assume that k starts on
        0 to keep things brief; however, this is a dynamic quantity to
        support ignoring near-zero parts of P. The precomputation should
        ensure that k_start is constant over the block-sizes we end up
        using. */
-    for (s = 1; s != 2 * NS; ++s) assert(k_start[i] == k_start[i + s]);
+    for (s = 1; s != NS; ++s) assert(k_start[i] == k_start[i + s]);
     k = k_start[i];
 
     /* We loop over k in the inner-most loop and fully compute y_ij
@@ -74,8 +146,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
        y_ijp = [y_{i,j + 1} y_{i+1, j + 1}]      
 
     */
-    m128d y_ij[NS], y_ijp[NS];
-#define MULADD(z, a, b) _mm_add_pd(z, _mm_mul_pd(a, b))
+    m128d y_ij[NS / 2], y_ijp[NS / 2];
 
     /* For each strip of two x's, we keep
 
@@ -83,45 +154,31 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
        Pp_ki =  [Pp_{k-1,i} P_{k-1,i+1}]
        Ppp_ki = [Pp_{k-2,i} P_{k-2,i+1}]
      */
-    m128d P_ki[NS], Pp_ki[NS], Ppp_ki[NS];
-
-    /* a_kj is loaded and shuffled for each k -- a load brings
-       in a_{k,j} and a_{k,j+1}, which we duplicate in registers
-       so that they can be multiplied with P_ki.
-
-       a_kj  = [ a_{k,j}  a_{k,j} ]
-       a_kjp = [ a_{k,j+1}  a_{k,j+1} ]
-    */
-    m128d a_kj, a_kjp;
-#define LOAD_A(k) { \
-  a_kj = _mm_load_pd(a + k * nvecs); \
-  a_kjp = _mm_unpackhi_pd(a_kj, a_kj); \
-  a_kj = _mm_unpacklo_pd(a_kj, a_kj); \
-  }
+    m128d P_ki[NS / 2], Pp_ki[NS / 2], Ppp_ki[NS / 2];
 
     /* First two values of k needs special treatment as they are
        already computed (starting values). For the first k we
        initialize y_ij, and after that we accumulate in y_ij.
     */
 
-    LOAD_A(k);
-    for (s = 0; s != NS; ++s) {
+    {{load_a('k')}}
+    for (s = 0; s != NS / 2; ++s) {
       Ppp_ki[s] = _mm_load_pd(P + i + 2 * s);
       y_ij[s] = _mm_mul_pd(Ppp_ki[s], a_kj);
       y_ijp[s] = _mm_mul_pd(Ppp_ki[s], a_kjp);
     }
     ++k;
 
-    LOAD_A(k);
-    for (s = 0; s != NS; ++s) {
+    {{load_a('k')}}
+    for (s = 0; s != NS / 2; ++s) {
       Pp_ki[s] = _mm_load_pd(Pp1 + i + 2 * s);
       y_ij[s] = MULADD(y_ij[s], Pp_ki[s], a_kj);
       y_ijp[s] = MULADD(y_ijp[s], Pp_ki[s], a_kjp);
     }
     ++k;
 
-    /* Loop over k = 2..nl-1 */
-    while (k < nl) {
+    /* Loop over k = 2..nk-1. */
+    while (k < nk) {
       /* The recurrence relation we compute is, for each x_i,
 
          P_{k} = (x^2 + [-d_{k-1}]) * [1/c_{k-1}] P_{k-1} + [-c_{k-2}/c_{k-1}] P_{k-2}
@@ -149,80 +206,29 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
          worse). Profile-guided optimization made things worse as
          well.
        */
+      m128d aux1, aux2, aux3;
 
-      /* Load auxiliary data. */
-      m128d aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
-      m128d aux2 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 2);
+      /* Unpack alpha, beta, gamma from aux1 and aux2, and do a loop step. */
+      aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
+      aux2 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 2);
+      alpha = _mm_unpacklo_pd(aux1, aux1);
+      beta = _mm_unpackhi_pd(aux1, aux1);
+      gamma = _mm_unpacklo_pd(aux2, aux2);
+      {{loop_body_strip('i', 'k')}}
 
-      m128d alpha = _mm_unpacklo_pd(aux1, aux1);
-      m128d beta = _mm_unpackhi_pd(aux1, aux1);
-      m128d gamma = _mm_unpacklo_pd(aux2, aux2);
-
-      /* x_squared is streamed in as we go in order to conserve
-         registers, so that we can let NS == 3 instead of 2. The extra
-         loads we spend here are worth it so that the loads&shuffles of
-         alpha, beta, gamma, and a can be reused over 3 stripes instead
-         of 2.
-
-         This had a noticeable impact on performance, from around 75%
-         of peak GFLOP to 85%.
-      */
-      m128d w[NS];
-      for (s = 0; s != NS; ++s) {
-        w[s] = _mm_load_pd(x_squared + i + 2 * s);
-        w[s] = _mm_add_pd(w[s], alpha);
-        w[s] = _mm_mul_pd(w[s], beta);
-        w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
-
-        P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
-        P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
-
-        Ppp_ki[s] = Pp_ki[s];
-        Pp_ki[s] = P_ki[s];
-      }
-
-      LOAD_A(k);
-
-      for (s = 0; s != NS; ++s) {
-        y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
-        y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
-      }
-
-      m128d aux3 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 4);
+      /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
+      aux3 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 4);
       ++k;
-
-      /* Iteration 2 */
-
       alpha = _mm_unpackhi_pd(aux2, aux2);
       beta = _mm_unpacklo_pd(aux3, aux3);
       gamma = _mm_unpackhi_pd(aux3, aux3);
-
-      for (s = 0; s != NS; ++s) {
-        w[s] = _mm_load_pd(x_squared + i + 2 * s);
-        w[s] = _mm_add_pd(w[s], alpha);
-        w[s] = _mm_mul_pd(w[s], beta);
-        w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
-
-        P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
-        P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
-
-        Ppp_ki[s] = Pp_ki[s];
-        Pp_ki[s] = P_ki[s];
-      }
-
-      LOAD_A(k);
-
-      for (s = 0; s != NS; ++s) {
-        y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
-        y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
-      }
-
+      {{loop_body_strip('i', 'k')}}
       ++k;
     }
 
     /* Finally, transpose and store the computed y_ij's. */
     m128d ycol_i[s], ycol_ip[s];
-    for (s = 0; s != NS; ++s) {
+    for (s = 0; s != NS / 2; ++s) {
       ycol_i[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(0, 0));
       ycol_ip[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(1, 1));
       _mm_store_pd(y + (i + 2 * s) * nvecs, ycol_i[s]);
@@ -232,7 +238,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
   #undef nvecs
 }
 
-void fastsht_associated_legendre_transform(size_t nx, size_t nl,
+void fastsht_associated_legendre_transform(size_t nx, size_t nk,
                                            size_t nvecs,
                                            size_t *k_start, 
                                            double *a,
@@ -243,7 +249,7 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
   size_t i, k, j, k_start_val;
   double Pval, Pval_prev, Pval_prevprev;
 
-  assert(nl >= 2);
+  assert(nk >= 2);
   for (i = 0; i != nx; ++i) {
     /* First get away with the precomputed values. This also zeros the output buffer. */
     k = k_start[i];
@@ -257,7 +263,7 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
       y[i * nvecs + j] += Pval_prev * a[k * nvecs + j];
     }
     ++k;
-    for (; k < nl; ++k) {
+    for (; k < nk; ++k) {
       double alpha = auxdata[3 * (k - 2) + 0];
       double beta = auxdata[3 * (k - 2) + 1];
       double gamma = auxdata[3 * (k - 2) + 2];

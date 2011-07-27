@@ -150,7 +150,7 @@ def test_legendre_transform():
         P = compute_normalized_associated_legendre(m, nodes, lmax, epsilon=1e-30)
         P = (P.T)[(lmin - m):(lmax - m):2, :].copy('C')
         x_squared = np.cos(nodes)**2
-        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs  + 1)[None, :].astype(np.double)
+        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs + 1)[None, :].astype(np.double)
         k_start = np.zeros(x_squared.shape[0], dtype=np.int64)
         y0 = np.dot(a.T, P).T
         for use_sse in [False, True]:
@@ -158,16 +158,14 @@ def test_legendre_transform():
             associated_legendre_transform(m, lmin, k_start, a, y, x_squared,
                                           P[0, :].copy('C'), P[1, :].copy('C'), use_sse=use_sse)
             for j in range(nvecs):
-                #print np.linalg.norm(y0[:, j] - y[:, j]) / np.linalg.norm(y0[:, j])
                 assert_almost_equal(y0[:, j], y[:, j])
-
                 #plt.plot(y0[:, 1])
                 #plt.plot(y[:, 1])
-                plt.show()
+                #plt.show()
 
-    for xcase in [0, 2, 4, 6, 8]:
+    for xcase in range(10):
         for kcase in [0, 1]:
-            test(20 + xcase, 10 + kcase)
+            yield test, 20 + xcase, 10 + kcase
 
 def test_matmul():
     raise SkipTest("This one was written with interpolation in mind")

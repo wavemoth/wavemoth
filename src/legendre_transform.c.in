@@ -59,17 +59,26 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
      in a_{k,j} and a_{k,j+1}, which we duplicate in registers
      so that they can be multiplied with P_ki.
 
+     If not single:
+
      a_kj  = [ a_{k,j}  a_{k,j} ]
      a_kjp = [ a_{k,j+1}  a_{k,j+1} ]
+
+     Else, if single:
+
+     a_kj = [ a_{k,j}  a_{k,j+1} ]
+
     */
   m128d a_kj, a_kjp;
-  {{def load_a(kexpr)}}
-  a_kj = _mm_load_pd(a + {{kexpr}} * nvecs);
+  {{def load_a(single)}}
+  a_kj = _mm_load_pd(a + k * nvecs);
+  {{if not single}}
   a_kjp = _mm_unpackhi_pd(a_kj, a_kj);
   a_kj = _mm_unpacklo_pd(a_kj, a_kj);
+  {{endif}}
   {{enddef}}
 
-  /* loop_body templates
+  /* loop_body template
 
      Uses recurrence relation and does matmul for a strip of xchunksize
      elements.
@@ -94,13 +103,18 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
      of peak GFLOP to 85%.
    */
 
-  {{def loop_body_sse(xchunksize)}}
+  {{def loop_body(xchunksize)}}
+{{py:
+single = xchunksize == 1
+nregs = 1 if xchunksize == 1 else xchunksize // 2
+}}
   {
-    m128d w[{{xchunksize}} / 2];
-    for (s = 0; s != {{xchunksize}} / 2; ++s) {
-      /* 
-      */
+    m128d w[{{nregs}}];
+    for (s = 0; s != {{nregs}}; ++s) {
       w[s] = _mm_load_pd(x_squared + i + 2 * s);
+      {{if single}}
+      w[s] = _mm_unpacklo_pd(w[s], w[s]);
+      {{endif}}
       w[s] = _mm_add_pd(w[s], alpha);
       w[s] = _mm_mul_pd(w[s], beta);
       w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
@@ -112,45 +126,58 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
       Pp_ki[s] = P_ki[s];
     }
   }
-  {{load_a('k')}}
+  {{load_a(single)}}
 
-  for (s = 0; s != {{xchunksize}} / 2; ++s) {
+  for (s = 0; s != {{nregs}}; ++s) {
     y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
-    y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
+    {{if not single}}
+      y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
+    {{endif}}
   }
   {{enddef}}
   
 
-  /* Strip processing. Takes the number of strips to process in each chunk
-     as argument. Takes the form of a loop which increments i.
-
-   */
-
   {{def process_strips(xchunksize)}}
 {{py:
 use_sse = (xchunksize % 2 == 0)
-loop_body = loop_body_sse if use_sse else loop_body_single
+single = xchunksize == 1
+nregs = 1 if single else xchunksize // 2
 }}
-#define xchunksize {{xchunksize}}
-   for (; i != nx - (nx % xchunksize); i += xchunksize) {
+  /* Process strips (xchunksize={{xchunksize}}) */
+   for (; i != nx - (nx % {{xchunksize}}); i += {{xchunksize}}) {
     /* In comments and variable names we will assume that k starts on
        0 to keep things brief; however, this is a dynamic quantity to
        support ignoring near-zero parts of P. The precomputation should
        ensure that k_start is constant over the block-sizes we end up
        using. */
-    for (s = 1; s != xchunksize; ++s) assert(k_start[i] == k_start[i + s]);
+    for (s = 1; s != {{xchunksize}}; ++s) assert(k_start[i] == k_start[i + s]);
     k = k_start[i];
 
     /* We loop over k in the inner-most loop and fully compute y_ij
-       before storing it. The registers store y_ij transposed of the
-       final order, the transpose happens right before storing to
-       memory. I.e., for each strip i,
+       before storing it.
 
-       y_ij  = [y_{i,j}     y_{i+1, j}    ]
-       y_ijp = [y_{i,j + 1} y_{i+1, j + 1}]      
+       If xchunksize == 1, computations on P_ki is duplicated on both
+       register entries, and SSE is only used for the 'matrix multiplication'
+       step:
+
+         P_ki = [P_{k,i} P_{k,i}]  (same for Pp_ki, Ppp_ki)
+         a_kj = [ a_{k,j}  a_{k,j+1} ]
+         y_ij = [y_{i,j}  y_{i,j+1}]
+
+       Otherwise, we process two strips at the time in P_ki. The
+       accumulation registers y are kept in transposed order, and then
+       transposed in the end:
+
+         P_ki =   [P_{k,i} P_{k,i+1}] (same for Pp_ki, Ppp_ki)
+
+         a_kj  = [ a_{k,j}  a_{k,j} ]
+         a_kjp = [ a_{k,j+1}  a_{k,j+1} ]
+    
+         y_ij  = [y_{i,j}   y_{i+1, j}  ]
+         y_ijp = [y_{i,j+1} y_{i+1,j+1} ]
 
     */
-    m128d y_ij[xchunksize / 2], y_ijp[xchunksize / 2];
+    m128d y_ij[{{nregs}}]{{if not single}}, y_ijp[{{nregs}}]{{endif}};
 
     /* For each strip of two x's, we keep
 
@@ -158,27 +185,40 @@ loop_body = loop_body_sse if use_sse else loop_body_single
        Pp_ki =  [Pp_{k-1,i} P_{k-1,i+1}]
        Ppp_ki = [Pp_{k-2,i} P_{k-2,i+1}]
      */
-    m128d P_ki[xchunksize / 2], Pp_ki[xchunksize / 2], Ppp_ki[xchunksize / 2];
+    m128d P_ki[{{nregs}}], Pp_ki[{{nregs}}], Ppp_ki[{{nregs}}];
 
     /* First two values of k needs special treatment as they are
        already computed (starting values). For the first k we
        initialize y_ij, and after that we accumulate in y_ij.
     */
 
-    {{load_a('k')}}
-    for (s = 0; s != xchunksize / 2; ++s) {
-      Ppp_ki[s] = _mm_load_pd(P + i + 2 * s);
-      y_ij[s] = _mm_mul_pd(Ppp_ki[s], a_kj);
-      y_ijp[s] = _mm_mul_pd(Ppp_ki[s], a_kjp);
-    }
-    ++k;
+    {{load_a(single)}}
+    {{if single}}
+      Ppp_ki[0] = _mm_load_pd(P + i);
+      Ppp_ki[0] = _mm_unpacklo_pd(Ppp_ki[0], Ppp_ki[0]);
+      y_ij[0] = _mm_mul_pd(Ppp_ki[0], a_kj);
+    {{else}}
+      for (s = 0; s != {{nregs}}; ++s) {
+        Ppp_ki[s] = _mm_load_pd(P + i + 2 * s);
+        y_ij[s] = _mm_mul_pd(Ppp_ki[s], a_kj);
+        y_ijp[s] = _mm_mul_pd(Ppp_ki[s], a_kjp);
+      }
+    {{endif}}
 
-    {{load_a('k')}}
-    for (s = 0; s != xchunksize / 2; ++s) {
-      Pp_ki[s] = _mm_load_pd(Pp1 + i + 2 * s);
-      y_ij[s] = MULADD(y_ij[s], Pp_ki[s], a_kj);
-      y_ijp[s] = MULADD(y_ijp[s], Pp_ki[s], a_kjp);
-    }
+    ++k;
+    {{load_a(single)}}
+
+    {{if single}}
+      Pp_ki[0] = _mm_load_pd(Pp1 + i);
+      Pp_ki[0] = _mm_unpacklo_pd(Pp_ki[0], Pp_ki[0]);
+      y_ij[0] = MULADD(y_ij[0], Pp_ki[0], a_kj);
+    {{else}}
+      for (s = 0; s != {{nregs}}; ++s) {
+        Pp_ki[s] = _mm_load_pd(Pp1 + i + 2 * s);
+        y_ij[s] = MULADD(y_ij[s], Pp_ki[s], a_kj);
+        y_ijp[s] = MULADD(y_ijp[s], Pp_ki[s], a_kjp);
+      }
+    {{endif}}
     ++k;
 
     /* Loop over k = 2..nk-1. */
@@ -244,15 +284,19 @@ loop_body = loop_body_sse if use_sse else loop_body_single
       ++k;
     }
 
-    /* Finally, transpose and store the computed y_ij's. */
+    /* Finally, store the computed y_ij's. */
+    {{if single}}
+    _mm_store_pd(y + i * nvecs, y_ij[0]);
+    {{else}}
+    /* Must transpose them */
     m128d ycol_i[s], ycol_ip[s];
-    for (s = 0; s != xchunksize / 2; ++s) {
+    for (s = 0; s != {{nregs}}; ++s) {
       ycol_i[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(0, 0));
       ycol_ip[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(1, 1));
       _mm_store_pd(y + (i + 2 * s) * nvecs, ycol_i[s]);
       _mm_store_pd(y + (i + 2 * s + 1) * nvecs, ycol_ip[s]);
     }
-#undef xchunksize
+    {{endif}}
   }
   {{enddef}}{{# process_strip}}
 
@@ -260,7 +304,6 @@ loop_body = loop_body_sse if use_sse else loop_body_single
 
   assert(nk >= 2);
   assert(_nvecs == 2);
-  assert(nx % 2 == 0);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
   assert((size_t)auxdata % 16 == 0);
@@ -270,6 +313,7 @@ loop_body = loop_body_sse if use_sse else loop_body_single
   i = 0;
   {{process_strips(6)}}
   {{process_strips(2)}}
+  {{process_strips(1)}}
 
   #undef nvecs
 }

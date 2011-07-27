@@ -178,7 +178,8 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
     ++k;
 
     /* Loop over k = 2..nk-1. */
-    while (k < nk) {
+    m128d aux1, aux2, aux3;
+    while (k < (nk - nk % 2)) {
       /* The recurrence relation we compute is, for each x_i,
 
          P_{k} = (x^2 + [-d_{k-1}]) * [1/c_{k-1}] P_{k-1} + [-c_{k-2}/c_{k-1}] P_{k-2}
@@ -206,7 +207,6 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
          worse). Profile-guided optimization made things worse as
          well.
        */
-      m128d aux1, aux2, aux3;
 
       /* Unpack alpha, beta, gamma from aux1 and aux2, and do a loop step. */
       aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
@@ -223,6 +223,20 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
       beta = _mm_unpacklo_pd(aux3, aux3);
       gamma = _mm_unpackhi_pd(aux3, aux3);
       {{loop_body_strip('i', 'k')}}
+      ++k;
+    }
+    if (k != nk) {
+      /* Loop tail for the single odd k. */
+      aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
+      alpha = _mm_unpacklo_pd(aux1, aux1);
+      beta = _mm_unpackhi_pd(aux1, aux1);
+      union {
+        double x[2];
+        m128d v;
+      } tmp;
+      tmp.x[0] = tmp.x[1] = auxdata[6 * (k - 2) / 2 + 2];
+      gamma = tmp.v;
+      {{loop_body_strip('i', 'k')}}      
       ++k;
     }
 

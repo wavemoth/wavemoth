@@ -21,16 +21,23 @@ static void _printreg(char *msg, m128d r) {
 #define MULADD(z, a, b) _mm_add_pd(z, _mm_mul_pd(a, b))
 
 
-void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
-                                               size_t _nvecs,
-                                               size_t *k_start, 
-                                               double *a,
-                                               double *y,
-                                               double *x_squared, 
-                                               double *auxdata,
-                                               double *P, double *Pp1) {
-  #define nvecs 2
+{{for xchunksize in [1, 2, 6]}}
+{{py:
+single = xchunksize == 1
+nregs = 1 if single else xchunksize // 2
+}}
+static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
+                                                         size_t ix_stop,
+                                                         size_t nk,
+                                                         size_t *k_start,
+                                                         double *a,
+                                                         double *y,
+                                                         double *x_squared,
+                                                         double *auxdata,
+                                                         double *P,
+                                                         double *Pp1) {
   size_t i, j, k, s;
+  assert((ix_stop - ix_start) % {{xchunksize}} == 0);
 
   /* We compute:
 
@@ -51,100 +58,8 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
     
   */
 
-  /*** Subroutine templates w/ associated variable declarations ***/
-
-  /* load_a template
-
-     a_kj is loaded and shuffled for each k -- a load brings
-     in a_{k,j} and a_{k,j+1}, which we duplicate in registers
-     so that they can be multiplied with P_ki.
-
-     If not single:
-
-     a_kj  = [ a_{k,j}  a_{k,j} ]
-     a_kjp = [ a_{k,j+1}  a_{k,j+1} ]
-
-     Else, if single:
-
-     a_kj = [ a_{k,j}  a_{k,j+1} ]
-
-    */
-  m128d a_kj, a_kjp;
-  {{def load_a(single)}}
-  a_kj = _mm_load_pd(a + k * nvecs);
-  {{if not single}}
-  a_kjp = _mm_unpackhi_pd(a_kj, a_kj);
-  a_kj = _mm_unpacklo_pd(a_kj, a_kj);
-  {{endif}}
-  {{enddef}}
-
-  /* loop_body template
-
-     Uses recurrence relation and does matmul for a strip of xchunksize
-     elements.
-
-     INPUT (C variables assumed to be present):
-     
-     alpha, beta, gamma:
-         Auxiliary information, values duplicated across
-         register elements.
-
-     k, i:
-         Counters set to row and column of P matrix. P[k, i:i + xchunksize]
-         is processed.
-
-     x_squared is streamed in as we go in order to conserve
-     registers, so that we can let xchunksize == 6 instead of 4. The extra
-     loads we spend here are worth it so that the loads&shuffles of
-     alpha, beta, gamma, and a can be reused over 3 stripes instead
-     of 2.
-         
-     This had a noticeable impact on performance, from around 75%
-     of peak GFLOP to 85%.
-   */
-
-  {{def loop_body(xchunksize)}}
-{{py:
-single = xchunksize == 1
-nregs = 1 if xchunksize == 1 else xchunksize // 2
-}}
-  {
-    m128d w[{{nregs}}];
-    for (s = 0; s != {{nregs}}; ++s) {
-      w[s] = _mm_load_pd(x_squared + i + 2 * s);
-      {{if single}}
-      w[s] = _mm_unpacklo_pd(w[s], w[s]);
-      {{endif}}
-      w[s] = _mm_add_pd(w[s], alpha);
-      w[s] = _mm_mul_pd(w[s], beta);
-      w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
-      
-      P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
-      P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
-      
-      Ppp_ki[s] = Pp_ki[s];
-      Pp_ki[s] = P_ki[s];
-    }
-  }
-  {{load_a(single)}}
-
-  for (s = 0; s != {{nregs}}; ++s) {
-    y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
-    {{if not single}}
-      y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
-    {{endif}}
-  }
-  {{enddef}}
-  
-
-  {{def process_strips(xchunksize)}}
-{{py:
-use_sse = (xchunksize % 2 == 0)
-single = xchunksize == 1
-nregs = 1 if single else xchunksize // 2
-}}
   /* Process strips (xchunksize={{xchunksize}}) */
-   for (; i != nx - (nx % {{xchunksize}}); i += {{xchunksize}}) {
+  for (i = ix_start; i != ix_stop; i += {{xchunksize}}) {
     /* In comments and variable names we will assume that k starts on
        0 to keep things brief; however, this is a dynamic quantity to
        support ignoring near-zero parts of P. The precomputation should
@@ -177,22 +92,84 @@ nregs = 1 if single else xchunksize // 2
          y_ijp = [y_{i,j+1} y_{i+1,j+1} ]
 
     */
-    m128d y_ij[{{nregs}}]{{if not single}}, y_ijp[{{nregs}}]{{endif}};
-
-    /* For each strip of two x's, we keep
-
-       P_ki =   [P_{k,i} P_{k,i+1}],
-       Pp_ki =  [Pp_{k-1,i} P_{k-1,i+1}]
-       Ppp_ki = [Pp_{k-2,i} P_{k-2,i+1}]
-     */
+    m128d y_ij[{{nregs}}], a_kj;
     m128d P_ki[{{nregs}}], Pp_ki[{{nregs}}], Ppp_ki[{{nregs}}];
+    {{if not single}}
+    m128d y_ijp[{{nregs}}], a_kjp;
+    {{endif}}
 
-    /* First two values of k needs special treatment as they are
+
+    /* Template for loading a_kj */
+    {{def load_a}}
+    {
+      a_kj = _mm_load_pd(a + k * 2);
+      {{if not single}}
+        a_kjp = _mm_unpackhi_pd(a_kj, a_kj);
+        a_kj = _mm_unpacklo_pd(a_kj, a_kj);
+      {{endif}}
+    }
+    {{enddef}}
+
+    /* Template for the core loop body
+
+       Uses recurrence relation and does matmul for a strip of xchunksize
+       elements.
+
+       INPUT (C variables assumed to be present):
+     
+       alpha, beta, gamma:
+         Auxiliary information, values duplicated across
+         register elements.
+
+       k, i:
+         Counters set to row and column of P matrix. P[k, i:i + xchunksize]
+         is processed.
+
+       x_squared is streamed in as we go in order to conserve
+       registers, so that we can let xchunksize == 6 instead of 4. The extra
+       loads we spend here are worth it so that the loads&shuffles of
+       alpha, beta, gamma, and a can be reused over 3 stripes instead
+       of 2.
+         
+       This had a noticeable impact on performance, from around 75%
+       of peak GFLOP to 85%.
+    */
+    {{def loop_body(xchunksize)}}
+    {
+      m128d w[{{nregs}}];
+      for (s = 0; s != {{nregs}}; ++s) {
+        w[s] = _mm_load_pd(x_squared + i + 2 * s);
+          {{if single}}
+            w[s] = _mm_unpacklo_pd(w[s], w[s]);
+          {{endif}}
+        w[s] = _mm_add_pd(w[s], alpha);
+        w[s] = _mm_mul_pd(w[s], beta);
+        w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
+      
+        P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
+        P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
+      
+        Ppp_ki[s] = Pp_ki[s];
+        Pp_ki[s] = P_ki[s];
+      }
+      {{load_a}}
+      for (s = 0; s != {{nregs}}; ++s) {
+        y_ij[s] = MULADD(y_ij[s], P_ki[s], a_kj);
+        {{if not single}}
+          y_ijp[s] = MULADD(y_ijp[s], P_ki[s], a_kjp);
+        {{endif}}
+      }
+    }
+    {{enddef}}
+
+
+    /* Move on to computation.
+       First two values of k needs special treatment as they are
        already computed (starting values). For the first k we
        initialize y_ij, and after that we accumulate in y_ij.
     */
 
-    {{load_a(single)}}
+    {{load_a}}
     {{if single}}
       Ppp_ki[0] = _mm_load_pd(P + i);
       Ppp_ki[0] = _mm_unpacklo_pd(Ppp_ki[0], Ppp_ki[0]);
@@ -206,7 +183,7 @@ nregs = 1 if single else xchunksize // 2
     {{endif}}
 
     ++k;
-    {{load_a(single)}}
+    {{load_a}}
 
     {{if single}}
       Pp_ki[0] = _mm_load_pd(Pp1 + i);
@@ -221,7 +198,6 @@ nregs = 1 if single else xchunksize // 2
     {{endif}}
     ++k;
 
-    /* Loop over k = 2..nk-1. */
     m128d aux1, aux2, aux3, alpha, beta, gamma;
     while (k < (nk - nk % 2)) {
       /* The recurrence relation we compute is, for each x_i,
@@ -270,7 +246,7 @@ nregs = 1 if single else xchunksize // 2
       ++k;
     }
     if (k != nk) {
-      /* Loop tail for the single odd k. */
+      /* Loop peel for the single odd k. */
       aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
       alpha = _mm_unpacklo_pd(aux1, aux1);
       beta = _mm_unpackhi_pd(aux1, aux1);
@@ -286,36 +262,49 @@ nregs = 1 if single else xchunksize // 2
 
     /* Finally, store the computed y_ij's. */
     {{if single}}
-    _mm_store_pd(y + i * nvecs, y_ij[0]);
+    _mm_store_pd(y + i * 2, y_ij[0]);
     {{else}}
     /* Must transpose them */
     m128d ycol_i[s], ycol_ip[s];
     for (s = 0; s != {{nregs}}; ++s) {
       ycol_i[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(0, 0));
       ycol_ip[s] = _mm_shuffle_pd(y_ij[s], y_ijp[s], _MM_SHUFFLE2(1, 1));
-      _mm_store_pd(y + (i + 2 * s) * nvecs, ycol_i[s]);
-      _mm_store_pd(y + (i + 2 * s + 1) * nvecs, ycol_ip[s]);
+      _mm_store_pd(y + (i + 2 * s) * 2, ycol_i[s]);
+      _mm_store_pd(y + (i + 2 * s + 1) * 2, ycol_ip[s]);
     }
     {{endif}}
   }
-  {{enddef}}{{# process_strip}}
+}
+{{endfor}}
 
+void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
+                                               size_t nvecs,
+                                               size_t *k_start, 
+                                               double *a,
+                                               double *y,
+                                               double *x_squared, 
+                                               double *auxdata,
+                                               double *P, double *Pp1) {
   /* Function body */
 
   assert(nk >= 2);
-  assert(_nvecs == 2);
+  assert(nvecs == 2);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
   assert((size_t)auxdata % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
 
+  size_t i, n;
   i = 0;
-  {{process_strips(6)}}
-  {{process_strips(2)}}
-  {{process_strips(1)}}
-
-  #undef nvecs
+  {{for xchunksize in [6, 2, 1]}}
+  n = nx - nx % {{xchunksize}};
+  if (i != n) {
+    legendre_transform_chunk{{xchunksize}}_nvec2(i, n, nk, k_start, a, y,
+                                                 x_squared, auxdata, P, Pp1);
+  }
+  i = n;
+  {{endfor}}
 }
 
 void fastsht_associated_legendre_transform(size_t nx, size_t nk,

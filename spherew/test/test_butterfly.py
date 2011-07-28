@@ -128,7 +128,7 @@ def test_butterfly_compressed():
 # Tests for refactored application
 #
 
-def test_heap():
+def test_heapify():
     class Node(object):
         def __init__(self, value, children=[]):
             self.value = value
@@ -150,3 +150,13 @@ def test_heap():
     heap = heapify(Node(1, [Node(3, [Node(4)])]))
     eq_(heap, [1, 3, None, 4, None, None, None])
 
+def ndrange(shape):
+    return np.arange(np.prod(shape)).reshape(shape)
+
+def test_transpose_apply():
+    nvecs = 2
+    nrows = 7
+    plan = ButterflyPlan(k_max=4, nblocks_max=1, nvecs=nvecs)
+
+    x = ndrange(10, 2)
+    y = plan.transpose_apply(data, nrows, x)

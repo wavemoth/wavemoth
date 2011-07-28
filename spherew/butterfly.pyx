@@ -11,8 +11,29 @@ cdef extern from "butterfly.h":
     ctypedef int int32_t
     ctypedef int int64_t
 
+
+    ctypedef void (*push_func_t)(double *buf, size_t start, size_t stop,
+                                 size_t nvecs, int should_add, void *ctx)
+    ctypedef void (*pull_func_t)(double *buf, size_t start, size_t stop,
+                                 size_t nvecs, void *ctx)
+
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
+
+    ctypedef struct bfm_plan
+
+    bfm_plan* bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs)
+    void bfm_destroy_plan(bfm_plan *plan)
+
+    int bfm_transpose_apply_d(bfm_plan *plan,
+                              char *matrix_data,
+                              size_t nrows, 
+                              size_t ncols,
+                              pull_func_t pull_func,
+                              push_func_t push_func,
+                              void *caller_ctx)
+
+    
 
 from io import BytesIO
 import numpy as np
@@ -28,6 +49,55 @@ else:
 
 class ButterflyMatrixError(Exception):
     pass
+
+cdef class PlanApplicationContext:
+    cdef object input_array, output_array
+
+cdef void pull_input_callback(double *buf, size_t start, size_t stop, size_t nvecs,
+                              void *_ctx):
+    cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
+    cdef np.ndarray[double, ndim=2] input = ctx.input_array
+    cdef size_t i, j
+    for i in range(start, stop):
+        for j in range(nvecs):
+            buf[i * nvecs + j] = input[i, j]
+
+cdef void push_output_callback(double *buf, size_t start, size_t stop, size_t nvecs,
+                               int should_add, void *_ctx):
+    cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
+    cdef np.ndarray[double, ndim=2] output = ctx.output_array
+    cdef size_t i, j
+    if should_add:
+        for i in range(start, stop):
+            for j in range(nvecs):
+                output[i, j] += buf[i * nvecs + j]
+    else:
+        for i in range(start, stop):
+            for j in range(nvecs):
+                output[i, j] = buf[i * nvecs + j]
+
+cdef class ButterflyPlan:
+    cdef bfm_plan *plan
+    cdef size_t nvecs
+    
+    def __cinit__(self, k_max, nblocks_max, nvecs):
+        self.plan = bfm_create_plan(k_max, nblocks_max, nvecs)
+        self.nvecs = nvecs
+
+    def __dealloc__(self):
+        bfm_destroy_plan(self.plan)
+
+    def transpose_apply(self, bytes matrix_data, nrows, x):
+        cdef PlanApplicationContext ctx = PlanApplicationContext()
+        ctx.input_array = x
+        ctx.output_array = np.zeros((nrows, self.nvecs))
+        ret = bfm_transpose_apply_d(self.plan, <char*>matrix_data, nrows, x.shape[0],
+                                    &pull_input_callback, &push_output_callback,
+                                    <void*>ctx)
+        if ret != 0:
+            raise Exception("bfm_transpose_apply_d returned %d" % ret)
+        return ctx.output_array
+                              
 
 cdef class SerializedMatrix:
     cdef char *buf
@@ -496,17 +566,19 @@ def serialize_butterfly_matrix(M):
     return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
 
 
-def maxdepth(node):
+def find_max_depth(node):
     if len(node.children) == 0:
         return 0
     else:
-        return 1 + max([maxdepth(child) for child in node.children])
+        return 1 + max([find_max_depth(child) for child in node.children])
+
+def find_heap_size(node):
+    K = find_max_depth(node)
+    return ((K + 1) * (1 + 2**K)) // 2
 
 def heapify(node, first_idx=1, idx=1, heap=None):
     if heap is None:
-        K = maxdepth(node)
-        heap_size = ((K + 1) * (1 + 2**K)) // 2
-        heap = [None] * heap_size
+        heap = [None] * find_heap_size(node)
         
     heap[idx - first_idx] = node
     if len(node.children) == 0:

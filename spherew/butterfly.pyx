@@ -496,4 +496,30 @@ def serialize_butterfly_matrix(M):
     return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
 
 
+def maxdepth(node):
+    if len(node.children) == 0:
+        return 0
+    else:
+        return 1 + max([maxdepth(child) for child in node.children])
+
+def heapify(node, first_idx=1, idx=1, heap=None):
+    if heap is None:
+        K = maxdepth(node)
+        heap_size = ((K + 1) * (1 + 2**K)) // 2
+        heap = [None] * heap_size
+        
+    heap[idx - first_idx] = node
+    if len(node.children) == 0:
+        return heap
+    else:
+        heapify(node.children[0], first_idx, 2 * idx, heap)
+        if len(node.children) == 1:
+            heap[2 * idx + 1 - first_idx] = None
+        else:
+            heapify(node.children[1], first_idx, 2 * idx + 1, heap)
+        if len(node.children) > 2:
+            raise ValueError('Not a binary tree')
+
+    return heap
+
 

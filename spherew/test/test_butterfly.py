@@ -120,3 +120,33 @@ def test_butterfly_compressed():
     y2 = M.apply(a_l)
     y3 = np.dot(P, a_l)
     yield assert_almost_equal, y1, y2
+
+
+
+
+#
+# Tests for refactored application
+#
+
+def test_heap():
+    class Node(object):
+        def __init__(self, value, children=[]):
+            self.value = value
+            self.children = children
+        def __eq__(self, other):
+            return self.value == int(other)
+        def __index__(self):
+            return self.value
+        def __repr__(self):
+            return '<%d>' % self.value
+
+    heap = heapify(Node(0, [
+        Node(1, [Node(3), Node(4)]),
+        Node(2, [Node(5)])
+        ]))
+    eq_(heap, [0, 1, 2, 3, 4, 5, None])
+    heap = heapify(Node(10))
+    eq_(heap, [10])
+    heap = heapify(Node(1, [Node(3, [Node(4)])]))
+    eq_(heap, [1, 3, None, 4, None, None, None])
+

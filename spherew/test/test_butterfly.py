@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 from numpy import pi
 from cmb import as_matrix
 
+from numpy import all
 from nose.tools import eq_, ok_, assert_raises
 from numpy.testing import assert_almost_equal
 
@@ -127,18 +128,31 @@ def test_butterfly_compressed():
 #
 # Tests for refactored application
 #
+class Node(object):
+    def __init__(self, value, children=[]):
+        self.value = value
+        self.children = children
+    def __eq__(self, other):
+        return self.value == int(other)
+    def __index__(self):
+        return self.value
+    def __repr__(self):
+        return '<%d>' % self.value
+
+def test_heap_size():
+    def make_tree(d):
+        if d == 0:
+            return 1, Node(1)
+        else:
+            lc, l = make_tree(d - 1)
+            rc, r = make_tree(d - 1)
+            return lc + rc, Node(1, [l, r])
+
+    for nlevels in range(5):
+        count, root = make_tree(nlevels)
+        ok_(count, find_heap_size(root))
 
 def test_heapify():
-    class Node(object):
-        def __init__(self, value, children=[]):
-            self.value = value
-            self.children = children
-        def __eq__(self, other):
-            return self.value == int(other)
-        def __index__(self):
-            return self.value
-        def __repr__(self):
-            return '<%d>' % self.value
 
     heap = heapify(Node(0, [
         Node(1, [Node(3), Node(4)]),
@@ -153,10 +167,16 @@ def test_heapify():
 def ndrange(shape):
     return np.arange(np.prod(shape)).reshape(shape)
 
-def test_transpose_apply():
+def test_transpose_apply_single_leaf():
     nvecs = 2
-    nrows = 7
-    plan = ButterflyPlan(k_max=4, nblocks_max=1, nvecs=nvecs)
+    nrows = ncols = 7
+    plan = ButterflyPlan(k_max=nrows, nblocks_max=1, nvecs=nvecs)
+    node = IdentityNode(nrows); assert nrows == ncols
+    matrix_data = refactored_serializer(node).getvalue()
+    x = ndrange((ncols, nvecs))
+    y = plan.transpose_apply(matrix_data, nrows, x)
+    ok_(all(x == y))
+    
 
     x = ndrange(10, 2)
     y = plan.transpose_apply(data, nrows, x)

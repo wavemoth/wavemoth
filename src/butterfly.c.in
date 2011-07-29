@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include <stdlib.h>
 #include <stdio.h>
 #include <malloc.h>
@@ -234,6 +235,9 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
                               bfm_index_t **out_block_widths_first,
                               bfm_index_t **out_block_widths_second) {
   bfm_index_t *block_widths_first, *block_widths_second;
+  printf("%d %d\n", *(bfm_index_t*)head, order);
+  assert(*(bfm_index_t*)head == 2 * order);   /* nblocks field */
+  head += sizeof(bfm_index_t);
   *out_block_heights = (bfm_index_t*)head; /* [2 * order] */
   bfm_index_t nrows_first = ((bfm_index_t*)head)[2 * order];
   bfm_index_t nrows_second = ((bfm_index_t*)head)[2 * order + 1];
@@ -244,9 +248,12 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
   head += sizeof(bfm_index_t[2 * order + 3]);
   if (order == 1) {
     /* Parse the two leaf node identity matrices */
-    *out_block_widths_first = (bfm_index_t*) head;
-    *out_block_widths_second = ((bfm_index_t*) head) + 1;
-    head += sizeof(bfm_index_t[2]);
+    bfm_index_t *ihead = (bfm_index_t*)head;
+    assert(ihead[0] == ihead[2] == 0);
+    printf("%d %d %d\n", ihead[0], ihead[2], order);
+    *out_block_widths_first = ihead + 1;
+    *out_block_widths_second = ihead + 3;
+    head += sizeof(bfm_index_t[4]);
     nrows_first = (*out_block_widths_first)[0];
     *data_from_first = input;
     *data_from_second = *data_from_first + nrows_first * nvecs;
@@ -378,19 +385,23 @@ bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs) {
   plan->k_max = k_max;
   plan->nblocks_max = nblocks_max;
   plan->nvecs = nvecs;
-  plan->vector_chunk_list = malloc(sizeof(double*) * (nblocks_max + 2));
-  for (i = 0; i != nblocks_max + 2; ++i) {
-    plan->vector_chunk_list[i] = memalign(BUF_ALIGN, k_max * nvecs);
+  plan->vector_chunk_stack = malloc(sizeof(double*) * (nblocks_max + 2));
+  plan->chunks_allocated = plan->chunk_stack_size = nblocks_max + 2;
+  for (i = 0; i != plan->chunks_allocated; ++i) {
+    plan->vector_chunk_stack[i] = memalign(BUF_ALIGN, sizeof(double[k_max * nvecs]));
   }
-  plan->y_buf = memalign(BUF_ALIGN, 2 * k_max * nvecs);
+  plan->y_buf = memalign(BUF_ALIGN, sizeof(double[2 * k_max * nvecs]));
+  return plan;
 }
 
 void bfm_destroy_plan(bfm_plan *plan) {
   int i;
-  for (i = 0; i != plan->nblocks_max + 2; ++i) {
-    free(plan->vector_chunk_list[i]);
+  if (!plan) return;
+  assert(plan->chunk_stack_size == plan->chunks_allocated);
+  for (i = 0; i != plan->chunk_stack_size; ++i) {
+    free(plan->vector_chunk_stack[i]);
   }
-  free((double *)plan->vector_chunk_list);
+  free((double *)plan->vector_chunk_stack);
   free(plan->y_buf);
   free(plan);
 }
@@ -405,17 +416,25 @@ struct _bfm_transpose_apply_context {
   int add_push;
 };
 
-static inline const char* get_parent(const char *heap[], size_t index) {
-  return heap[index / 2];
+static inline double *acquire_vector_chunk(bfm_plan *plan) {
+  assert(plan->chunk_stack_size > 0);
+  size_t idx = --plan->chunk_stack_size;
+  double *r = plan->vector_chunk_stack[idx];
+  plan->vector_chunk_stack[idx] = NULL;
+  return r;
 }
 
-static inline const char* get_left_child(const char *heap[], size_t index) {
-  return heap[index * 2];
+static inline double *release_vector_chunk(bfm_plan *plan, double *chunk) {
+  assert(plan->chunk_stack_size < plan->nblocks_max + 2);
+  plan->vector_chunk_stack[plan->chunk_stack_size++] = chunk;
 }
 
-static inline const char* get_right_child(const char *heap[], size_t index) {
-  return heap[index * 2 + 1];
+static inline bfm_index_t read_index(const char **head) {
+  bfm_index_t result = *(bfm_index_t*)*head;
+  *head += sizeof(bfm_index_t);
+  return result;
 }
+
 
 int bfm_transpose_apply_d(bfm_plan *plan,
                           const char *matrix_data,
@@ -431,6 +450,7 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   ctx.push_func = push_func;
   ctx.matrix_data = matrix_data;
 
+  
   /* Read in tree. Shape of the S-matrix forest is determined by the
      start level and stop level. Offsets to each node is stored in a
      heap structure that is present; we translate it to pointers in
@@ -439,11 +459,17 @@ int bfm_transpose_apply_d(bfm_plan *plan,
      The heap base pointer is the virtual zero level, i.e., it
      incorporates the subtraction of the first index.
   */
-  size_t first_level_size = ((int32_t*)head)[0];
-  size_t first_level_order = ((int32_t*)head)[1];
-  size_t heap_size = ((int32_t*)head)[2];
+  int32_t *header_fields = (int32_t*)head; 
+  checkf(header_fields[0] == nrows, "Data says nrows==%d, caller says nrows==%d",
+         header_fields[0], (int)nrows);
+  checkf(header_fields[1] == ncols, "Data says ncols==%d, caller says ncols==%d",
+         header_fields[1], (int)ncols);
+  size_t first_level_size = header_fields[2];
+  size_t heap_size = ((int32_t*)head)[3];
   size_t node_heap_first_index = ((int32_t*)head)[4];
-  head += sizeof(int32_t[4]);
+  /* One padding */
+  head += sizeof(int32_t[6]);
+
   const char *heap_buf[heap_size];
   ctx.node_heap = heap_buf - node_heap_first_index;
 
@@ -460,12 +486,36 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   for (size_t inode = node_heap_first_index;
        inode != node_heap_first_index + first_level_size;
        ++inode) {
-    /*   */
-    //    ctx.pull_func(buf, start, stop, nvecs, ctx.caller_ctx);
+    const char *node_data = ctx.node_heap[inode];
+    bfm_index_t nblocks = read_index(&node_data);
+    bfm_index_t *block_heights = (bfm_index_t*)node_data;
+
+    if (nblocks == 0) { /* leaf node */
+      bfm_index_t n = read_index(&node_data);
+      double *buf = acquire_vector_chunk(plan);
+      assert(n <= plan->k_max);
+      assert(n == ncols && n == nrows);
+      ctx.pull_func(buf, 0, n, plan->nvecs, ctx.caller_ctx);
+      ctx.push_func(buf, 0, n, plan->nvecs, ctx.add_push, ctx.caller_ctx);
+      release_vector_chunk(plan, buf);
+    } else {
+      check(0, "halt");
+
+      for (size_t i = 0; i != nblocks; i += 2) {
+        double *a = acquire_vector_chunk(plan);
+        double *b = acquire_vector_chunk(plan);
+        
+      //      ctx.pull_func(buf, start, stop, plan->nvecs, ctx.caller_ctx);
+        
+        release_vector_chunk(plan, a);
+        release_vector_chunk(plan, b);
+      }
+    }
+    
 
     ctx.add_push = 1; /* Any remaining root nodes require addition. */
   }
   
   
-
+  return 0;
 }

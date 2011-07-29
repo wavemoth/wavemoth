@@ -85,11 +85,12 @@ cdef class ButterflyPlan:
         self.nvecs = nvecs
 
     def __dealloc__(self):
-        bfm_destroy_plan(self.plan)
+        pass
+        #bfm_destroy_plan(self.plan)
 
     def transpose_apply(self, bytes matrix_data, nrows, x):
         cdef PlanApplicationContext ctx = PlanApplicationContext()
-        ctx.input_array = x
+        ctx.input_array = np.asarray(x, dtype=np.double)
         ctx.output_array = np.zeros((nrows, self.nvecs))
         ret = bfm_transpose_apply_d(self.plan, <char*>matrix_data, nrows, x.shape[0],
                                     &pull_input_callback, &push_output_callback,
@@ -190,8 +191,13 @@ class IdentityNode(object):
         self.ncols = self.nrows = n
         self.block_heights = [n]
         self.remainder_blocks = [remainder_block]
-        
+        self.children = []
+
+    def __repr__(self):
+        return '<IdentityNode %dx%d>' % (self.ncols, self.ncols)
+                                         
     def write_to_stream(self, stream):
+        write_index_t(stream, 0)
         write_index_t(stream, self.ncols)
 
     def apply(self, x):
@@ -245,6 +251,7 @@ class RootNode(object):
         write_index_t(stream, self.nrows)
         write_index_t(stream, self.ncols)
         # ROOT NODE
+        write_index_t(stream, len(self.D_blocks))
         block_heights = np.asarray(
             [D.shape[0] for D in self.D_blocks], dtype=index_dtype)
         write_array(stream, block_heights)
@@ -360,8 +367,12 @@ class InnerNode(object):
                 if R.shape[1] != bh:
                     raise ValueError("nonconforming remainder block")
 
+    def __repr__(self):
+        return '<InnerNode %dx%d nblocks=%d>' % (self.nrows, self.ncols, len(self.blocks))
+
     def write_to_stream(self, stream):
         L, R = self.children
+        write_index_t(stream, len(self.block_heights))
         write_array(stream, np.asarray(self.block_heights, dtype=index_dtype))
         write_index_t(stream, L.nrows)
         write_index_t(stream, R.nrows)
@@ -594,4 +605,43 @@ def heapify(node, first_idx=1, idx=1, heap=None):
 
     return heap
 
+def refactored_serializer(root, out=None):
+    if out is None:
+        out = BytesIO()
 
+    # Only support one root node for now
+    first_level_size = 1
+    heap_first_index = 1
+
+    heap_size = find_heap_size(root)
+    heap = [None] * heap_size
+    heapify(root, heap_first_index, 1, heap)
+    
+    write_int32(out, root.nrows)
+    write_int32(out, root.ncols)
+    write_int32(out, first_level_size)
+    write_int32(out, heap_size)
+    write_int32(out, heap_first_index)
+    write_int32(out, 0) # padding
+
+    # Output placeholder heap table
+    heap_pos = out.tell()
+    for node in heap:
+        write_int64(out, 0)
+    node_offsets = [0] * heap_size
+
+    # Write nodes and record offsets
+    print heap
+    for i, node in enumerate(heap):
+        pad128(out)
+        node_offsets[i] = out.tell()
+        node.write_to_stream(out)
+
+    # Output actual offsets to heap table
+    end_pos = out.tell()
+    out.seek(heap_pos)
+    for offset in node_offsets:
+        write_int64(out, offset)
+    out.seek(end_pos)
+
+    return out

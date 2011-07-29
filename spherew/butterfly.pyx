@@ -585,7 +585,7 @@ def find_max_depth(node):
 
 def find_heap_size(node):
     K = find_max_depth(node)
-    return ((K + 1) * (1 + 2**K)) // 2
+    return 2**(K + 1) - 1
 
 def heapify(node, first_idx=1, idx=1, heap=None):
     if heap is None:

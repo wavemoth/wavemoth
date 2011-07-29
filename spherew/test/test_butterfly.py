@@ -146,11 +146,11 @@ def test_heap_size():
         else:
             lc, l = make_tree(d - 1)
             rc, r = make_tree(d - 1)
-            return lc + rc, Node(1, [l, r])
+            return lc + rc + 1, Node(1, [l, r])
 
     for nlevels in range(5):
         count, root = make_tree(nlevels)
-        ok_(count, find_heap_size(root))
+        ok_(count == find_heap_size(root))
 
 def test_heapify():
 

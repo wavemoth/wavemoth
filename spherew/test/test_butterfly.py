@@ -177,6 +177,50 @@ def test_transpose_apply_single_leaf():
     y = plan.transpose_apply(matrix_data, nrows, x)
     ok_(all(x == y))
     
+def test_transpose_apply_tree():
+    nextk = [5]
+    full_rank = True
+    kmax = [0]
+    
+    def make_tree(nblocks):
+        if nblocks == 0:
+            k = nextk[0]
+            nextk[0] += 1
+            return IdentityNode(k)
+        else:
+            L = make_tree(nblocks // 2)
+            R = make_tree(nblocks // 2)
+            blocks = []
+            for lh, rh in zip(L.block_heights, R.block_heights):
+                n = lh + rh
+                if full_rank:
+                    k1 = k2 = n
+                else:
+                    k1 = max(1, n - 3)
+                    k2 = max(1, n - 2)
+                TB = []
+                for k in (k1, k2):
+                    kmax[0] = max([k1, k2, kmax[0]])
+                    filter = np.ones(n, dtype=np.int8)
+                    filter[:k] = 0
+                    interpolant = np.ones((k, n - k))
+                    TB.append(InterpolationBlock(filter, interpolant))
+                blocks.append(TB)
+            return InnerNode(blocks, [L, R])
 
-    x = ndrange(10, 2)
-    y = plan.transpose_apply(data, nrows, x)
+    nblocks = 4
+    
+    root = make_tree(nblocks)
+    print find_heap_size(root)
+
+    nvecs = 2
+    print nextk[0], 'kmax'
+    plan = ButterflyPlan(k_max=kmax[0], nblocks_max=nblocks, nvecs=nvecs)
+
+    matrix_data = refactored_serializer(root).getvalue()
+    x = ndrange((root.nrows, nvecs))
+    y = plan.transpose_apply(matrix_data, root.ncols, x)
+    print y
+#    ok_(all(x == y))
+    
+

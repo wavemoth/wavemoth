@@ -58,6 +58,7 @@ cdef void pull_input_callback(double *buf, size_t start, size_t stop, size_t nve
     cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
     cdef np.ndarray[double, ndim=2] input = ctx.input_array
     cdef size_t i, j
+    print start, stop, input.shape[0]
     for i in range(start, stop):
         for j in range(nvecs):
             buf[i * nvecs + j] = input[i, j]
@@ -88,11 +89,11 @@ cdef class ButterflyPlan:
         pass
         #bfm_destroy_plan(self.plan)
 
-    def transpose_apply(self, bytes matrix_data, nrows, x):
+    def transpose_apply(self, bytes matrix_data, ncols, x):
         cdef PlanApplicationContext ctx = PlanApplicationContext()
         ctx.input_array = np.asarray(x, dtype=np.double)
-        ctx.output_array = np.zeros((nrows, self.nvecs))
-        ret = bfm_transpose_apply_d(self.plan, <char*>matrix_data, nrows, x.shape[0],
+        ctx.output_array = np.zeros((ncols, self.nvecs))
+        ret = bfm_transpose_apply_d(self.plan, <char*>matrix_data, x.shape[0], ncols,
                                     &pull_input_callback, &push_output_callback,
                                     <void*>ctx)
         if ret != 0:
@@ -605,6 +606,40 @@ def heapify(node, first_idx=1, idx=1, heap=None):
 
     return heap
 
+def serialize_node(stream, node):
+
+    ## def write_to_stream(self, stream):
+    ##     L, R = self.children
+    ##     write_index_t(stream, len(self.block_heights))
+    ##     write_array(stream, np.asarray(self.block_heights, dtype=index_dtype))
+    ##     write_index_t(stream, L.nrows)
+    ##     write_index_t(stream, R.nrows)
+    ##     write_index_t(stream, L.ncols)
+    ##     L.write_to_stream(stream)
+    ##     R.write_to_stream(stream)
+    ##     for T_ip, B_ip in self.blocks:
+    ##         T_ip.write_to_stream(stream)
+    ##         B_ip.write_to_stream(stream)
+
+    def serialize_interpolation_block(block):
+        write_array(stream, block.filter)
+        pad128(stream)
+        write_array(stream, block.interpolant)
+
+    if isinstance(node, InnerNode):
+        write_index_t(stream, len(node.block_heights))
+        write_array(stream, np.asarray(node.block_heights, dtype=index_dtype))
+        for T_ip, B_ip in node.blocks:
+            serialize_interpolation_block(T_ip)
+            serialize_interpolation_block(B_ip)
+        
+    elif isinstance(node, IdentityNode):
+        write_index_t(stream, 0)
+        write_index_t(stream, node.nrows)
+    else:
+        raise AssertionError()
+    
+
 def refactored_serializer(root, out=None):
     if out is None:
         out = BytesIO()
@@ -631,11 +666,14 @@ def refactored_serializer(root, out=None):
     node_offsets = [0] * heap_size
 
     # Write nodes and record offsets
+    print heap_size
+    print find_max_depth(root)
+    print find_heap_size(root)
     print heap
     for i, node in enumerate(heap):
         pad128(out)
         node_offsets[i] = out.tell()
-        node.write_to_stream(out)
+        serialize_node(out, node)
 
     # Output actual offsets to heap table
     end_pos = out.tell()

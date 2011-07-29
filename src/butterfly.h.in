@@ -35,7 +35,7 @@ TOP-LEVEL COMPRESSED MATRIX FORMAT (HEADER):
 INNER INTERPOLATION NODE: "order" is a variable assumed available
 (passed in from the outside and divided by 2 when recursing). Layout:
 
- - bfm_index_t nblocks == 2 * order
+ - bfm_index_t nblocks == order
  - bfm_index_t block_heights[2 * order]: The height of each vertical
      block of this matrix. Even entries are the heights of T's and
      odd entries the heights of B's.
@@ -131,7 +131,7 @@ struct _bfm_plan;
 typedef struct _bfm_plan bfm_plan;
 
 struct _bfm_plan {
-  double *restrict y_buf; /* (2 * k_max, nvecs) */
+  double *y_buf; /* (2 * k_max, nvecs) */
   double **vector_chunk_stack; /* Stack of size (nblocks_max + 2) of buffers of
                                  shape (k_max, nvecs)  */
   size_t chunk_stack_size; /* Current size of buffer stack */
@@ -149,7 +149,7 @@ bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs);
 void bfm_destroy_plan(bfm_plan *plan);
 
 int bfm_transpose_apply_d(bfm_plan *plan,
-                          const char *matrix_data,
+                          char *matrix_data,
                           size_t nrows, 
                           size_t ncols,
                           pull_func_t pull_func,

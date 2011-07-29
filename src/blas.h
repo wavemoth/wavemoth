@@ -40,21 +40,6 @@ Simplified dgemm interfaces. Computes
 
 Y <- A * X + beta * Y
 
-where A is col-major and Y and X row-major.  Y is m-by-n, A is m-by-k,
-X is k-by-n.
-*/
-static INLINE void dgemm_crr(double *A, double *X, double *Y,
-                             int32_t m, int32_t n, int32_t k,
-                             double beta) {
-  /* We compute X^T A^T + Y^T, which Fortran sees as X A^T + Y */
-  dgemm('N', 'T', n, m, k, 1.0, X, (n > 0) ? n : 1, A, (m > 0) ? m : 1, beta, Y, n);
-}
-
-/*
-Simplified dgemm interfaces. Computes
-
-Y <- A * X + beta * Y
-
 where A, X and Y are row-major.  Y is m-by-n, A is m-by-k,
 X is k-by-n.
 */
@@ -63,6 +48,25 @@ static INLINE void dgemm_rrr(double *A, double *X, double *Y,
                              double beta) {
   /* We compute X^T A^T + Y^T, which Fortran sees as X A + Y */
   dgemm('N', 'N', n, m, k, 1.0, X, (n > 0) ? n : 1, A, (k > 0) ? k : 1, beta, Y, n);
+}
+
+
+/*
+Simplified dgemm interface. Computes
+
+C <- A * B + beta * C
+
+where C is col-major, A is col-major, and B is row-major.
+
+Y is m-by-n, A is m-by-k, B is k-by-n.
+*/
+static INLINE void dgemm_ccr(double *C, double *A, double *B,
+                             int32_t m, int32_t n, int32_t k,
+                             double beta) {
+  /* This is supported directly by Fortran BLAS by passing transpose
+     flag on second matrix. */
+  dgemm('N', 'T', m, n, k, 1.0, A, (m > 0) ? m : 1, B, (k > 0) ? k : 1,
+        beta, C, (m > 0) ? m : 1);
 }
 
 #endif

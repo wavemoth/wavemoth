@@ -56,16 +56,16 @@ Simplified dgemm interface. Computes
 
 C <- A * B + beta * C
 
-where C is col-major, A is col-major, and B is row-major.
+where A is col-major, B is row-major, and C is col-major.
 
 Y is m-by-n, A is m-by-k, B is k-by-n.
 */
-static INLINE void dgemm_ccr(double *C, double *A, double *B,
+static INLINE void dgemm_crc(double *A, double *B, double *C,
                              int32_t m, int32_t n, int32_t k,
                              double beta) {
   /* This is supported directly by Fortran BLAS by passing transpose
      flag on second matrix. */
-  dgemm('N', 'T', m, n, k, 1.0, A, (m > 0) ? m : 1, B, (k > 0) ? k : 1,
+  dgemm('N', 'T', m, n, k, 1.0, A, (m > 0) ? m : 1, B, (n > 0) ? n : 1,
         beta, C, (m > 0) ? m : 1);
 }
 

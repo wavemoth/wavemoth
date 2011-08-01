@@ -154,6 +154,15 @@ def build(bld):
         use='OPENMP',
         features='c pyext cshlib')
 
+    bld(source=(['spherew/blas.pyx']),
+        includes=['src'],
+        target='blas',
+        use='NUMPY ATLAS',
+        features='c pyext cshlib')
+    bld.add_manual_dependency(
+        bld.path.find_resource('spherew/blas.pyx'),
+        bld.path.find_resource('src/blas.h'))
+
     ## bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
     ##     target='fmm',
     ##     includes=['src'],

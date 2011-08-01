@@ -167,7 +167,15 @@ def test_heapify():
 def ndrange(shape):
     return np.arange(np.prod(shape)).reshape(shape)
 
-def test_transpose_apply_single_leaf():
+def testvectors(m, n):
+    x = np.arange(1, m + 1)
+    result = np.zeros((m, n))
+    for i in range(n):
+        result[:, i] = x * 10**i
+    return result
+
+def test_transpose_apply_leaf():
+    "butterfly.c.in: Transpose application of identity matrix"
     nvecs = 2
     nrows = ncols = 7
     plan = ButterflyPlan(k_max=nrows, nblocks_max=1, nvecs=nvecs)
@@ -176,6 +184,40 @@ def test_transpose_apply_single_leaf():
     x = ndrange((ncols, nvecs))
     y = plan.transpose_apply(matrix_data, nrows, x)
     ok_(all(x == y))
+
+def test_transpose_apply_small_fullrank():
+    "butterfly.c.in: Transpose application of single S-matrix with all blocks of full rank"
+    x = testvectors(4, 2)
+    A = np.array([
+        [ 1,   0],
+        [ 0,   1],
+        [ 1,   0],
+        [ 0,   1]], dtype=np.double)
+    S1 = InnerNode([(InterpolationBlock([0, 0], [[], []]),
+                     InterpolationBlock([0, 0], [[], []]))],
+                   [IdentityNode(1), IdentityNode(1)])
+    plan = ButterflyPlan(k_max=2, nblocks_max=2, nvecs=2)
+    matrix_data = refactored_serializer(S1).getvalue()
+    y = plan.transpose_apply(matrix_data, 2, x)
+    ok_(all(y == np.dot(A.T, x)))
+
+
+def test_transpose_apply_small_ip():
+    "butterfly.c.in: Application of single S-matrix with interpolation"
+    x = testvectors(4, 2)
+    A = np.array([
+        [ 1,   0,  10],
+        [ 0,   1, 100],
+        [ 1,  -1,   0],
+        [ 0,  -2,   1]], dtype=np.double)
+    S1 = InnerNode([(InterpolationBlock([0, 0, 1], [[10], [100]]),
+                     InterpolationBlock([0, 1, 0], [[-1], [-2]]))],
+                   [IdentityNode(1), IdentityNode(2)])
+    plan = ButterflyPlan(k_max=2, nblocks_max=2, nvecs=2)
+    matrix_data = refactored_serializer(S1).getvalue()
+    y = plan.transpose_apply(matrix_data, 3, x)
+    ok_(all(y == np.dot(A.T, x)))
+                    
     
 def test_transpose_apply_tree():
     nextk = [5]

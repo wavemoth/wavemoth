@@ -3,6 +3,13 @@ from cpython cimport PyBytes_FromStringAndSize
 from libc.stdlib cimport free
 from libc.string cimport memcpy
 
+import sys
+from io import BytesIO
+import numpy as np
+cimport numpy as np
+
+from interpolative_decomposition import sparse_interpolative_decomposition
+
 cdef extern from "malloc.h":
     void *memalign(size_t boundary, size_t size)
 
@@ -34,11 +41,6 @@ cdef extern from "butterfly.h":
                               void *caller_ctx)
 
     
-
-from io import BytesIO
-import numpy as np
-cimport numpy as np
-from interpolative_decomposition import sparse_interpolative_decomposition
 
 if sizeof(bfm_index_t) == 4:
     index_dtype = np.int32
@@ -95,9 +97,20 @@ cdef class ButterflyPlan:
         cdef PlanApplicationContext ctx = PlanApplicationContext()
         ctx.input_array = np.asarray(x, dtype=np.double)
         ctx.output_array = np.zeros((ncols, self.nvecs))
-        ret = bfm_transpose_apply_d(self.plan, <char*>matrix_data, x.shape[0], ncols,
+
+        cdef char *buf
+        cdef bint need_realign
+        need_realign = <size_t><char*>matrix_data % 16 != 0
+        if need_realign:
+            buf = <char*>memalign(16, len(matrix_data))
+            memcpy(buf, <char*>matrix_data, len(matrix_data))
+        else:
+            buf = <char*>matrix_data
+        ret = bfm_transpose_apply_d(self.plan, buf, x.shape[0], ncols,
                                     &pull_input_callback, &push_output_callback,
                                     <void*>ctx)
+        if need_realign:
+            free(buf)
         if ret != 0:
             raise Exception("bfm_transpose_apply_d returned %d" % ret)
         return ctx.output_array
@@ -198,6 +211,9 @@ class IdentityNode(object):
 
     def __repr__(self):
         return '<IdentityNode %dx%d>' % (self.ncols, self.ncols)
+
+    def print_tree(self, indent='', stream=sys.stdout):
+        stream.write('%s%r\n' % (indent, self))
                                          
     def write_to_stream(self, stream):
         write_index_t(stream, 0)
@@ -355,7 +371,7 @@ class InnerNode(object):
                 print T_ip.shape, B_ip.shape, lh, rh
                 raise ValueError("Nonconforming matrices")
         self.blocks = blocks
-        self.ncols = sum(child.ncols for child in children)
+        self.ncols = sum(child.nrows for child in children)
         self.children = children
         self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
                                  for T_ip, B_ip in blocks], [])
@@ -371,7 +387,12 @@ class InnerNode(object):
                     raise ValueError("nonconforming remainder block")
 
     def __repr__(self):
-        return '<InnerNode %dx%d nblocks=%d>' % (self.nrows, self.ncols, len(self.blocks))
+        return '<InnerNode %dx%d block_heights=%r>' % (self.nrows, self.ncols, self.block_heights)
+
+    def print_tree(self, indent='', stream=sys.stdout):
+        stream.write('%s%r\n' % (indent, self))
+        for child in self.children:
+            child.print_tree(indent + '  ', stream=stream)
 
     def write_to_stream(self, stream):
         L, R = self.children
@@ -609,20 +630,6 @@ def heapify(node, first_idx=1, idx=1, heap=None):
     return heap
 
 def serialize_node(stream, node):
-
-    ## def write_to_stream(self, stream):
-    ##     L, R = self.children
-    ##     write_index_t(stream, len(self.block_heights))
-    ##     write_array(stream, np.asarray(self.block_heights, dtype=index_dtype))
-    ##     write_index_t(stream, L.nrows)
-    ##     write_index_t(stream, R.nrows)
-    ##     write_index_t(stream, L.ncols)
-    ##     L.write_to_stream(stream)
-    ##     R.write_to_stream(stream)
-    ##     for T_ip, B_ip in self.blocks:
-    ##         T_ip.write_to_stream(stream)
-    ##         B_ip.write_to_stream(stream)
-
     def serialize_interpolation_block(block):
         write_array(stream, block.filter)
         pad128(stream)
@@ -668,10 +675,6 @@ def refactored_serializer(root, out=None):
     node_offsets = [0] * heap_size
 
     # Write nodes and record offsets
-    print heap_size
-    print find_max_depth(root)
-    print find_heap_size(root)
-    print heap
     for i, node in enumerate(heap):
         pad128(out)
         node_offsets[i] = out.tell()

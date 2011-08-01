@@ -385,8 +385,8 @@ bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs) {
   plan->k_max = k_max;
   plan->nblocks_max = nblocks_max;
   plan->nvecs = nvecs;
-  plan->vector_chunk_stack = malloc(sizeof(double*) * (nblocks_max + 2));
   plan->chunks_allocated = plan->chunk_stack_size = nblocks_max + 2;
+  plan->vector_chunk_stack = malloc(sizeof(void*[plan->chunk_stack_size]));
   for (i = 0; i != plan->chunks_allocated; ++i) {
     plan->vector_chunk_stack[i] = memalign(BUF_ALIGN, sizeof(double[k_max * nvecs]));
   }
@@ -426,7 +426,7 @@ static inline double *acquire_vector_chunk(bfm_plan *plan) {
 }
 
 static inline double *release_vector_chunk(bfm_plan *plan, double *chunk) {
-  assert(plan->chunk_stack_size < plan->nblocks_max + 2);
+  assert(plan->chunk_stack_size < plan->chunks_allocated);
   plan->vector_chunk_stack[plan->chunk_stack_size++] = chunk;
 }
 
@@ -437,12 +437,12 @@ static inline bfm_index_t read_index(char **head) {
 }
 
 static void read_interpolation_block(char **head, char **mask, double **interpolant,
-                                     size_t k, size_t n) {
+                                     size_t n, size_t k) {
   *mask = *head;
   *head += sizeof(char[n]);
   *head = skip_padding(*head);
   *interpolant = (double*)*head;
-  *head += sizeof(double[(n - k) * n]);
+  *head += sizeof(double[(n - k) * k]);
 }
 
 static void transpose_apply_interpolation_block(
@@ -454,13 +454,13 @@ static void transpose_apply_interpolation_block(
   double *interpolant;
   size_t n = n_left + n_right;
   read_interpolation_block(head, &mask, &interpolant, n, k);
-  if (should_add) {
+  if (!should_add) {
     bfm_scatter_complement(mask, output_left, output_right, input, n_left, n_right, nvecs);
-    dgemm_ccr(y_buf, input, interpolant, n - k, nvecs, n, 0.0);
+    dgemm_crc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
     bfm_scatter(mask, output_left, output_right, y_buf, n_left, n_right, nvecs);
   } else {
     bfm_scatter_complement_add(mask, output_left, output_right, input, n_left, n_right, nvecs);
-    dgemm_ccr(y_buf, input, interpolant, n - k, nvecs, n, 0.0);
+    dgemm_crc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
     bfm_scatter_add(mask, output_left, output_right, y_buf, n_left, n_right, nvecs);
   }
 }
@@ -474,6 +474,7 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
 
   int is_root = (input_blocks == NULL);
   bfm_plan *plan = ctx->plan;
+  double *input_buf;
 
   if (is_root) {
     assert(target_start == 0);
@@ -481,85 +482,83 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
 
   if (nblocks == 0) {
     /* Leaf node, simply push buffer to output vectors */
-    double *buf;
-    size_t stop = target_start + read_index(&node_data);
+    double *input_buf;
+    size_t n = read_index(&node_data);
     if (is_root) {
-      input_blocks = &plan->y_buf;
-      ctx->pull_func(plan->y_buf, target_start, stop, plan->nvecs, ctx->caller_ctx);
+      input_buf = acquire_vector_chunk(plan);
+      ctx->pull_func(input_buf, 0, n, plan->nvecs, ctx->caller_ctx);
+    } else {
+      input_buf = input_blocks[0];
     }
-    ctx->push_func(input_blocks[0], target_start, stop, plan->nvecs, ctx->add_push, ctx->caller_ctx);
-    return stop;
+    ctx->push_func(input_buf, target_start, target_start + n, plan->nvecs,
+                   ctx->add_push, ctx->caller_ctx);
+    release_vector_chunk(plan, input_buf);
+    return target_start + n;
   } else {
     bfm_index_t *block_heights = (bfm_index_t*)node_data;
     node_data += sizeof(bfm_index_t[nblocks]);
-      char *left_child_data = ctx->node_heap[2 * inode];
-      char *right_child_data = ctx->node_heap[2 * inode + 1];
-      size_t nleft = read_index(&left_child_data);
-      size_t nright = read_index(&right_child_data);
-      assert(nleft == nblocks / 2 && nright == nblocks / 2);
-      bfm_index_t *left_child_block_heights = (bfm_index_t*)left_child_data;
-      bfm_index_t *right_child_block_heights = (bfm_index_t*)right_child_data;
+    char *left_child_data = ctx->node_heap[2 * inode];
+    char *right_child_data = ctx->node_heap[2 * inode + 1];
+    size_t nleft = read_index(&left_child_data);
+    size_t nright = read_index(&right_child_data);
+    assert((nleft == 0 && nright == 0) || 
+           (nleft == nblocks / 2 && nright == nblocks / 2));
+    bfm_index_t *left_child_block_heights = (bfm_index_t*)left_child_data;
+    bfm_index_t *right_child_block_heights = (bfm_index_t*)right_child_data;
+    
+    /* Process interpolation nodes. */
+    size_t input_pos = 0; /* only used if is_root */
+    double *left_output_blocks[nblocks / 2], *right_output_blocks[nblocks / 2];
+    for (size_t i = 0; i != nblocks; i += 2) {
+      double *output_left = acquire_vector_chunk(plan);
+      double *output_right = acquire_vector_chunk(plan);
+      size_t k_T = block_heights[i];
+      size_t k_B = block_heights[i + 1];
+      size_t n_left = left_child_block_heights[i / 2];
+      size_t n_right = right_child_block_heights[i / 2];
+      char *mask;
+      double *interpolant;
 
-      /* Process interpolation nodes. */
-      size_t input_pos = 0; /* only used if is_root */
-      double *left_output_blocks[nblocks / 2], *right_output_blocks[nblocks / 2];
-      double *input_buf;
+      assert(k_T <= plan->k_max && k_B <= plan->k_max);
+
+      /* Process T */
       if (is_root) {
         input_buf = acquire_vector_chunk(plan);
+        ctx->pull_func(input_buf, input_pos, input_pos + k_T, plan->nvecs, ctx->caller_ctx);
+        input_pos += k_T;
+      } else {
+        input_buf = input_blocks[i];
+        input_blocks[i] = NULL;
       }
-      for (size_t i = 0; i != nblocks; i += 2) {
-        double *output_left = acquire_vector_chunk(plan);
-        double *output_right = acquire_vector_chunk(plan);
-        size_t k_T = block_heights[i];
-        size_t k_B = block_heights[i + 1];
-        size_t n_left = left_child_block_heights[i / 2];
-        size_t n_right = right_child_block_heights[i / 2];
-        char *mask;
-        double *interpolant;
+      transpose_apply_interpolation_block(&node_data, output_left, output_right,
+                                          input_buf, plan->y_buf,
+                                          n_left, n_right, k_T, plan->nvecs, 0);
+      release_vector_chunk(plan, input_buf);
 
-        assert(k_T <= plan->k_max && k_B <= plan->k_max);
-
-        /* Process T */
-        if (is_root) {
-          ctx->pull_func(input_buf, input_pos, input_pos + k_T, plan->nvecs, ctx->caller_ctx);
-          input_pos += k_T;
-        } else {
-          input_buf = input_blocks[i];
-        }
-        transpose_apply_interpolation_block(&node_data, output_left, output_right,
-                                            input_buf, plan->y_buf,
-                                            n_left, n_right, k_T, plan->nvecs, 0);
-
-        /* Process B */
-        if (is_root) {
-          ctx->pull_func(input_buf, input_pos, input_pos + k_B, plan->nvecs, ctx->caller_ctx);
-          input_pos += k_B;
-        } else {
-          input_buf = input_blocks[i + 1];
-        }
-        transpose_apply_interpolation_block(&node_data, output_left, output_right,
-                                            input_buf, plan->y_buf,
-                                            n_left, n_right, k_B, plan->nvecs, 1);
-        left_output_blocks[i / 2] = output_left;
-        right_output_blocks[i / 2] = output_right;
-      }
+      /* Process B */
       if (is_root) {
-        release_vector_chunk(plan, input_buf);
+        input_buf = acquire_vector_chunk(plan);
+        ctx->pull_func(input_buf, input_pos, input_pos + k_B, plan->nvecs, ctx->caller_ctx);
+        input_pos += k_B;
+      } else {
+        input_buf = input_blocks[i + 1];
+        input_blocks[i + 1] = NULL;
       }
-
-      /* Recurse */
-      size_t target_stop = 
-        transpose_apply_node(ctx, 2 * inode, target_start, left_output_blocks);
-      target_stop = 
-        transpose_apply_node(ctx, 2 * inode + 1, target_stop, right_output_blocks);
-      
-      /* Release blocks */
-      for (size_t i = 0; i != nblocks / 2; ++i) {
-        release_vector_chunk(plan, left_output_blocks[i]);
-        release_vector_chunk(plan, right_output_blocks[i]);
-      }
-
-      return target_stop;
+      transpose_apply_interpolation_block(&node_data, output_left, output_right,
+                                          input_buf, plan->y_buf,
+                                          n_left, n_right, k_B, plan->nvecs, 1);
+      release_vector_chunk(plan, input_buf);
+      left_output_blocks[i / 2] = output_left;
+      right_output_blocks[i / 2] = output_right;
+    }
+    
+    /* Recurse */
+    size_t target_stop = 
+      transpose_apply_node(ctx, 2 * inode, target_start, left_output_blocks);
+    target_stop = 
+      transpose_apply_node(ctx, 2 * inode + 1, target_stop, right_output_blocks);
+    
+    return target_stop;
   }
 }
 
@@ -577,6 +576,7 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   ctx.push_func = push_func;
   ctx.matrix_data = matrix_data;
   ctx.plan = plan;
+  check((size_t)matrix_data % 16 == 0, "matrix_data not 128-bit aligned");
   
   /* Read in tree. Shape of the S-matrix forest is determined by the
      start level and stop level. Offsets to each node is stored in a
@@ -618,16 +618,6 @@ int bfm_transpose_apply_d(bfm_plan *plan,
     assert(stop == ncols);
     ctx.add_push = 1; /* Any remaining root nodes require addition. */
   }
-
-      /*
-const char *bfm_scatter{{'_complement' * should_not}}{{'_add' * should_add}}{{suffix}}(
-    const char *restrict mask, 
-    double *restrict target1,
-    double *restrict target2,
-    const double *restrict source,
-    int len1, int len2{{trailing_args}}) {
-
-*/  
   
   return 0;
 }

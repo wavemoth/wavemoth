@@ -57,25 +57,27 @@ cdef void pull_input_callback(double *buf, size_t start, size_t stop, size_t nve
                               void *_ctx):
     cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
     cdef np.ndarray[double, ndim=2] input = ctx.input_array
-    cdef size_t i, j
-    print start, stop, input.shape[0]
+    cdef size_t i, j, idx = 0
     for i in range(start, stop):
         for j in range(nvecs):
-            buf[i * nvecs + j] = input[i, j]
+            buf[idx] = input[i, j]
+            idx += 1
 
 cdef void push_output_callback(double *buf, size_t start, size_t stop, size_t nvecs,
                                int should_add, void *_ctx):
     cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
     cdef np.ndarray[double, ndim=2] output = ctx.output_array
-    cdef size_t i, j
+    cdef size_t i, j, idx = 0
     if should_add:
         for i in range(start, stop):
             for j in range(nvecs):
-                output[i, j] += buf[i * nvecs + j]
+                output[i, j] += buf[idx]
+                idx += 1
     else:
         for i in range(start, stop):
             for j in range(nvecs):
-                output[i, j] = buf[i * nvecs + j]
+                output[i, j] = buf[idx]
+                idx += 1
 
 cdef class ButterflyPlan:
     cdef bfm_plan *plan

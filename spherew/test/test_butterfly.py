@@ -201,6 +201,17 @@ def test_transpose_apply_small_fullrank():
     y = plan.transpose_apply(matrix_data, 2, x)
     ok_(all(y == np.dot(A.T, x)))
 
+def test_transpose_apply_small_zerorank():
+    "butterfly.c.in: Transpose application of single S-matrix with all blocks of zero rank"
+    S1 = InnerNode([(InterpolationBlock([1, 1], np.zeros((0, 2))),
+                     InterpolationBlock([1, 1], np.zeros((0, 2))))],
+                   [IdentityNode(1), IdentityNode(1)])
+    plan = ButterflyPlan(k_max=0, nblocks_max=2, nvecs=2)
+    matrix_data = refactored_serializer(S1).getvalue()
+    y = plan.transpose_apply(matrix_data, 2, np.ones((0, 2)))
+    ok_(all(y == 0))
+    eq_(y.shape, (2, 2))
+
 
 def test_transpose_apply_small_ip():
     "butterfly.c.in: Application of single S-matrix with interpolation"

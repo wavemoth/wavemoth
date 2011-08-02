@@ -42,10 +42,10 @@ def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
 
     if A.shape[1] == 0:
         return (np.zeros(0, np.intc), np.zeros(0, np.intc),
-                np.zeros((A.shape[0], 0)), np.zeros((0, 0)))
+                np.zeros((0, 0)))
     elif A.shape[0] == 0:
         return (np.zeros(0, np.intc), np.arange(A.shape[1]),
-                np.zeros((0, 0)), np.zeros((0, A.shape[1])))
+                np.zeros((0, A.shape[1])))
     
     buf = A.copy('F')
         
@@ -73,18 +73,15 @@ def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
         perm = np.argsort(ipol_list)
         A_ip[:, inverse_permutation(perm)] = out
         ipol_list.sort()
-    # Produce the columns in A_k by embedding the permutation
-    # as well. This means making a reordering permutation to
-    # the columns of A_k as well as the inverse permutation to
-    # the rows of A_ip.
-    A_k = np.empty((m, krank), np.double)
+    # Permute the column indices to pick from A to form A_k
+    # (iden_list) to come in increasing order as well. This is
+    # achieved by applying the inverse permutation to the rows of
+    # A_ip.
     if krank > 0:
         perm = np.argsort(iden_list)
-        iperm = inverse_permutation(perm)
-        A_k[:, iperm] = A[:, iden_list]
         A_ip = A_ip[perm, :]
-        iden_list.sort()
-    return iden_list, ipol_list, A_k, A_ip
+    iden_list.sort()
+    return iden_list, ipol_list, A_ip
 
 def interpolative_decomposition(A, eps=1e-10):
     """ Compute the interpolative decomposition of a matrix.
@@ -94,7 +91,11 @@ def interpolative_decomposition(A, eps=1e-10):
 
     ilist, 
     """
-    iden_list, ipol_list, A_k, A_ip = sparse_interpolative_decomposition(A, eps)
+    iden_list, ipol_list, A_ip = sparse_interpolative_decomposition(A, eps)
+    if len(iden_list) == 0:
+        A_k = A[:, 0:0]
+    else:
+        A_k = A[:, iden_list]
     k = iden_list.shape[0]
     n = A.shape[1]
     if k == 0 or n == 0:

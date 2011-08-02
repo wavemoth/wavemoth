@@ -321,3 +321,22 @@ def test_tree_to_matrices():
     A, I = tree_to_matrices(S1)
     arreq_(A0, A)
     arreq_(np.eye(3), I)
+            
+
+def test_compress():
+    "Compress and uncompress simple matrix"
+    A = ndrange((10, 10), start = 1)
+    row_indices_matrix = (A - 1) // 10 # make use of feature of ndrange
+    
+    A_compressed = butterfly_compress(A, C=3)
+    # A_compressed.print_tree()
+
+    # Check that we can round-trip
+    yield assert_almost_equal, A, A_compressed.uncompress()
+
+    # Check that remainder blocks preserve row index
+    R = A_compressed.remainder_as_array()
+    mask = R != 0
+    yield arreq_, (R[mask] - 1) // 10, row_indices_matrix[mask]
+
+    

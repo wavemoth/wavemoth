@@ -504,6 +504,34 @@ class InnerNode(object):
         remainder_sizes.append(rsize)
         return ip_sizes, remainder_sizes
 
+    def remainder_as_array(self, out=None):
+        m = sum([R.shape[0] for R in self.remainder_blocks])
+        n = sum([R.shape[1] for R in self.remainder_blocks])
+        if out is None:
+            out = np.zeros((m, n))
+        elif out.shape != (m, n):
+            raise ValueError()
+        i = 0
+        j = 0
+        for R in self.remainder_blocks:
+            out[i:i + R.shape[0], j:j + R.shape[1]] = R
+            i += R.shape[0]
+            j += R.shape[1]
+        return out
+
+    def uncompress(self):
+        """
+        Returns a dense array corresponding to the matrix represented by the tree.
+
+        This is useful only for testing purposes.
+        """
+        # Construct block-diagonal matrix of remainder blocks
+        A = self.remainder_as_array()
+        matrices = tree_to_matrices(self)
+        for M in matrices:
+            A = np.dot(A, M)
+        return A
+
 
 def permutations_to_filter(alst, blst):
     filter = np.zeros(len(alst) + len(blst), dtype=np.int8)
@@ -618,18 +646,7 @@ def butterfly_compress(A, C=None, min_rows=None, eps=1e-10, max_levels=1e10):
             raise ValueError()
         B_list = pad_with_empty_columns(A)
     numlevels, S_tree = butterfly_core(B_list, eps, max_levels=max_levels)
-    if isinstance(S_tree, IdentityNode):
-        n = S_tree.ncols
-        filter = np.zeros(S_tree.ncols)
-        IP1 = InterpolationBlock(filter, np.zeros((n, 0)))
-        IP2 = InterpolationBlock(np.ones(n), np.zeros((0, n)))
-        I1 = IdentityNode(n)
-        I2 = IdentityNode(0)
-        S_tree = InnerNode([(IP1, IP2)], (I1, I2))
-        result = RootNode(np.zeros((0, 0)), S_tree)
-    else:
-        result = RootNode(S_tree.remainder_blocks, S_tree)
-    return result
+    return S_tree
 
 def serialize_butterfly_matrix(M):
     data = BytesIO()

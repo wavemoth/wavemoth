@@ -171,8 +171,8 @@ def test_heapify():
     heap = heapify(Node(1, [Node(3, [Node(4)])]))
     eq_(heap, [1, 3, None, 4, None, None, None])
 
-def ndrange(shape, start=0):
-    return np.arange(start, np.prod(shape) + start).reshape(shape)
+def ndrange(shape, start=0, dtype=np.double):
+    return np.arange(start, np.prod(shape) + start, dtype=dtype).reshape(shape)
 
 def vectors(m, n):
     x = np.arange(1, m + 1)
@@ -237,6 +237,58 @@ def test_transpose_apply_small_ip():
     ok_(all(y == np.dot(A.T, x)))
                     
     
+def tree_to_matrices(tree):
+    matrices = []
+
+    # Convert depth-first to breadth-first.
+    bfs_tree = []
+    heap = heapify(tree)
+    heap = heap[:len(heap) // 2] # Drop identity leaf nodes
+    idx = 0
+    n = 1
+    while idx + n <= len(heap):
+        bfs_tree.append(heap[idx:idx + n])
+        idx += n
+        n *= 2
+
+    # Make two matrices out of each level: An interpolation matrix
+    # and a permutation matrix.
+    for nodes_on_level in bfs_tree:
+        nrows = ncols = 0
+        children = []
+        for node in nodes_on_level:
+            nrows += node.nrows
+            ncols += node.node_ncols
+            children.extend(node.children)
+        nrows_children = sum([child.nrows for child in children])
+
+        # Interpolation matrix            
+        M = np.zeros((nrows, ncols))
+        i = j = 0
+        for node in nodes_on_level:
+            node.as_array(out=M[i:i + node.nrows, j:j+node.node_ncols])
+            i += node.nrows
+            j += node.node_ncols
+        matrices.append(M)
+
+        # Permutation matrix
+        i = jl = jr = 0
+        P = np.zeros((ncols, nrows_children))
+        for node in nodes_on_level:
+            L, R = node.children
+            i = i
+            jl = jr
+            jr += L.nrows
+            for lh, rh in zip(L.block_heights, R.block_heights):
+                P[i:i + lh, jl:jl + lh] = np.eye(lh)
+                i += lh
+                jl += lh
+                P[i:i + rh, jr:jr + rh] = np.eye(rh)
+                i += rh
+                jr += rh
+        matrices.append(P)
+    return matrices
+
 def test_transpose_apply_tree_generated():
     "butterfly.c.in: Transpose application of deep tree"
     nextk = [1]
@@ -279,59 +331,6 @@ def test_transpose_apply_tree_generated():
             return node
         
 
-    def tree_to_matrices(nblocks, tree):
-        matrices = []
-
-        # Convert depth-first to breadth-first. Ignore last
-        # layer of identity nodes.
-        bfs_tree = []
-        heap = heapify(tree)
-        idx = 0
-        n = 1
-        while n <= nblocks // 2:
-            bfs_tree.append(heap[idx:idx + n])
-            idx += n
-            n *= 2
-
-        # Make two matrices out of each level: An interpolation matrix
-        # and a permutation matrix.
-        for nodes_on_level in bfs_tree:
-            nrows = ncols = 0
-            children = []
-            for node in nodes_on_level:
-                nrows += node.nrows
-                ncols += node.node_ncols
-                children.extend(node.children)
-            nrows_children = sum([child.nrows for child in children])
-
-            # Interpolation matrix            
-            M = np.zeros((nrows, ncols))
-            i = j = 0
-            for node in nodes_on_level:
-                node.as_array(out=M[i:i + node.nrows, j:j+node.node_ncols])
-                i += node.nrows
-                j += node.node_ncols
-            matrices.append(M)
-
-            # Permutation matrix
-            i = jl = jr = 0
-            P = np.zeros((ncols, nrows_children))
-            for node in nodes_on_level:
-                L, R = node.children
-                i = i
-                jl = jr
-                jr += L.nrows
-                for lh, rh in zip(L.block_heights, R.block_heights):
-                    P[i:i + lh, jl:jl + lh] = np.eye(lh)
-                    i += lh
-                    jl += lh
-                    P[i:i + rh, jr:jr + rh] = np.eye(rh)
-                    i += rh
-                    jr += rh
-            matrices.append(P)
-                
-            
-        return matrices
 
     def compute_direct(matrices, y):
         for M in matrices:
@@ -342,7 +341,7 @@ def test_transpose_apply_tree_generated():
     root = make_tree(nblocks // 2)
     #root.print_tree()
     
-    matrices = tree_to_matrices(nblocks, root)
+    matrices = tree_to_matrices(root)
     #for M in matrices:
     #    print M
 

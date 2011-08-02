@@ -86,18 +86,6 @@ columns "n" is passed in from the outside. The data is:
 
 
 */
-{{py:
-nvecs_specs = [2, None]
-
-nvecarg_specs = [', int32_t nvecs' if x is None else '' for x in nvecs_specs]
-nvecs_instances = zip(
-    nvecs_specs, # nvecs
-    ['_%d' % x if x is not None else '' for x in nvecs_specs], # suffix
-    [', int32_t nvecs' if x is None else '' for x in nvecs_specs],     # trailing_args
-    ['#define nvecs %d' % x if x is not None else '' for x in nvecs_specs], # define
-    ['#undef nvecs' if x is not None else '' for x in nvecs_specs]) # undef
-
-}}
 
 #ifndef BUTTERFLY_H_
 #define BUTTERFLY_H_
@@ -176,32 +164,13 @@ filter.
 char *bfm_filter_vector_d(char *filter, double *input,
                           double *output_a, double *output_b);
 
-
-const char *bfm_scatter_add_2(
+const char *bfm_scatter(
     const char *restrict mask, 
     double *restrict target1,
     double *restrict target2,
     const double *restrict source,
-    int len1, int len2);
+    size_t len1, size_t len2, size_t nvecs,
+    int group, int should_add);
 
-const char *bfm_scatter_2(
-    const char *restrict mask, 
-    double *restrict target1,
-    double *restrict target2,
-    const double *restrict source,
-    int len1, int len2);
-
-{{for should_add in [False, True]}}
-{{for should_not in [False, True]}}
-{{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
-const char *bfm_scatter{{'_complement' * should_not}}{{'_add' * should_add}}{{suffix}}(
-    const char *restrict mask, 
-    double *restrict target1,
-    double *restrict target2,
-    const double *restrict source,
-    int len1, int len2{{trailing_args}});
-{{endfor}}
-{{endfor}}
-{{endfor}}
 
 #endif

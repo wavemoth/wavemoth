@@ -27,11 +27,11 @@ Spread and merge
 {{py:
 nvecs_specs = [2, None]
 
-nvecarg_specs = [', int32_t nvecs' if x is None else '' for x in nvecs_specs]
+nvecarg_specs = [', size_t nvecs' if x is None else '' for x in nvecs_specs]
 nvecs_instances = zip(
     nvecs_specs, # nvecs
     ['_%d' % x if x is not None else '' for x in nvecs_specs], # suffix
-    [', int32_t nvecs' if x is None else '' for x in nvecs_specs],     # trailing_args
+    [', size_t nvecs' if x is None else '' for x in nvecs_specs],     # trailing_args
     ['#define nvecs %d' % x if x is not None else '' for x in nvecs_specs], # define
     ['#undef nvecs' if x is not None else '' for x in nvecs_specs]) # undef
 
@@ -75,15 +75,24 @@ and 'b' to the locations marked with 1.
 The target buffer is the concatenation of target1 and target2.
 The lengths of each of the buffer parts is in units of nvecs.
 */
-{{for should_add in [False, True]}}
-{{for should_not in [False, True]}}
+{{py:
+def scatter_name(group, should_add, nvecs):
+    return 'bfm_scatter_group%d_%s%s' % (
+        group,
+        'add' if should_add else 'noadd',
+        '_%d' % nvecs if nvecs else ''
+        )
+}}
+
+{{for group in [0, 1]}}
 {{for nvecs, suffix, trailing_args, define, undefine in nvecs_instances}}
-const char *bfm_scatter{{'_complement' * should_not}}{{'_add' * should_add}}{{suffix}}(
+{{for should_add in [False, True]}}
+const char *{{scatter_name(group, should_add, nvecs)}}(
     const char *restrict mask, 
     double *restrict target1,
     double *restrict target2,
     const double *restrict source,
-    int len1, int len2{{trailing_args}}) {
+    size_t len1, size_t len2{{trailing_args}}) {
   /* Time spent is this routine is likely due to cache effects...be
      sure to profile on in-cache data.
 
@@ -107,7 +116,7 @@ const char *bfm_scatter{{'_complement' * should_not}}{{'_add' * should_add}}{{su
   end = mask + len{{idx}};
   while (mask != end) {
     m = *mask++;
-    if ({{'!' * should_not}}m) {
+    if (m == {{group}}) {
       for (j = 0; j != nvecs / 2; ++j) {
         val = _mm_load_pd(source);
         source += 2;
@@ -130,6 +139,35 @@ const char *bfm_scatter{{'_complement' * should_not}}{{'_add' * should_add}}{{su
 {{endfor}}
 {{endfor}}
 {{endfor}}
+
+/* Runtime dispatcher for scatter */
+const char *bfm_scatter(
+    const char *restrict mask, 
+    double *restrict target1,
+    double *restrict target2,
+    const double *restrict source,
+    size_t len1, size_t len2, size_t nvecs,
+    int group, int should_add) {
+  {{py: args='mask, target1, target2, source, len1, len2'}}
+  {{for group in [0, 1]}}
+  {{for should_add in [False, True]}}
+  if ((group == {{group}}) && ({{'' if should_add else '!'}}should_add))
+ {
+   if (0) {
+    {{for nvecs in [x for x in nvecs_specs if x is not None]}}
+    if (nvecs == {{nvecs}}) {
+      return {{scatter_name(group, should_add, nvecs)}}({{args}});
+    }
+    {{endfor}}
+   }    else {
+      return {{scatter_name(group, should_add, None)}}({{args}}, nvecs);
+    }
+  }
+  {{endfor}}
+  {{endfor}}
+  check(0, "bfm_scatter: Invalid group or should_add argument");
+}
+
 
 /*
 Utils
@@ -451,15 +489,10 @@ static void transpose_apply_interpolation_block(
   double *interpolant;
   size_t n = n_left + n_right;
   read_interpolation_block(head, &mask, &interpolant, n, k);
-  if (!should_add) {
-    bfm_scatter_complement(mask, output_left, output_right, input, n_left, n_right, nvecs);
-    dgemm_crc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
-    bfm_scatter(mask, output_left, output_right, y_buf, n_left, n_right, nvecs);
-  } else {
-    bfm_scatter_complement_add(mask, output_left, output_right, input, n_left, n_right, nvecs);
-    dgemm_crc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
-    bfm_scatter_add(mask, output_left, output_right, y_buf, n_left, n_right, nvecs);
-  }
+
+  bfm_scatter(mask, output_left, output_right, input, n_left, n_right, nvecs, 0, should_add);
+  dgemm_crc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
+  bfm_scatter(mask, output_left, output_right, y_buf, n_left, n_right, nvecs, 1, should_add);
 }
 
 static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,

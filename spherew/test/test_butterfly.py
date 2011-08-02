@@ -16,6 +16,9 @@ from ..interpolative_decomposition import interpolative_decomposition
 from ..healpix import get_ring_thetas
 from ..legendre import compute_normalized_associated_legendre
 
+def arreq_(A, B):
+    ok_(all(A == B))
+
 def get_test_data():
     m = 3
     lmax = 200
@@ -236,59 +239,6 @@ def test_transpose_apply_small_ip():
     y = plan.transpose_apply(matrix_data, 3, x)
     ok_(all(y == np.dot(A.T, x)))
                     
-    
-def tree_to_matrices(tree):
-    matrices = []
-
-    # Convert depth-first to breadth-first.
-    bfs_tree = []
-    heap = heapify(tree)
-    heap = heap[:len(heap) // 2] # Drop identity leaf nodes
-    idx = 0
-    n = 1
-    while idx + n <= len(heap):
-        bfs_tree.append(heap[idx:idx + n])
-        idx += n
-        n *= 2
-
-    # Make two matrices out of each level: An interpolation matrix
-    # and a permutation matrix.
-    for nodes_on_level in bfs_tree:
-        nrows = ncols = 0
-        children = []
-        for node in nodes_on_level:
-            nrows += node.nrows
-            ncols += node.node_ncols
-            children.extend(node.children)
-        nrows_children = sum([child.nrows for child in children])
-
-        # Interpolation matrix            
-        M = np.zeros((nrows, ncols))
-        i = j = 0
-        for node in nodes_on_level:
-            node.as_array(out=M[i:i + node.nrows, j:j+node.node_ncols])
-            i += node.nrows
-            j += node.node_ncols
-        matrices.append(M)
-
-        # Permutation matrix
-        i = jl = jr = 0
-        P = np.zeros((ncols, nrows_children))
-        for node in nodes_on_level:
-            L, R = node.children
-            i = i
-            jl = jr
-            jr += L.nrows
-            for lh, rh in zip(L.block_heights, R.block_heights):
-                P[i:i + lh, jl:jl + lh] = np.eye(lh)
-                i += lh
-                jl += lh
-                P[i:i + rh, jr:jr + rh] = np.eye(rh)
-                i += rh
-                jr += rh
-        matrices.append(P)
-    return matrices
-
 def test_transpose_apply_tree_generated():
     "butterfly.c.in: Transpose application of deep tree"
     nextk = [1]
@@ -329,8 +279,6 @@ def test_transpose_apply_tree_generated():
             node = InnerNode(blocks, [L, R])
 
             return node
-        
-
 
     def compute_direct(matrices, y):
         for M in matrices:
@@ -356,3 +304,20 @@ def test_transpose_apply_tree_generated():
     ok_(all(y0 == y))
     
 
+#
+# Butterfly compression
+#
+
+def test_tree_to_matrices():
+    S1 = InnerNode([(InterpolationBlock([0, 0, 1], [[10], [100]]),
+                     InterpolationBlock([0, 1, 0], [[-1], [-2]]))],
+                   [IdentityNode(1), IdentityNode(2)])
+    A0 = np.array([
+        [ 1,   0,  10],
+        [ 0,   1, 100],
+        [ 1,  -1,   0],
+        [ 0,  -2,   1]], dtype=np.double)
+
+    A, I = tree_to_matrices(S1)
+    arreq_(A0, A)
+    arreq_(np.eye(3), I)

@@ -724,3 +724,64 @@ def refactored_serializer(root, out=None):
     out.seek(end_pos)
 
     return out
+
+def tree_to_matrices(tree):
+    """
+    For testing and visualization purposes.
+    
+    Converts a compressed tree representation to a list of
+    block-diagonal and permutation matrices stored as dense NumPy
+    arrays.
+    """
+    assert isinstance(tree, InnerNode)
+    matrices = []
+
+    # Convert depth-first to breadth-first.
+    bfs_tree = []
+    heap = heapify(tree)
+    heap = heap[:len(heap) // 2] # Drop identity leaf nodes
+    idx = 0
+    n = 1
+    while idx + n <= len(heap):
+        bfs_tree.append(heap[idx:idx + n])
+        idx += n
+        n *= 2
+
+    # Make two matrices out of each level: An interpolation matrix
+    # and a permutation matrix.
+    for nodes_on_level in bfs_tree:
+        nrows = ncols = 0
+        children = []
+        for node in nodes_on_level:
+            nrows += node.nrows
+            ncols += node.node_ncols
+            children.extend(node.children)
+        nrows_children = sum([child.nrows for child in children])
+
+        # Interpolation matrix            
+        M = np.zeros((nrows, ncols))
+        i = j = 0
+        for node in nodes_on_level:
+            node.as_array(out=M[i:i + node.nrows, j:j+node.node_ncols])
+            i += node.nrows
+            j += node.node_ncols
+        matrices.append(M)
+
+        # Permutation matrix
+        i = jl = jr = 0
+        P = np.zeros((ncols, nrows_children))
+        for node in nodes_on_level:
+            L, R = node.children
+            i = i
+            jl = jr
+            jr += L.nrows
+            for lh, rh in zip(L.block_heights, R.block_heights):
+                P[i:i + lh, jl:jl + lh] = np.eye(lh)
+                i += lh
+                jl += lh
+                P[i:i + rh, jr:jr + rh] = np.eye(rh)
+                i += rh
+                jr += rh
+        matrices.append(P)
+    return matrices
+

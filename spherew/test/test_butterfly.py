@@ -327,16 +327,18 @@ def test_compress():
     "Compress and uncompress simple matrix"
     A = ndrange((10, 10), start = 1)
     row_indices_matrix = (A - 1) // 10 # make use of feature of ndrange
-    
-    A_compressed = butterfly_compress(A, C=3)
-    # A_compressed.print_tree()
 
-    # Check that we can round-trip
-    yield assert_almost_equal, A, A_compressed.uncompress()
+    for chunk_size in range(1, 10):
+        A_compressed = butterfly_compress(A, chunk_size)
+        # A_compressed.print_tree()
 
-    # Check that remainder blocks preserve row index
-    R = A_compressed.remainder_as_array()
-    mask = R != 0
-    yield arreq_, (R[mask] - 1) // 10, row_indices_matrix[mask]
+        # Check that we can round-trip
+        A_un  = A_compressed.uncompress(A)
+        yield assert_almost_equal, A, A_un
+
+        # Check that remainder blocks preserve row index
+        R = A_compressed.remainder_as_array(A)
+        mask = R != 0
+        yield arreq_, (R[mask] - 1) // 10, row_indices_matrix[mask]
 
     

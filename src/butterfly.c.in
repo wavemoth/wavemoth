@@ -202,8 +202,6 @@ static void access_mem(char *head, size_t size) {
 
 static char *apply_interpolation_d(char *head, double *input, double *output,
                                    int32_t k, int32_t n, int32_t nvec) {
-  int i;
-  char *next_head;
   double tmp_vecs[nvec * (n - k + 1)];
   if (nvec == 2) {
     head = merge_vectors_2(head, input, output, tmp_vecs, k, n - k);
@@ -234,7 +232,6 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
                               bfm_index_t **out_block_heights,
                               bfm_index_t **out_block_widths_first,
                               bfm_index_t **out_block_widths_second) {
-  bfm_index_t *block_widths_first, *block_widths_second;
   printf("%d %d\n", *(bfm_index_t*)head, order);
   assert(*(bfm_index_t*)head == 2 * order);   /* nblocks field */
   head += sizeof(bfm_index_t);
@@ -249,7 +246,7 @@ static INLINE char *recurse_d(char *head, bfm_index_t order,
   if (order == 1) {
     /* Parse the two leaf node identity matrices */
     bfm_index_t *ihead = (bfm_index_t*)head;
-    assert(ihead[0] == ihead[2] == 0);
+    assert((ihead[0] == ihead[2]) && (ihead[0] == 0));
     printf("%d %d %d\n", ihead[0], ihead[2], order);
     *out_block_widths_first = ihead + 1;
     *out_block_widths_second = ihead + 3;
@@ -281,7 +278,7 @@ static char *apply_butterfly_node_d(char *head, bfm_index_t order, double *input
                                     bfm_index_t nrows, bfm_index_t ncols,
                                     bfm_index_t nvecs) {
   bfm_index_t *block_heights, *block_widths_first, *block_widths_second;
-  bfm_index_t i, k;
+  bfm_index_t i;
   double *data_from_first, *data_from_second;
 
   head = recurse_d(head, order, input, nrows, ncols, nvecs, buffer, output,
@@ -332,7 +329,6 @@ int bfm_apply_d(char *head, double *x, double *y,
   bfm_index_t i;
   double *buffer = NULL, *buffer2 = NULL;
  /* TODO: Make sure this is sufficient. */
-  bfm_index_t maxrowscols = (nrows > ncols) ? nrows : ncols;
   check((size_t)head % 16 == 0, "'head'is unaligned");
   check((size_t)x % 16 == 0, "'x' is unaligned");
   check((size_t)y % 16 == 0, "'y' is unaligned");
@@ -426,7 +422,7 @@ static inline double *acquire_vector_chunk(bfm_plan *plan) {
   return r;
 }
 
-static inline double *release_vector_chunk(bfm_plan *plan, double *chunk) {
+static inline void release_vector_chunk(bfm_plan *plan, double *chunk) {
   assert(plan->chunk_stack_size < plan->chunks_allocated);
   plan->vector_chunk_stack[plan->chunk_stack_size++] = chunk;
 }
@@ -509,55 +505,40 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
     
     /* Process interpolation nodes. */
     size_t input_pos = 0; /* only used if is_root */
-    double *left_output_blocks[nblocks / 2], *right_output_blocks[nblocks / 2];
-    for (size_t i = 0; i != nblocks; i += 2) {
-      double *output_left = acquire_vector_chunk(plan);
-      double *output_right = acquire_vector_chunk(plan);
-      size_t k_T = block_heights[i];
-      size_t k_B = block_heights[i + 1];
-      size_t n_left = left_child_block_heights[i / 2];
-      size_t n_right = right_child_block_heights[i / 2];
-      char *mask;
-      double *interpolant;
-
-      assert(k_T <= plan->k_max && k_B <= plan->k_max);
-
-      /* Process T */
-      if (is_root) {
-        input_buf = acquire_vector_chunk(plan);
-        ctx->pull_func(input_buf, input_pos, input_pos + k_T, plan->nvecs, ctx->caller_ctx);
-        input_pos += k_T;
-      } else {
-        input_buf = input_blocks[i];
-        input_blocks[i] = NULL;
-      }
+    double *out_left_list[nblocks / 2], *out_right_list[nblocks / 2];
+    for (size_t i = 0; i != nblocks / 2; ++i) {
+      double *out_left = out_left_list[i] = acquire_vector_chunk(plan);
+      double *out_right = out_right_list[i] = acquire_vector_chunk(plan);
+      size_t n_left = left_child_block_heights[i];
+      size_t n_right = right_child_block_heights[i];
       assert(n_left <= plan->k_max && n_right <= plan->k_max);
-      transpose_apply_interpolation_block(&node_data, output_left, output_right,
-                                          input_buf, plan->y_buf,
-                                          n_left, n_right, k_T, plan->nvecs, 0);
-      release_vector_chunk(plan, input_buf);
-
-      /* Process B */
-      if (is_root) {
-        input_buf = acquire_vector_chunk(plan);
-        ctx->pull_func(input_buf, input_pos, input_pos + k_B, plan->nvecs, ctx->caller_ctx);
-        input_pos += k_B;
-      } else {
-        input_buf = input_blocks[i + 1];
-        input_blocks[i + 1] = NULL;
+      
+      /* Loop over cases T and B */
+      for (int j = 0; j != 2; ++j) {
+        size_t k = block_heights[2 * i + j];
+        assert(k <= plan->k_max);
+        if (is_root) {
+          input_buf = acquire_vector_chunk(plan);
+          ctx->pull_func(input_buf, input_pos, input_pos + k,
+                         plan->nvecs, ctx->caller_ctx);
+          input_pos += k;
+        } else {
+          input_buf = input_blocks[2 * i + j];
+          input_blocks[2 * i + j] = NULL;
+        }
+        int should_add = j;
+        transpose_apply_interpolation_block(&node_data, out_left, out_right,
+                                            input_buf, plan->y_buf,
+                                            n_left, n_right, k, plan->nvecs,
+                                            should_add);
+        release_vector_chunk(plan, input_buf);
       }
-      transpose_apply_interpolation_block(&node_data, output_left, output_right,
-                                          input_buf, plan->y_buf,
-                                          n_left, n_right, k_B, plan->nvecs, 1);
-      release_vector_chunk(plan, input_buf);
-      left_output_blocks[i / 2] = output_left;
-      right_output_blocks[i / 2] = output_right;
     }
     
     /* Recurse */
     size_t idx = target_start;
-    idx = transpose_apply_node(ctx, 2 * inode, idx, left_output_blocks);
-    idx = transpose_apply_node(ctx, 2 * inode + 1, idx, right_output_blocks);
+    idx = transpose_apply_node(ctx, 2 * inode, idx, out_left_list);
+    idx = transpose_apply_node(ctx, 2 * inode + 1, idx, out_right_list);
     return idx;
   }
 }

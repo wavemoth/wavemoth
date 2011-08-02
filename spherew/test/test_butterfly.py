@@ -164,8 +164,8 @@ def test_heapify():
     heap = heapify(Node(1, [Node(3, [Node(4)])]))
     eq_(heap, [1, 3, None, 4, None, None, None])
 
-def ndrange(shape):
-    return np.arange(np.prod(shape)).reshape(shape)
+def ndrange(shape, start=0):
+    return np.arange(start, np.prod(shape) + start).reshape(shape)
 
 def testvectors(m, n):
     x = np.arange(1, m + 1)
@@ -230,50 +230,124 @@ def test_transpose_apply_small_ip():
     ok_(all(y == np.dot(A.T, x)))
                     
     
-def test_transpose_apply_tree():
-    nextk = [5]
-    full_rank = True
+def test_transpose_apply_tree_generated():
+    "butterfly.c.in: Transpose application of deep tree"
+    nextk = [1]
+    full_rank = False
     kmax = [0]
+    ipidx = [0]
+    ipset = range(100)#[0, 4]
     
-    def make_tree(nblocks):
-        if nblocks == 0:
+    def make_tree(n):
+        if n == 0:
             k = nextk[0]
             nextk[0] += 1
+            kmax[0] = max([k, kmax[0]])
             return IdentityNode(k)
         else:
-            L = make_tree(nblocks // 2)
-            R = make_tree(nblocks // 2)
+            L = make_tree(n // 2)
+            R = make_tree(n // 2)
             blocks = []
             for lh, rh in zip(L.block_heights, R.block_heights):
                 n = lh + rh
                 if full_rank:
                     k1 = k2 = n
                 else:
-                    k1 = max(1, n - 3)
-                    k2 = max(1, n - 2)
+                    k1 = max(1, n - 4)
+                    k2 = max(1, n - 3)
                 TB = []
                 for k in (k1, k2):
-                    kmax[0] = max([k1, k2, kmax[0]])
+                    kmax[0] = max([k, kmax[0]])
                     filter = np.ones(n, dtype=np.int8)
                     filter[:k] = 0
-                    interpolant = np.ones((k, n - k))
-                    TB.append(InterpolationBlock(filter, interpolant))
+                    interpolant = ndrange((k, n - k), start=3)
+                    #if ipidx[0] not in ipset:
+                    #    interpolant *= 0
+                    #ipidx[0] += 1
+                    block = InterpolationBlock(filter, interpolant)
+                    TB.append(block)
                 blocks.append(TB)
-            return InnerNode(blocks, [L, R])
+            node = InnerNode(blocks, [L, R])
 
-    nblocks = 4
+            return node
+        
+
+    def tree_to_matrices(nblocks, tree):
+        matrices = []
+
+        # Convert depth-first to breadth-first. Ignore last
+        # layer of identity nodes.
+        bfs_tree = []
+        heap = heapify(tree)
+        idx = 0
+        n = 1
+        while n <= nblocks // 2:
+            bfs_tree.append(heap[idx:idx + n])
+            idx += n
+            n *= 2
+
+        # Make two matrices out of each level: An interpolation matrix
+        # and a permutation matrix.
+        for nodes_on_level in bfs_tree:
+            nrows = ncols = 0
+            children = []
+            for node in nodes_on_level:
+                nrows += node.nrows
+                ncols += node.node_ncols
+                children.extend(node.children)
+            nrows_children = sum([child.nrows for child in children])
+
+            # Interpolation matrix            
+            M = np.zeros((nrows, ncols))
+            i = j = 0
+            for node in nodes_on_level:
+                node.as_array(out=M[i:i + node.nrows, j:j+node.node_ncols])
+                i += node.nrows
+                j += node.node_ncols
+            matrices.append(M)
+
+            # Permutation matrix
+            i = jl = jr = 0
+            P = np.zeros((ncols, nrows_children))
+            for node in nodes_on_level:
+                L, R = node.children
+                i = i
+                jl = jr
+                jr += L.nrows
+                for lh, rh in zip(L.block_heights, R.block_heights):
+                    P[i:i + lh, jl:jl + lh] = np.eye(lh)
+                    i += lh
+                    jl += lh
+                    P[i:i + rh, jr:jr + rh] = np.eye(rh)
+                    i += rh
+                    jr += rh
+            matrices.append(P)
+                
+            
+        return matrices
+
+    def compute_direct(matrices, y):
+        for M in matrices:
+            y = np.dot(M.T, y)
+        return y
+
+    nblocks = 2**3
+    root = make_tree(nblocks // 2)
+    #root.print_tree()
     
-    root = make_tree(nblocks)
-    print find_heap_size(root)
+    matrices = tree_to_matrices(nblocks, root)
+    #for M in matrices:
+    #    print M
 
     nvecs = 2
-    print nextk[0], 'kmax'
     plan = ButterflyPlan(k_max=kmax[0], nblocks_max=nblocks, nvecs=nvecs)
 
     matrix_data = refactored_serializer(root).getvalue()
     x = ndrange((root.nrows, nvecs))
+
+    y0 = compute_direct(matrices, x)
     y = plan.transpose_apply(matrix_data, root.ncols, x)
-    print y
-#    ok_(all(x == y))
+
+    ok_(all(y0 == y))
     
 

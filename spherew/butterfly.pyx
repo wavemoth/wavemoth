@@ -356,10 +356,27 @@ class InterpolationBlock(object):
         y += np.dot(self.interpolant, x[self.filter == 1, :])
         return y
 
+    def as_array(self, out=None):
+        "Convert to dense array, for use in tests"
+        if out is None:
+            out = np.zeros(self.shape)
+        elif out.shape != self.shape:
+            print out.shape
+            print self.shape
+            raise ValueError('out has wrong shape')
+        k, n = self.shape
+        out[:, self.filter == 0] = np.eye(k)
+        out[:, self.filter == 1] = self.interpolant
+        return out
+
     def size(self):
         return np.prod(self.interpolant.shape)
     
 class InnerNode(object):
+    # ncols - "virtual" number of columns
+    # node_ncols - number of columns of only this node (=sum(nrows of children))
+    # nrows - number of rows = sum(block_heights)
+    
     def __init__(self, blocks, children, remainder_blocks=None):
         if 2**int(np.log2(len(blocks))) != len(blocks):
             raise ValueError("len(blocks) not a power of 2")
@@ -371,11 +388,13 @@ class InnerNode(object):
                 print T_ip.shape, B_ip.shape, lh, rh
                 raise ValueError("Nonconforming matrices")
         self.blocks = blocks
-        self.ncols = sum(child.nrows for child in children)
+        self.ncols = sum(child.ncols for child in children)
+        self.node_ncols = sum(child.nrows for child in children)
         self.children = children
         self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
                                  for T_ip, B_ip in blocks], [])
         self.nrows = sum(self.block_heights)
+
         self.remainder_blocks = remainder_blocks
         if remainder_blocks is not None:
             if not isinstance(remainder_blocks, list):
@@ -387,7 +406,9 @@ class InnerNode(object):
                     raise ValueError("nonconforming remainder block")
 
     def __repr__(self):
-        return '<InnerNode %dx%d block_heights=%r>' % (self.nrows, self.ncols, self.block_heights)
+        return '<InnerNode %dx%d(%d) block_heights=%r>' % (
+            self.nrows, self.ncols,
+            self.node_ncols, self.block_heights)
 
     def print_tree(self, indent='', stream=sys.stdout):
         stream.write('%s%r\n' % (indent, self))
@@ -406,6 +427,21 @@ class InnerNode(object):
         for T_ip, B_ip in self.blocks:
             T_ip.write_to_stream(stream)
             B_ip.write_to_stream(stream)
+
+    def as_array(self, out=None):
+        "Convert to dense array, for use in tests"
+        if out is None:
+            out = np.zeros((self.nrows, self.node_ncols))
+        elif out.shape != (self.nrows, self.node_ncols):
+            raise ValueError('out has wrong shape')
+        i = j = 0
+        for T_ip, B_ip in self.blocks:
+            # Stack T_ip and B_ip vertically
+            for X in [T_ip, B_ip]:
+                X.as_array(out[i:i + X.shape[0], j:j + X.shape[1]])
+                i += X.shape[0]
+            j += T_ip.shape[1]
+        return out
 
     def apply(self, x):
         # z is the vector containing the contiguous result of the 2 children

@@ -531,6 +531,7 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
         input_buf = input_blocks[i];
         input_blocks[i] = NULL;
       }
+      assert(n_left <= plan->k_max && n_right <= plan->k_max);
       transpose_apply_interpolation_block(&node_data, output_left, output_right,
                                           input_buf, plan->y_buf,
                                           n_left, n_right, k_T, plan->nvecs, 0);
@@ -554,12 +555,10 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
     }
     
     /* Recurse */
-    size_t target_stop = 
-      transpose_apply_node(ctx, 2 * inode, target_start, left_output_blocks);
-    target_stop = 
-      transpose_apply_node(ctx, 2 * inode + 1, target_stop, right_output_blocks);
-    
-    return target_stop;
+    size_t idx = target_start;
+    idx = transpose_apply_node(ctx, 2 * inode, idx, left_output_blocks);
+    idx = transpose_apply_node(ctx, 2 * inode + 1, idx, right_output_blocks);
+    return idx;
   }
 }
 

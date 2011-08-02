@@ -471,7 +471,7 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
 
   int is_root = (input_blocks == NULL);
   bfm_plan *plan = ctx->plan;
-  double *input_buf;
+  double *input_block;
 
   if (is_root) {
     assert(target_start == 0);
@@ -479,17 +479,16 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
 
   if (nblocks == 0) {
     /* Leaf node, simply push buffer to output vectors */
-    double *input_buf;
     size_t n = read_index(&node_data);
     if (is_root) {
-      input_buf = acquire_vector_chunk(plan);
-      ctx->pull_func(input_buf, 0, n, plan->nvecs, ctx->caller_ctx);
+      input_block = acquire_vector_chunk(plan);
+      ctx->pull_func(input_block, 0, n, plan->nvecs, ctx->caller_ctx);
     } else {
-      input_buf = input_blocks[0];
+      input_block = input_blocks[0];
     }
-    ctx->push_func(input_buf, target_start, target_start + n, plan->nvecs,
+    ctx->push_func(input_block, target_start, target_start + n, plan->nvecs,
                    ctx->add_push, ctx->caller_ctx);
-    release_vector_chunk(plan, input_buf);
+    release_vector_chunk(plan, input_block);
     return target_start + n;
   } else {
     bfm_index_t *block_heights = (bfm_index_t*)node_data;
@@ -518,20 +517,20 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
         size_t k = block_heights[2 * i + j];
         assert(k <= plan->k_max);
         if (is_root) {
-          input_buf = acquire_vector_chunk(plan);
-          ctx->pull_func(input_buf, input_pos, input_pos + k,
+          input_block = acquire_vector_chunk(plan);
+          ctx->pull_func(input_block, input_pos, input_pos + k,
                          plan->nvecs, ctx->caller_ctx);
           input_pos += k;
         } else {
-          input_buf = input_blocks[2 * i + j];
+          input_block = input_blocks[2 * i + j];
           input_blocks[2 * i + j] = NULL;
         }
         int should_add = j;
         transpose_apply_interpolation_block(&node_data, out_left, out_right,
-                                            input_buf, plan->y_buf,
+                                            input_block, plan->y_buf,
                                             n_left, n_right, k, plan->nvecs,
                                             should_add);
-        release_vector_chunk(plan, input_buf);
+        release_vector_chunk(plan, input_block);
       }
     }
     

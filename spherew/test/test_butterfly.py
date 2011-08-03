@@ -328,17 +328,62 @@ def test_compress():
     A = ndrange((10, 10), start = 1)
     row_indices_matrix = (A - 1) // 10 # make use of feature of ndrange
 
-    for chunk_size in range(1, 10):
+    def test(chunk_size):
         A_compressed = butterfly_compress(A, chunk_size)
         # A_compressed.print_tree()
 
         # Check that we can round-trip
         A_un  = A_compressed.uncompress(A)
-        yield assert_almost_equal, A, A_un
+        assert_almost_equal(A, A_un)
 
         # Check that remainder blocks preserve row index
         R = A_compressed.remainder_as_array(A)
         mask = R != 0
-        yield arreq_, (R[mask] - 1) // 10, row_indices_matrix[mask]
+        arreq_((R[mask] - 1) // 10, row_indices_matrix[mask])
+
+    for chunk_size in range(1, 10):
+        yield test, chunk_size
+
+    
+def test_compress_generated():
+    "Compress and uncompress matrix provided by an expression"
+
+    class TestMatrix:
+        def __init__(self, shape):
+            self.shape = shape
+            self.elements_fetched = 0
+            
+        def get_block(self, row_start, row_stop, col_indices):
+            assert isinstance(row_start, int) and row_start >= 0
+            assert isinstance(row_stop, int) and row_stop <= self.shape[0]
+            assert row_start <= row_stop
+            assert isinstance(col_indices, np.ndarray)
+            for i in col_indices:
+                assert 0 <= i < self.shape[1]
+            
+            axi = np.arange(row_start, row_stop)[:, None]
+            axj = col_indices[None, :]
+            block = (axi * axj).astype(np.double)
+            self.elements_fetched += np.prod(block.shape)
+            return block
+        
+    i, j = np.ogrid[:10, :10]
+    A0 = i * j
+
+    A_compressed = butterfly_compress(TestMatrix((10, 10)),
+                                      chunk_size=3, shape=(10, 10))
+    provider = TestMatrix((10, 10))
+    # Check that matrix data can be acquired solely through
+    # get_block method of TestMatrix, and that uncompressed
+    # result matches A0
+    A_un  = A_compressed.uncompress(provider)
+    assert_almost_equal(A0, A_un)
+    # Check that during uncompression, the number of elements
+    # fetched is 10 (not 100)
+    eq_(provider.elements_fetched, 10)
+    # One check on compression stats
+    ip_sizes, remainder_sizes = A_compressed.get_multilevel_stats()
+    eq_(remainder_sizes[-1], provider.elements_fetched)
+    
 
     

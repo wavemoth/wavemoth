@@ -230,8 +230,8 @@ class IdentityNode(object):
         return 0
 
     def get_multilevel_stats(self):
-        raise NotImplementedError()
-        return [0], [np.prod(self.remainder_blocks[0].shape)]
+        R = self.remainder_blocks[0]
+        return [0], [(R.row_stop - R.row_start) * len(R.col_indices)]
 
 def unroll_pairs(pairs):
     result = []
@@ -519,12 +519,13 @@ class InnerNode(object):
                         ip_sizes[-1] if len(ip_sizes) > 0 else 0)
 
         rsize = 0
-        for b in self.remainder_blocks:
-            rsize += b.shape[0] * b.shape[1]
+        for R in self.remainder_blocks:
+            rsize += (R.row_stop - R.row_start) * len(R.col_indices)
         remainder_sizes.append(rsize)
         return ip_sizes, remainder_sizes
 
-    def remainder_as_array(self, array, out=None):
+    def remainder_as_array(self, matrix_provider, out=None):
+        matrix_provider = as_matrix_provider(matrix_provider)
         m = n = 0
         for row_start, row_stop, col_indices in self.remainder_blocks:
             m += row_stop - row_start
@@ -536,22 +537,23 @@ class InnerNode(object):
         i = 0
         j = 0
         for row_start, row_stop, col_indices in self.remainder_blocks:
-            R = array[row_start:row_stop, col_indices]
+            R = matrix_provider.get_block(row_start, row_stop, col_indices)
             out[i:i + R.shape[0], j:j + R.shape[1]] = R
             i += R.shape[0]
             j += R.shape[1]
         return out
 
-    def uncompress(self, array):
+    def uncompress(self, matrix_provider):
         """
         Returns a dense array corresponding to the matrix represented by the tree.
-        Ironically, requires the array as input in order to reconstruct
-        the remainder blocks.
+        matrix_provider will only be queried for parts corresponding to
+        remainder blocks.
 
         This is only useful for testing purposes.
         """
         # Construct block-diagonal matrix of remainder blocks
-        A = self.remainder_as_array(array)
+        matrix_provider = as_matrix_provider(matrix_provider)
+        A = self.remainder_as_array(matrix_provider)
         matrices = tree_to_matrices(self)
         for M in matrices:
             A = np.dot(A, M)
@@ -578,18 +580,20 @@ def pick_remainder_block(A, rinfo):
     else:
         return np.zeros((row_stop - row_start, 0))
 
-def butterfly_core(A_k_blocks, eps, A, icol=0):
-    if len(A_k_blocks) == 1:
-        # No compression achieved anyway at this stage when split
-        # into odd l/even l
-        block = A_k_blocks[0]
-        return IdentityNode(block.shape[1], remainder_blocks=[
-            RemainderBlockInfo(row_start=0, row_stop=block.shape[0],
-                               col_indices=np.arange(icol, icol + block.shape[1]))])
+def butterfly_core(col, row, nrows, partition, matrix_provider, eps):
+    # partition: list of end-column-index of each column block;
+    # partition[-1] == ncols.
+    if len(partition) == 1:
+        stop = partition[0]
+        return IdentityNode(partition[0] - col, remainder_blocks=[
+            RemainderBlockInfo(row_start=row, row_stop=nrows,
+                               col_indices=np.arange(col, partition[0]))])
 
-    mid = len(A_k_blocks) // 2
-    L_node = butterfly_core(A_k_blocks[:mid], eps, A, icol)
-    R_node = butterfly_core(A_k_blocks[mid:], eps, A, icol + L_node.ncols)
+    mid = len(partition) // 2
+    L_node = butterfly_core(col, row, nrows, partition[:mid],
+                            matrix_provider, eps)
+    R_node = butterfly_core(col + L_node.ncols, row, nrows, partition[mid:],
+                            matrix_provider, eps)
 
     # Compress further
     out_remainders = []
@@ -600,11 +604,11 @@ def butterfly_core(A_k_blocks, eps, A, icol=0):
         row_stop = L_remainder.row_stop
         assert row_start == R_remainder.row_start
         assert row_stop == R_remainder.row_stop
-        L = pick_remainder_block(A, L_remainder)
-        R = pick_remainder_block(A, R_remainder)
+        # Horizontal join
+        L = matrix_provider.get_block(row_start, row_stop, L_remainder.col_indices)
+        R = matrix_provider.get_block(row_start, row_stop, R_remainder.col_indices)
         LR_col_indices = np.hstack([L_remainder.col_indices,
                                     R_remainder.col_indices])
-        # Horizontal join
         LR = np.hstack([L, R])
         # Vertical split & compress
         vmid = LR.shape[0] // 2
@@ -649,31 +653,59 @@ def partition_columns_given_width(A, column_width):
     # the matrix; divide the residual columns over the last two blocs.
     blocks = []
 
-def pad_with_empty_columns(blocks):
-    n = len(blocks)
+def pad_with_empty_columns(partition):
+    n = len(partition)
     target_n = 1
     while n > target_n:
         target_n *= 2
     to_add = target_n - n
     result = []
-    for block in blocks:
-        result.append(block)
+    for p in partition:
+        result.append(p)
         if to_add > 0:
-            result.append(block[:, -1:-1])
+            result.append(p)
             to_add -= 1
     return result
 
-def partition(P, chunk_size):
-    n = P.shape[1]
+def make_partition(start, stop, chunk_size):
+    n = stop - start
     result = []
-    for idx in range(0, n, chunk_size):
-        result.append(P[:, idx:idx + chunk_size])
+    for idx in range(chunk_size, n, chunk_size):
+        result.append(idx)
+    if result[-1] != stop:
+        result.append(stop)
     return result
 
-def butterfly_compress(A, chunk_size, eps=1e-10):
-    blocks = partition(A, chunk_size)
-    blocks = pad_with_empty_columns(blocks)
-    root = butterfly_core(blocks, eps, A)
+class ArrayProvider(object):
+    def __init__(self, array):
+        self.array = array
+
+    def get_block(self, row_start, row_stop, col_indices):
+        if len(col_indices) > 0:
+            return self.array[row_start:row_stop, col_indices]
+        else:
+            return np.zeros((row_stop - row_start, 0))
+        
+def as_matrix_provider(x):
+    if isinstance(x, np.ndarray):
+        return ArrayProvider(x)
+    elif hasattr(x, 'get_block'):
+        return x
+    else:
+        raise TypeError('Not a matrix provider instance')
+
+def butterfly_compress(matrix_provider, chunk_size, shape=None, eps=1e-10, 
+                       col=0, row=0):
+    if isinstance(matrix_provider, np.ndarray):
+        if shape is None:
+            shape = matrix_provider.shape
+        matrix_provider = ArrayProvider(matrix_provider)
+    elif shape is None:
+        raise TypeError('shape must be provided')
+        
+    partition = make_partition(col, shape[1], chunk_size)
+    partition = pad_with_empty_columns(partition)
+    root = butterfly_core(col, row, shape[0], partition, matrix_provider, eps)
     return root
 
 def serialize_butterfly_matrix(M):

@@ -8,6 +8,8 @@ from io import BytesIO
 import numpy as np
 cimport numpy as np
 
+from spherew cimport blas
+
 from interpolative_decomposition import sparse_interpolative_decomposition
 from collections import namedtuple
 
@@ -23,7 +25,7 @@ cdef extern from "butterfly.h":
     ctypedef void (*push_func_t)(double *buf, size_t start, size_t stop,
                                  size_t nvecs, int should_add, void *ctx)
     ctypedef void (*pull_func_t)(double *buf, size_t start, size_t stop,
-                                 size_t nvecs, void *ctx)
+                                 size_t nvecs, char *payload, size_t payload_len, void *ctx)
 
     int bfm_apply_d(char *matrixdata, double *x, double *y,
                     bfm_index_t nrows, bfm_index_t ncols, bfm_index_t nvecs)
@@ -53,38 +55,19 @@ else:
 class ButterflyMatrixError(Exception):
     pass
 
-cdef class PlanApplicationContext:
-    cdef object input_array, output_array
-
 cdef void pull_input_callback(double *buf, size_t start, size_t stop, size_t nvecs,
-                              void *_ctx):
-    cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
-    cdef np.ndarray[double, ndim=2] input = ctx.input_array
-    cdef size_t i, j, idx = 0
-    for i in range(start, stop):
-        for j in range(nvecs):
-            buf[idx] = input[i, j]
-            idx += 1
+                              char *payload, size_t payload_len, void *_ctx):
+    (<ButterflyPlan>_ctx).transpose_pull_input(buf, start, stop, nvecs,
+                                               payload, payload_len)
 
 cdef void push_output_callback(double *buf, size_t start, size_t stop, size_t nvecs,
                                int should_add, void *_ctx):
-    cdef PlanApplicationContext ctx = <PlanApplicationContext>_ctx
-    cdef np.ndarray[double, ndim=2] output = ctx.output_array
-    cdef size_t i, j, idx = 0
-    if should_add:
-        for i in range(start, stop):
-            for j in range(nvecs):
-                output[i, j] += buf[idx]
-                idx += 1
-    else:
-        for i in range(start, stop):
-            for j in range(nvecs):
-                output[i, j] = buf[idx]
-                idx += 1
+    (<ButterflyPlan>_ctx).transpose_push_output(buf, start, stop, nvecs, should_add)
 
 cdef class ButterflyPlan:
     cdef bfm_plan *plan
     cdef size_t nvecs
+    cdef object input_array, output_array
     
     def __cinit__(self, k_max, nblocks_max, nvecs):
         self.plan = bfm_create_plan(k_max, nblocks_max, nvecs)
@@ -95,27 +78,72 @@ cdef class ButterflyPlan:
         #bfm_destroy_plan(self.plan)
 
     def transpose_apply(self, bytes matrix_data, ncols, x):
-        cdef PlanApplicationContext ctx = PlanApplicationContext()
-        ctx.input_array = np.asarray(x, dtype=np.double)
-        ctx.output_array = np.zeros((ncols, self.nvecs))
-
         cdef char *buf
         cdef bint need_realign
-        need_realign = <size_t><char*>matrix_data % 16 != 0
-        if need_realign:
-            buf = <char*>memalign(16, len(matrix_data))
-            memcpy(buf, <char*>matrix_data, len(matrix_data))
+
+        self.input_array = np.asarray(x, dtype=np.double)
+        output_array = self.output_array = np.zeros((ncols, self.nvecs))
+        try:
+            need_realign = <size_t><char*>matrix_data % 16 != 0
+            if need_realign:
+                buf = <char*>memalign(16, len(matrix_data))
+                memcpy(buf, <char*>matrix_data, len(matrix_data))
+            else:
+                buf = <char*>matrix_data
+            ret = bfm_transpose_apply_d(self.plan, buf, x.shape[0], ncols,
+                                        &pull_input_callback, &push_output_callback,
+                                        <void*>self)
+            if ret != 0:
+                raise Exception("bfm_transpose_apply_d returned %d" % ret)
+        finally:
+            self.input_array = self.output_array = None
+            if need_realign:
+                free(buf)
+        return output_array
+
+    cdef transpose_push_output(self, double *buf, size_t start, size_t stop, size_t nvecs,
+                               int should_add):
+        cdef np.ndarray[double, ndim=2] output = self.output_array
+        cdef size_t i, j, idx = 0
+        if should_add:
+            for i in range(start, stop):
+                for j in range(nvecs):
+                    output[i, j] += buf[idx]
+                    idx += 1
         else:
-            buf = <char*>matrix_data
-        ret = bfm_transpose_apply_d(self.plan, buf, x.shape[0], ncols,
-                                    &pull_input_callback, &push_output_callback,
-                                    <void*>ctx)
-        if need_realign:
-            free(buf)
-        if ret != 0:
-            raise Exception("bfm_transpose_apply_d returned %d" % ret)
-        return ctx.output_array
-                              
+            for i in range(start, stop):
+                for j in range(nvecs):
+                    output[i, j] = buf[idx]
+                    idx += 1
+
+    cdef transpose_pull_input(self, double *buf, size_t start, size_t stop, size_t nvecs,
+                              char *payload, size_t payload_len):
+        cdef np.ndarray[double, ndim=2] input = self.input_array
+        cdef size_t i, j, idx = 0
+        for i in range(start, stop):
+            for j in range(nvecs):
+                buf[idx] = input[i, j]
+                idx += 1
+    
+
+cdef class DenseResidualButterfly(ButterflyPlan):
+    cdef transpose_pull_input(self, double *buf, size_t start, size_t stop, size_t nvecs,
+                              char *payload, size_t payload_len):
+        cdef np.ndarray[double, ndim=2, mode='c'] input = self.input_array
+        cdef size_t i, j, v, k, idx = 0
+        cdef double s
+        if <size_t>payload % 16 != 0:
+            payload += 16 - <size_t>payload % 16
+        cdef size_t row_start = (<int64_t*>payload)[0]
+        cdef size_t row_stop = (<int64_t*>payload)[1]
+        cdef size_t ncols = stop - start
+        payload += sizeof(int64_t) * 2        
+        cdef double *A = <double*>payload
+        # buf = dot(input.T, A)
+        blas.dgemm_ccc_(<double*>input.data + row_start * nvecs,
+                        A,
+                        buf,
+                        nvecs, stop - start, row_stop - row_start, 0.0)
 
 cdef class SerializedMatrix:
     cdef char *buf
@@ -207,6 +235,8 @@ class IdentityNode(object):
     def __init__(self, n, remainder_blocks=None):
         self.ncols = self.nrows = n
         self.block_heights = [n]
+        if remainder_blocks is None:
+            remainder_blocks = [RemainderBlockInfo(0, n, np.asarray([]))]
         self.remainder_blocks = remainder_blocks
         self.children = []
 
@@ -428,7 +458,6 @@ class InnerNode(object):
                                  for T_ip, B_ip in blocks], [])
         self.nrows = sum(self.block_heights)
 
-        self.remainder_blocks = remainder_blocks
         if remainder_blocks is not None:
             if not isinstance(remainder_blocks, list):
                 raise TypeError("expected list for remainder_blocks")
@@ -438,6 +467,11 @@ class InnerNode(object):
                 remainder_blocks, self.block_heights):
                 if len(rinfo.col_indices) != bh:
                     raise ValueError("nonconforming remainder block specification")
+        else:
+            remainder_blocks = [RemainderBlockInfo(0, n, np.asarray([])) for n in
+                                self.block_heights]
+        self.remainder_blocks = remainder_blocks
+            
 
     def __repr__(self):
         return '<InnerNode %dx%d(%d) block_heights=%r>' % (
@@ -732,6 +766,14 @@ class ArrayProvider(object):
             return self.array[row_start:row_stop, col_indices]
         else:
             return np.zeros((row_stop - row_start, 0))
+
+    def serialize_block_payload(self, stream, row_start, row_stop, col_indices):
+        pad128(stream)
+        block = np.asfortranarray(self.get_block(row_start, row_stop, col_indices),
+                                  dtype=np.double)
+        write_int64(stream, row_start)
+        write_int64(stream, row_stop)
+        write_array(stream, block)
         
 def as_matrix_provider(x):
     if isinstance(x, np.ndarray):
@@ -809,9 +851,11 @@ def serialize_node(stream, node):
         raise AssertionError()
     
 
-def refactored_serializer(root, out=None):
-    if out is None:
-        out = BytesIO()
+def refactored_serializer(root, matrix_provider, stream=None):
+    if stream is None:
+        stream = BytesIO()
+
+    matrix_provider = as_matrix_provider(matrix_provider)
 
     # Only support one root node for now
     first_level_size = 1
@@ -820,34 +864,66 @@ def refactored_serializer(root, out=None):
     heap_size = find_heap_size(root)
     heap = [None] * heap_size
     heapify(root, heap_first_index, 1, heap)
-    
-    write_int32(out, root.nrows)
-    write_int32(out, root.ncols)
-    write_int32(out, first_level_size)
-    write_int32(out, heap_size)
-    write_int32(out, heap_first_index)
-    write_int32(out, 0) # padding
+
+    nrows_R = 0
+    for row_start, row_stop, col_indices in root.remainder_blocks:
+        nrows_R += row_stop - row_start
+
+    write_int32(stream, nrows_R)
+    write_int32(stream, root.ncols)
+    write_int32(stream, first_level_size)
+    write_int32(stream, heap_size)
+    write_int32(stream, heap_first_index)
+    write_int32(stream, 0)
+
+    # Output placeholder residual matrix payload table of size first_level_size
+    residual_pos = stream.tell()
+    write_int64(stream, 0)
 
     # Output placeholder heap table
-    heap_pos = out.tell()
+    heap_pos = stream.tell()
     for node in heap:
-        write_int64(out, 0)
+        write_int64(stream, 0)
     node_offsets = [0] * heap_size
+
+    # Now follows residual matrix payloads
+    pos = stream.tell()
+    stream.seek(residual_pos)
+    write_int64(stream, pos) # patch pointer
+    stream.seek(pos)
+
+    # Table of offsets to each R block, of len remainder_blocks + 1(!). The +1
+    # is here to allow computing sizes...
+    write_int64(stream, len(root.remainder_blocks))
+    offsets_pos = stream.tell()
+    for _ in range(len(root.remainder_blocks) + 1):
+        write_int64(stream, 0)
+    R_offsets = [0] * (len(root.remainder_blocks) + 1)
+    for idx, (row_start, row_stop, col_indices) in enumerate(root.remainder_blocks):
+        R_offsets[idx] = stream.tell()
+        matrix_provider.serialize_block_payload(stream, row_start, row_stop, col_indices)
+    R_offsets[idx + 1] = stream.tell()
+        
+    end_pos = stream.tell()
+    stream.seek(offsets_pos)
+    for offset in R_offsets:
+        write_int64(stream, offset)
+    stream.seek(end_pos)
 
     # Write nodes and record offsets
     for i, node in enumerate(heap):
-        pad128(out)
-        node_offsets[i] = out.tell()
-        serialize_node(out, node)
+        pad128(stream)
+        node_offsets[i] = stream.tell()
+        serialize_node(stream, node)
 
     # Output actual offsets to heap table
-    end_pos = out.tell()
-    out.seek(heap_pos)
+    end_pos = stream.tell()
+    stream.seek(heap_pos)
     for offset in node_offsets:
-        write_int64(out, offset)
-    out.seek(end_pos)
+        write_int64(stream, offset)
+    stream.seek(end_pos)
 
-    return out
+    return stream
 
 def tree_to_matrices(tree):
     """

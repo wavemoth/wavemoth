@@ -184,13 +184,20 @@ def vectors(m, n):
         result[:, i] = x * 10**i
     return result
 
+class NoPayload(object):
+    def get_block(self, row_start, row_stop, col_indices):
+        assert False
+        
+    def serialize_block_payload(self, stream, row_start, row_stop, col_indices):
+        return
+
 def test_transpose_apply_leaf():
     "butterfly.c.in: Transpose application of identity matrix"
     nvecs = 2
     nrows = ncols = 7
     plan = ButterflyPlan(k_max=nrows, nblocks_max=1, nvecs=nvecs)
     node = IdentityNode(nrows); assert nrows == ncols
-    matrix_data = refactored_serializer(node).getvalue()
+    matrix_data = refactored_serializer(node, NoPayload()).getvalue()
     x = ndrange((ncols, nvecs))
     y = plan.transpose_apply(matrix_data, nrows, x)
     ok_(all(x == y))
@@ -207,7 +214,7 @@ def test_transpose_apply_small_fullrank():
                      InterpolationBlock([0, 0], [[], []]))],
                    [IdentityNode(1), IdentityNode(1)])
     plan = ButterflyPlan(k_max=2, nblocks_max=2, nvecs=2)
-    matrix_data = refactored_serializer(S1).getvalue()
+    matrix_data = refactored_serializer(S1, NoPayload()).getvalue()
     y = plan.transpose_apply(matrix_data, 2, x)
     ok_(all(y == np.dot(A.T, x)))
 
@@ -217,7 +224,7 @@ def test_transpose_apply_small_zerorank():
                      InterpolationBlock([1, 1], np.zeros((0, 2))))],
                    [IdentityNode(1), IdentityNode(1)])
     plan = ButterflyPlan(k_max=0, nblocks_max=2, nvecs=2)
-    matrix_data = refactored_serializer(S1).getvalue()
+    matrix_data = refactored_serializer(S1, NoPayload()).getvalue()
     y = plan.transpose_apply(matrix_data, 2, np.ones((0, 2)))
     ok_(all(y == 0))
     eq_(y.shape, (2, 2))
@@ -235,7 +242,7 @@ def test_transpose_apply_small_ip():
                      InterpolationBlock([0, 1, 0], [[-1], [-2]]))],
                    [IdentityNode(1), IdentityNode(2)])
     plan = ButterflyPlan(k_max=2, nblocks_max=2, nvecs=2)
-    matrix_data = refactored_serializer(S1).getvalue()
+    matrix_data = refactored_serializer(S1, NoPayload()).getvalue()
     y = plan.transpose_apply(matrix_data, 3, x)
     ok_(all(y == np.dot(A.T, x)))
                     
@@ -296,7 +303,7 @@ def test_transpose_apply_tree_generated():
     nvecs = 2
     plan = ButterflyPlan(k_max=kmax[0], nblocks_max=nblocks, nvecs=nvecs)
 
-    matrix_data = refactored_serializer(root).getvalue()
+    matrix_data = refactored_serializer(root, NoPayload()).getvalue()
     x = ndrange((root.nrows, nvecs))
 
     y0 = compute_direct(matrices, x)
@@ -390,9 +397,20 @@ def test_compress_generated():
 # Butterfly application
 #
 
-def test_transpose_apply():
+def test_transpose_apply_python():
     i, j = np.ogrid[:10, :10]
     A = (i * j).astype(np.double)
     A_compressed = butterfly_compress(A, chunk_size=3)
     x = ndrange((10, 2))
     assert_almost_equal(np.dot(A.T, x), A_compressed.transpose_apply(x, A))
+
+def test_transpose_apply_c():
+    plan = DenseResidualButterfly(k_max=10, nblocks_max=10, nvecs=2)
+
+    i, j = np.ogrid[:20, :10]
+    A = (i * j).astype(np.double)
+    A_compressed = butterfly_compress(A, chunk_size=3)
+    matrix_data = refactored_serializer(A_compressed, A).getvalue()
+    x = ndrange((20, 2))
+    y = plan.transpose_apply(matrix_data, 10, x)
+    assert_almost_equal(np.dot(A.T, x), y)

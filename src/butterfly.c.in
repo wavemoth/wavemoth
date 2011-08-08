@@ -449,6 +449,8 @@ struct _bfm_transpose_apply_context {
   void *caller_ctx;
   char *matrix_data;
   char **node_heap;
+  char **residual_payload_headers;
+  int current_root_idx;
   int add_push;
 };
 
@@ -469,6 +471,25 @@ static inline bfm_index_t read_index(char **head) {
   bfm_index_t result = *(bfm_index_t*)*head;
   *head += sizeof(bfm_index_t);
   return result;
+}
+
+static inline int64_t read_int64(char **head) {
+  int64_t result = *(int64_t*)*head;
+  *head += sizeof(int64_t);
+  return result;
+}
+
+static inline void read_int64_list(char **head, int64_t *list, size_t n) {
+  for (size_t i = 0; i != n; ++i) {
+    list[i] = *(int64_t*)*head;
+    *head += sizeof(int64_t);
+  }
+}
+
+static inline void read_pointer_list(char **head, char **list, size_t n, char *baseptr) {
+  for (size_t i = 0; i != n; ++i) {
+    list[i] = baseptr + read_int64(head);
+  }
 }
 
 static void read_interpolation_block(char **head, char **mask, double **interpolant,
@@ -506,8 +527,14 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
   bfm_plan *plan = ctx->plan;
   double *input_block;
 
+  char *payloads[((nblocks == 0) ? 1 : nblocks) + 1];
+
   if (is_root) {
     assert(target_start == 0);
+    char *payload_head = ctx->residual_payload_headers[ctx->current_root_idx];
+    size_t n = read_int64(&payload_head);
+    assert((n == nblocks) || (nblocks == 0 && n == 1));
+    read_pointer_list(&payload_head, payloads, n + 1, ctx->matrix_data);
   }
 
   if (nblocks == 0) {
@@ -515,7 +542,8 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
     size_t n = read_index(&node_data);
     if (is_root) {
       input_block = acquire_vector_chunk(plan);
-      ctx->pull_func(input_block, 0, n, plan->nvecs, ctx->caller_ctx);
+      ctx->pull_func(input_block, 0, n, plan->nvecs, payloads[0],
+                     payloads[1] - payloads[0], ctx->caller_ctx);
     } else {
       input_block = input_blocks[0];
     }
@@ -552,7 +580,9 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
         if (is_root) {
           input_block = acquire_vector_chunk(plan);
           ctx->pull_func(input_block, input_pos, input_pos + k,
-                         plan->nvecs, ctx->caller_ctx);
+                         plan->nvecs, payloads[2 * i + j],
+                         payloads[2 * i + j + 1] - payloads[2 * i + j],
+                         ctx->caller_ctx);
           input_pos += k;
         } else {
           input_block = input_blocks[2 * i + j];
@@ -610,26 +640,32 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   /* One padding */
   head += sizeof(int32_t[6]);
 
+  /* Read residual matrix payload data */
+  char *residual_payload_headers[first_level_size];
+  ctx.residual_payload_headers = residual_payload_headers;
+  read_pointer_list(&head, residual_payload_headers, first_level_size, matrix_data);
+
+  /* Read tree node pointers in binary heap structure */
   char *heap_buf[heap_size];
   ctx.node_heap = heap_buf - node_heap_first_index;
 
-  for (size_t i = 0; i != heap_size; ++i) {
-    heap_buf[i] = matrix_data + ((int64_t*)head)[i];
-  }
+  read_pointer_list(&head, heap_buf, heap_size, matrix_data);
+
 
   /* Start to apply the root level. 
 
      We signal whether we're in the first iteration using the add_push
      flag, which the caller can inspect and (optionally) zero the output buffer.
   */
-  ctx.add_push = 0; /* */
+  ctx.add_push = 0;
+  ctx.current_root_idx = 0;
   for (size_t inode = node_heap_first_index;
        inode != node_heap_first_index + first_level_size;
        ++inode) {
-
     size_t stop = transpose_apply_node(&ctx, inode, 0, NULL);
     assert(stop == ncols);
     ctx.add_push = 1; /* Any remaining root nodes require addition. */
+    ctx.current_root_idx++;
   }
   
   return 0;

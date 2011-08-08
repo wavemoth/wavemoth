@@ -113,7 +113,7 @@ int bfm_apply_d(char *matrixdata, double *x, double *y,
 typedef void (*push_func_t)(double *buf, size_t start, size_t stop,
                             size_t nvecs, int should_add, void *ctx);
 typedef void (*pull_func_t)(double *buf, size_t start, size_t stop,
-                            size_t nvecs, void *ctx);
+                            size_t nvecs, char *payload, size_t payload_len, void *ctx);
 
 struct _bfm_plan;
 typedef struct _bfm_plan bfm_plan;

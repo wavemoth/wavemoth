@@ -386,4 +386,13 @@ def test_compress_generated():
     eq_(remainder_sizes[-1], provider.elements_fetched)
     
 
-    
+#
+# Butterfly application
+#
+
+def test_transpose_apply():
+    i, j = np.ogrid[:10, :10]
+    A = (i * j).astype(np.double)
+    A_compressed = butterfly_compress(A, chunk_size=3)
+    x = ndrange((10, 2))
+    assert_almost_equal(np.dot(A.T, x), A_compressed.transpose_apply(x, A))

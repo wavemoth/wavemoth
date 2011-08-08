@@ -233,6 +233,9 @@ class IdentityNode(object):
         R = self.remainder_blocks[0]
         return [0], [(R.row_stop - R.row_start) * len(R.col_indices)]
 
+    def transpose_apply_interpolations(self, x):
+        return x
+
 def unroll_pairs(pairs):
     result = []
     for a, b in pairs:
@@ -356,6 +359,16 @@ class InterpolationBlock(object):
             return x
         y = x[self.filter == 0, :]
         y += np.dot(self.interpolant, x[self.filter == 1, :])
+        return y
+
+    def transpose_apply(self, x):
+        if len(self.filter) == 0:
+            assert x.shape[0] == 0
+            return x
+        k, n = self.shape
+        y = np.empty((n, x.shape[1]))
+        y[self.filter == 0, :] = x
+        y[self.filter == 1, :] = np.dot(self.interpolant.T, x)
         return y
 
     def as_array(self, out=None):
@@ -498,6 +511,40 @@ class InnerNode(object):
             y[i_y:i_y + bh, :] = B_ip.apply(buf)
             i_y += bh
         return y
+
+    def transpose_apply_interpolations(self, x):
+        L, R = self.children
+        z_left = np.empty((L.nrows, x.shape[1]))
+        z_right = np.empty((R.nrows, x.shape[1]))
+        i_left = i_right = i_x = 0
+        for lw, rw, (T_ip, B_ip) in zip(L.block_heights, R.block_heights, self.blocks):
+            assert T_ip.shape[1] == B_ip.shape[1] == lw + rw
+            tmp = T_ip.transpose_apply(x[i_x:i_x + T_ip.shape[0], :])
+            i_x += T_ip.shape[0]
+            tmp += B_ip.transpose_apply(x[i_x:i_x + B_ip.shape[0], :])
+            i_x += B_ip.shape[0]
+            z_left[i_left:i_left + lw, :] = tmp[:lw, :]
+            i_left += lw
+            z_right[i_right:i_right + rw, :] = tmp[lw:, :]
+            i_right += rw
+        out_left = L.transpose_apply_interpolations(z_left)
+        out_right = R.transpose_apply_interpolations(z_right)
+        return np.vstack([out_left, out_right])
+
+    def transpose_apply(self, x, matrix_provider):
+        matrix_provider = as_matrix_provider(matrix_provider)
+        # Apply remainder blocks
+        y = np.empty((self.nrows, x.shape[1]))
+        in_idx = y_idx = 0
+        for (row_start, row_stop, col_indices), bh in zip(self.remainder_blocks,
+                                                          self.block_heights):
+            R = matrix_provider.get_block(row_start, row_stop, col_indices)
+            y[y_idx:y_idx + R.shape[1]] = np.dot(R.T, x[in_idx:in_idx + R.shape[0], :])
+            in_idx += R.shape[0]
+            y_idx += R.shape[1]
+        # Apply interpolation node tree
+        return self.transpose_apply_interpolations(y)
+            
         
     def size(self):
         return sum([child.size() for child in self.children] +

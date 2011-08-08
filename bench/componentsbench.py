@@ -25,7 +25,6 @@ def post_projection_scatter():
     with benchmark('post_projection_scatter', J, profile=True):
         X = scatter(mask, target1, target2, a, add=True, not_mask=True, repeat=J)
 
-
 def legendre_transform():
     nvecs = 2
     nx = 2 * 2048 * 10
@@ -48,10 +47,36 @@ def legendre_transform():
     with benchmark('lt_sse', J, profile=True):
         associated_legendre_transform(0, 0, k_start, a, y, x_squared, p0, p1,
                                       repeat=J, use_sse=True)
-    flops = nx * nl * 9
+    flops = nx * nl * 7
+    print 'Number of GFLOPS performed', flops / 1e9
+
+def legendre_precompute():
+    nvecs = 2
+    nx = 2 * 2048 * 10
+    nx -= nx % 6
+    nk = 2 * 2048 // 2
+
+#    nvecs = nk = nx = 1000
+
+    m = nvecs
+    n = nk
+    k = nx
+
+    A = np.ones((m, n), order='F')
+    B = np.ones((k, n), order='C')
+    1/0
+    C = np.ones((10, 10), order='F')
+    from spherew.blas import benchmark_dgemm_crc
+    J = 10
+    benchmark_dgemm_crc(A, P, C, repeats=1)
+    with benchmark('dgemm', J):
+        benchmark_dgemm_crc(A, P, C, repeats=J, beta=1)
+    flops = nvecs * nx * nk * 2
     print 'Number of GFLOPS performed', flops / 1e9
 
 if sys.argv[1] == 'pps':
     post_projection_scatter()
 elif sys.argv[1] == 'lt':
     legendre_transform()
+elif sys.argv[1] == 'lp':
+    legendre_precompute()

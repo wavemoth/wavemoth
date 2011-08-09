@@ -199,7 +199,7 @@ def test_transpose_apply_leaf():
     node = IdentityNode(nrows); assert nrows == ncols
     matrix_data = refactored_serializer(node, NoPayload()).getvalue()
     x = ndrange((ncols, nvecs))
-    y = plan.transpose_apply(matrix_data, nrows, x)
+    y = plan.transpose_apply(matrix_data, x)
     ok_(all(x == y))
 
 def test_transpose_apply_small_fullrank():
@@ -215,7 +215,7 @@ def test_transpose_apply_small_fullrank():
                    [IdentityNode(1), IdentityNode(1)])
     plan = ButterflyPlan(k_max=2, nblocks_max=2, nvecs=2)
     matrix_data = refactored_serializer(S1, NoPayload()).getvalue()
-    y = plan.transpose_apply(matrix_data, 2, x)
+    y = plan.transpose_apply(matrix_data, x)
     ok_(all(y == np.dot(A.T, x)))
 
 def test_transpose_apply_small_zerorank():
@@ -225,7 +225,7 @@ def test_transpose_apply_small_zerorank():
                    [IdentityNode(1), IdentityNode(1)])
     plan = ButterflyPlan(k_max=0, nblocks_max=2, nvecs=2)
     matrix_data = refactored_serializer(S1, NoPayload()).getvalue()
-    y = plan.transpose_apply(matrix_data, 2, np.ones((0, 2)))
+    y = plan.transpose_apply(matrix_data, np.ones((0, 2)))
     ok_(all(y == 0))
     eq_(y.shape, (2, 2))
 
@@ -243,7 +243,7 @@ def test_transpose_apply_small_ip():
                    [IdentityNode(1), IdentityNode(2)])
     plan = ButterflyPlan(k_max=2, nblocks_max=2, nvecs=2)
     matrix_data = refactored_serializer(S1, NoPayload()).getvalue()
-    y = plan.transpose_apply(matrix_data, 3, x)
+    y = plan.transpose_apply(matrix_data, x)
     ok_(all(y == np.dot(A.T, x)))
                     
 def test_transpose_apply_tree_generated():
@@ -307,7 +307,7 @@ def test_transpose_apply_tree_generated():
     x = ndrange((root.nrows, nvecs))
 
     y0 = compute_direct(matrices, x)
-    y = plan.transpose_apply(matrix_data, root.ncols, x)
+    y = plan.transpose_apply(matrix_data, x)
     ok_(all(y0 == y))
     
 
@@ -412,5 +412,5 @@ def test_transpose_apply_c():
     A_compressed = butterfly_compress(A, chunk_size=3)
     matrix_data = refactored_serializer(A_compressed, A).getvalue()
     x = ndrange((20, 2))
-    y = plan.transpose_apply(matrix_data, 10, x)
+    y = plan.transpose_apply(matrix_data, x)
     assert_almost_equal(np.dot(A.T, x), y)

@@ -77,9 +77,13 @@ cdef class ButterflyPlan:
         pass
         #bfm_destroy_plan(self.plan)
 
-    def transpose_apply(self, bytes matrix_data, ncols, x):
+    def transpose_apply(self, bytes matrix_data, x):
         cdef char *buf
         cdef bint need_realign
+
+        # Read ncols from matrix_data
+        cdef int32_t *matrix_data_header = <int32_t*><char*>matrix_data
+        cdef int32_t ncols = matrix_data_header[1]
 
         self.input_array = np.asarray(x, dtype=np.double)
         output_array = self.output_array = np.zeros((ncols, self.nvecs))

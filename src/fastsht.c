@@ -31,7 +31,7 @@ Every time resource format changes, we increase this, so that
 we can keep multiple resource files around and jump in git
 history.
 */
-#define RESOURCE_FORMAT_VERSION 0
+#define RESOURCE_FORMAT_VERSION 1
 /*#define RESOURCE_HEADER "butterfly-compressed matrix data"*/
 
 #define PI 3.14159265358979323846

@@ -66,11 +66,11 @@ def legendre_precompute():
     B = np.ones((k, n), order='C')
     1/0
     C = np.ones((10, 10), order='F')
-    from spherew.blas import benchmark_dgemm_crc
+    from spherew.blas import dgemm_crc
     J = 10
-    benchmark_dgemm_crc(A, P, C, repeats=1)
+    dgemm_crc(A, P, C, repeat=1)
     with benchmark('dgemm', J):
-        benchmark_dgemm_crc(A, P, C, repeats=J, beta=1)
+        dgemm_crc(A, P, C, repeat=J, beta=1)
     flops = nvecs * nx * nk * 2
     print 'Number of GFLOPS performed', flops / 1e9
 

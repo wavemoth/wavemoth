@@ -69,4 +69,11 @@ static INLINE void dgemm_crc(double *A, double *B, double *C,
         beta, C, (m > 0) ? m : 1);
 }
 
+static INLINE void dgemm_ccc(double *A, double *B, double *C,
+                             int32_t m, int32_t n, int32_t k,
+                             double beta) {
+  dgemm('N', 'N', m, n, k, 1.0, A, (m > 0) ? m : 1, B, (k > 0) ? k : 1,
+        beta, C, (m > 0) ? m : 1);
+}
+
 #endif

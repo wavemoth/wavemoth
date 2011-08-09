@@ -152,7 +152,7 @@ int fastsht_query_resourcefile(char *filename, int *out_Nside, int *out_lmax) {
 int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nside) {
   int fd;
   struct stat fileinfo;
-  int64_t mmax, lmax, m, n, odd, should_interpolate, Nside;
+  int64_t mmax, lmax, m, n, odd, Nside;
   int64_t *offsets = NULL;
   m_resource_t *rec;
   int retcode;
@@ -196,10 +196,8 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
         rec->matrix_data = NULL;
         continue;
       }
-      should_interpolate = ((int64_t*)head)[0];
-      check(!should_interpolate, "Interpolation not supported");
-      rec->combined_matrix_size = ((int64_t*)head)[1];
-      head = skip_padding(head + sizeof(int64_t[2]));
+      rec->combined_matrix_size = ((int64_t*)head)[0];
+      head = skip_padding(head + sizeof(int64_t[1]));
       rec->matrix_data = head;
       rec->matrix_len = offsets[4 * m + 2 * odd + 1];
     }

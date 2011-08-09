@@ -30,73 +30,43 @@ def get_c(l, m):
     d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
     return np.sqrt(n / d)
 
-def compute_m(filename, m, lmax, Nside, min_rows=64, interpolate=True,
-              eps=1e-15):
+def compute_m(filename, m, lmax, Nside, chunk_size=64, eps=1e-15):
     filename = '%s-%d' % (filename, os.getpid())
     thetas = get_ring_thetas(Nside, positive_only=True)
     for odd in [0, 1]:
         n = (lmax - m) // 2
-        if n == 0:
-            interpolate = False
-        # Roots
-        if interpolate:
-            1/0
-            from spherew.roots import associated_legendre_roots
-            roots = associated_legendre_roots(m + 2 * n + odd, m)
-            assert roots.shape[0] == n
-            write_array(stream, roots**2)
-            pad128(stream)
-            # Weights for input/Q in FMM
-            # First, find P^m_{m + 2n + odd - 2}
-            P_m_2n_sub_2 = compute_normalized_associated_legendre(
-                m, np.arccos(roots), m + 2 * n + odd - 2, epsilon=1e-300)[:, -1]
-            # Derivatives at roots
-            _, dP = Plm_and_dPlm(m + 2 * n + odd, m, roots)
-            # Gauss quadrature weights
-            rho = 2 * (2 * m + 4 * n + 1 + 2 * odd) / ((1 - roots**2) * (dP)**2)
-            assert rho.shape[0] == n
-            write_array(stream, rho * P_m_2n_sub_2)
-            pad128(stream)
-
-            # Output grid
-            write_array(stream, np.cos(thetas)**2)
-            print np.min(np.abs(np.subtract.outer(np.cos(thetas)**2, roots**2)))
-            pad128(stream)
-            # Weights for output/phi in FMM
-            c = get_c(m + 2 * n - 2 + odd, m)
-            # Evaluated in grid:
-            P_m_2n = compute_normalized_associated_legendre(
-                m, thetas, m + 2 * n + odd)[:, -1]
-            assert P_m_2n.shape[0] == 2 * Nside
-            write_array(stream, c * P_m_2n)
-
-            grid_for_P = np.arccos(roots)
-        else:
-            grid_for_P = thetas
 
         # P matrix
-        P = compute_normalized_associated_legendre(m, grid_for_P, lmax,
+        P = compute_normalized_associated_legendre(m, thetas, lmax,
                                                    epsilon=1e-30)
         P_subset = P[:, odd::2]
-        compressed = butterfly_compress(P_subset, min_rows=min_rows, eps=eps)
-        print 'Computed m=%d of %d: %s' % (m, lmax, compressed.get_stats())
+        tree = butterfly_compress(P_subset, chunk_size=chunk_size, eps=eps)
+        print 'Computed m=%d of %d: %s' % (m, lmax, tree.get_stats())
         stream = BytesIO()
-        compressed.write_to_stream(stream)
+        refactored_serializer(tree, P_subset, stream=stream)
         stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
-
         f = tables.openFile(filename, 'a')
         try:
             group = f.createGroup('/m%d' % m, ['even', 'odd'][odd],
                                   createparents=True)
-            f.setNodeAttr(group, 'interpolate', interpolate)
             f.setNodeAttr(group, 'lmax', lmax)
             f.setNodeAttr(group, 'm', m)
             f.setNodeAttr(group, 'odd', odd)
             f.setNodeAttr(group, 'Nside', Nside)
-            f.setNodeAttr(group, 'combined_matrix_size', compressed.size())
+            f.setNodeAttr(group, 'combined_matrix_size', tree.size())
             f.createArray(group, 'P', stream_arr)
         finally:
             f.close()
+
+class ComputedFuture(object):
+    def __init__(self, result):
+        self._result = result
+    def result(self):
+        return self._result
+
+class SerialExecutor(object):
+    def submit(self, func, *args, **kw):
+        return ComputedFuture(func(*args, **kw))
 
 def compute_with_workers(args):
     # Delete all files matching target-*
@@ -104,13 +74,15 @@ def compute_with_workers(args):
         os.unlink(fname)
     # Each worker will generate one HDF file
     futures = []
-    with ProcessPoolExecutor(max_workers=args.parallel) as proc:
-        for m in range(0, args.lmax + 1, args.stride):
-            futures.append(proc.submit(compute_m, args.target, m, args.lmax, args.Nside,
-                                       min_rows=args.min_rows, interpolate=args.interpolate,
-                                       eps=args.tolerance))
-        for fut in futures:
-            fut.result()
+    if args.parallel == 1:
+        proc = SerialExecutor()
+    else:
+        proc = ProcessPoolExecutor(max_workers=args.parallel)
+    for m in range(0, args.lmax + 1, args.stride):
+        futures.append(proc.submit(compute_m, args.target, m, args.lmax, args.Nside,
+                                   chunk_size=args.chunk_size, eps=args.tolerance))
+    for fut in futures:
+        fut.result()
 
 def serialize_from_hdf_files(args, target):
     """ Join the '$target-$pid' HDF file into '$target', a dat
@@ -150,7 +122,6 @@ def serialize_from_hdf_files(args, target):
                     pad128(outfile)
                     start_pos = outfile.tell()
                     # Flags
-                    write_int64(outfile, f.getNodeAttr(g, 'interpolate'))
                     write_int64(outfile, f.getNodeAttr(g, 'combined_matrix_size')) # for computing FLOPS
                     # P
                     pad128(outfile)
@@ -170,12 +141,10 @@ def serialize_from_hdf_files(args, target):
         os.unlink(x)
 
 parser = argparse.ArgumentParser(description='Precomputation')
-parser.add_argument('-r', '--min-rows', type=int, default=64,
-                    help='how much compression (lower is more compression)')
+parser.add_argument('-c', '--chunk-size', type=int, default=64,
+                    help='chunk size in number of columns')
 parser.add_argument('-j', '--parallel', type=int, default=8,
                     help='how many processors to use for precomputation')
-parser.add_argument('-i', '--interpolate', action='store_true',
-                    default=False, help='Evaluate at Legendre roots')
 parser.add_argument('--stride', type=int, default=1,
                     help='Skip m values. Results will be incorrect, '
                     'but useful for benchmarks.')

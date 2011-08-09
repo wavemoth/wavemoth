@@ -757,7 +757,7 @@ def make_partition(start, stop, chunk_size):
     result = []
     for idx in range(chunk_size, n, chunk_size):
         result.append(idx)
-    if result[-1] != stop:
+    if len(result) == 0 or result[-1] != stop:
         result.append(stop)
     return result
 

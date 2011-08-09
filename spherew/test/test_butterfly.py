@@ -414,3 +414,15 @@ def test_transpose_apply_c():
     x = ndrange((20, 2))
     y = plan.transpose_apply(matrix_data, x)
     assert_almost_equal(np.dot(A.T, x), y)
+
+
+#
+# Utils
+#
+
+def test_make_partition():
+    yield eq_, [10, 20, 22], make_partition(0, 22, 10)
+    yield eq_, [10, 12], make_partition(0, 12, 10)
+    yield eq_, [10], make_partition(0, 10, 10)
+    yield eq_, [9], make_partition(0, 9, 10)
+    yield eq_, [0], make_partition(0, 0, 10)

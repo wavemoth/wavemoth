@@ -19,6 +19,7 @@ import tables
 
 from spherew.butterfly import *
 from spherew.healpix import *
+from spherew.fastsht import *
 from spherew.benchmark_utils import *
 from spherew import *
 from io import BytesIO
@@ -30,20 +31,16 @@ def get_c(l, m):
     d = (2 * l + 1) * (2 * l + 3)**2 * (2 * l + 5)
     return np.sqrt(n / d)
 
+class PrintLogger:
+    def info(self, msg):
+        print msg
+
 def compute_m(filename, m, lmax, Nside, chunk_size=64, eps=1e-15):
     filename = '%s-%d' % (filename, os.getpid())
-    thetas = get_ring_thetas(Nside, positive_only=True)
+    stream = BytesIO()
     for odd in [0, 1]:
-        n = (lmax - m) // 2
-
-        # P matrix
-        P = compute_normalized_associated_legendre(m, thetas, lmax,
-                                                   epsilon=1e-30)
-        P_subset = P[:, odd::2]
-        tree = butterfly_compress(P_subset, chunk_size=chunk_size, eps=eps)
-        print 'Computed m=%d of %d: %s' % (m, lmax, tree.get_stats())
-        stream = BytesIO()
-        refactored_serializer(tree, P_subset, stream=stream)
+        compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, PrintLogger())
+        # Store to HDF file for future concatenation
         stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
         f = tables.openFile(filename, 'a')
         try:
@@ -53,8 +50,7 @@ def compute_m(filename, m, lmax, Nside, chunk_size=64, eps=1e-15):
             f.setNodeAttr(group, 'm', m)
             f.setNodeAttr(group, 'odd', odd)
             f.setNodeAttr(group, 'Nside', Nside)
-            f.setNodeAttr(group, 'combined_matrix_size', tree.size())
-            f.createArray(group, 'P', stream_arr)
+            f.createArray(group, 'matrix_data', stream_arr)
         finally:
             f.close()
 
@@ -100,40 +96,18 @@ def serialize_from_hdf_files(args, target):
                     return infile, x
         
         try:
+            def get_matrix(stream, m, odd, lmax, Nside, chunk_size,
+                           eps, logger):
+                f, g = get_group(m, odd)
+                stream.write(g.matrix_data[:])
+
             f, g = get_group(0, 0)
             Nside = f.getNodeAttr(g, 'Nside')
             lmax = f.getNodeAttr(g, 'lmax')
             mmax = lmax
 
-            write_int64(outfile, lmax)
-            write_int64(outfile, mmax)
-            write_int64(outfile, Nside)
-            
-            header_pos = outfile.tell()
-            for i in range(4 * (mmax + 1)):
-                write_int64(outfile, 0)
-
-            for m in range(0, mmax + 1, args.stride):
-                for odd in [0, 1]:
-                    f, g = get_group(m, odd)
-                    if (f.getNodeAttr(g, 'Nside') != Nside or f.getNodeAttr(g, 'lmax') != lmax
-                        or f.getNodeAttr(g, 'm') != m):
-                        raise Exception('Unexpected data')
-                    pad128(outfile)
-                    start_pos = outfile.tell()
-                    # Flags
-                    write_int64(outfile, f.getNodeAttr(g, 'combined_matrix_size')) # for computing FLOPS
-                    # P
-                    pad128(outfile)
-                    arr = g.P[:]
-                    write_array(outfile, arr)
-                    del arr
-                    end_pos = outfile.tell()
-                    outfile.seek(header_pos + (4 * m + 2 * odd) * 8)
-                    write_int64(outfile, start_pos)
-                    write_int64(outfile, end_pos - start_pos)
-                    outfile.seek(end_pos)
-                
+            compute_resources(outfile, lmax, mmax, Nside, chunk_size=None,
+                              eps=None, logger=None, compute_matrix_func=get_matrix)
         finally:
             for x in infiles:
                 x.close()

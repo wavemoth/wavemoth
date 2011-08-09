@@ -3,12 +3,17 @@ cimport numpy as np
 import os
 import numpy as np
 
+from butterfly import write_int64, pad128
+from butterfly import butterfly_compress, refactored_serializer
+
 np.import_array()
 
 cdef extern from "complex.h":
     pass
 
 cdef extern from "fastsht.h":
+    ctypedef int int64_t
+    
     cdef enum:
         FASTSHT_MMAJOR
     
@@ -81,7 +86,7 @@ cdef class ShtPlan:
     def __cinit__(self, int Nside, int lmax, int mmax,
                   np.ndarray[double complex, ndim=2, mode='c'] input,
                   np.ndarray[double, ndim=2, mode='c'] output,
-                  ordering, phase_shifts=True):
+                  ordering, phase_shifts=True, bytes matrix_data_filename=None):
         global _configured
         cdef int flags
         if ordering == 'mmajor':
@@ -102,7 +107,7 @@ cdef class ShtPlan:
         
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],
                                             <double*>input.data, <double*>output.data,
-                                            flags, NULL)
+                                            flags, <char*>matrix_data_filename)
         self.Nside = Nside
         self.lmax = lmax
         if not phase_shifts:
@@ -206,3 +211,54 @@ def associated_legendre_transform(int m, int lmin,
                 <double*>P.data,
                 <double*>Pp1.data)
             
+
+class NullLogger(object):
+    def info(self, msg):
+        pass
+
+null_logger = NullLogger()
+
+def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
+                            eps, logger=null_logger):
+    """
+    Writes the parts of the precomputed data that corresponds to
+    the m given to stream. Present only to allow easy distribution
+    of computing between processes. See compute_resources.
+    """
+    # TODO: Computes Legendre matrix twice, for even and odd case!
+    from .healpix import get_ring_thetas
+    from .legendre import compute_normalized_associated_legendre
+
+    # Compute & compress matrix
+    thetas = get_ring_thetas(Nside, positive_only=True)
+    Lambda = compute_normalized_associated_legendre(m, thetas, lmax,
+                                                    epsilon=1e-30)
+    Lambda_subset = Lambda[:, odd::2]
+    tree = butterfly_compress(Lambda_subset, chunk_size=chunk_size, eps=eps)
+    logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
+    # First, combined_matrix_size, used for computing FLOPS
+    write_int64(stream, tree.size())
+    # Then serialize the butterfly tree
+    refactored_serializer(tree, Lambda_subset, stream=stream)
+
+def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,
+                      logger=null_logger, compute_matrix_func=compute_resources_for_m):
+    write_int64(stream, lmax)
+    write_int64(stream, mmax)
+    write_int64(stream, Nside)
+    header_pos = stream.tell()
+    for i in range(4 * (mmax + 1)):
+        write_int64(stream, 0)
+    for m in range(0, mmax + 1):
+        for odd in [0, 1]:
+            pad128(stream)
+            start_pos = stream.tell()
+            compute_matrix_func(stream, m, odd, lmax, Nside, chunk_size, eps, logger)
+            end_pos = stream.tell()
+            stream.seek(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
+            write_int64(stream, start_pos)
+            write_int64(stream, end_pos - start_pos)
+            stream.seek(end_pos)
+        
+    
+

@@ -12,6 +12,7 @@ from numpy.testing import assert_almost_equal
 
 from cPickle import dumps, loads
 import hashlib
+from tempfile import mkstemp
 
 from ..fastsht import *
 from .. import lib, healpix, psht
@@ -33,12 +34,32 @@ def plot_map(m, title=None):
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
+class TestLogger:
+    def info(self, msg):
+        print msg
+
+matrix_data_filename = None
+
+def setup():
+    global matrix_data_filename
+    from io import BytesIO
+
+    fd, matrix_data_filename = mkstemp()
+    with file(matrix_data_filename, 'w') as f:
+        compute_resources(f, lmax, lmax, Nside, chunk_size=4, eps=1e-10,
+                          logger=TestLogger())
+
+def teardown():
+    os.unlink(matrix_data_filename)
+
 def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
     if lmax is None:
         lmax = 2 * Nside
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((12*Nside**2, nmaps))
-    plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor', **kw)
+    plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor',
+                   matrix_data_filename=matrix_data_filename,
+                   **kw)
 
     return plan
 

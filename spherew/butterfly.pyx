@@ -270,6 +270,9 @@ class IdentityNode(object):
     def transpose_apply_interpolations(self, x):
         return x
 
+    def get_stats(self):
+        return repr(self)
+
 def unroll_pairs(pairs):
     result = []
     for a, b in pairs:
@@ -643,6 +646,23 @@ class InnerNode(object):
         for M in matrices:
             A = np.dot(A, M)
         return A
+
+    def get_stats(self):
+        # Todo: rename to __repr__ or something...
+        if self.nrows == 0 or self.ncols == 0:
+            return "empty"
+        residual_size = sum((stop - start) * len(cols)
+                            for start, stop, cols in self.remainder_blocks)
+        size = self.size()
+        dense = self.nrows * self.ncols
+        return "%.2f -> %s (%.2f -> %s Plms), blocks=%d+%d" % (
+            size / dense,
+            format_numbytes(size * 8),
+            residual_size / size,
+            format_numbytes(residual_size * 8),
+            len(self.remainder_blocks),
+            self.count_blocks()
+            )
 
 
 def permutations_to_filter(alst, blst):

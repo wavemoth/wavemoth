@@ -64,7 +64,7 @@ def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
     return plan
 
 def test_basic():
-    nmaps = 3
+    nmaps = 1
     plan = make_plan(nmaps)
 
     plan.input[0, :] = 10

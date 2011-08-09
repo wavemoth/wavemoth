@@ -9,6 +9,7 @@ The API is unstable and may change at any point.
 #ifndef _FASTSHT_PRIVATE_H_
 #define _FASTSHT_PRIVATE_H_
 
+#include "butterfly.h"
 #include "fastsht.h"
 #include "complex.h"
 #include <fftw3.h>
@@ -45,6 +46,7 @@ struct _fastsht_plan {
   precomputation_t *resources;
   int did_allocate_resources;
   int Nside;
+  bfm_plan *bfm_plan;
 };
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, double complex *work_a_l, double complex *output);

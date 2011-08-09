@@ -1,8 +1,3 @@
-#include "fastsht_private.h"
-#include "fastsht_error.h"
-#include "fmm1d.h"
-#include "blas.h"
-
 #undef NDEBUG
 #include "complex.h"
 #include <assert.h>
@@ -12,6 +7,12 @@
 #include <string.h>
 #include <math.h>
 #include <fftw3.h>
+
+#include "fastsht_private.h"
+#include "fastsht_error.h"
+#include "fmm1d.h"
+#include "blas.h"
+#include "butterfly_utils.h"
 
 /* For memory mapping */
 #include <sys/types.h>
@@ -92,10 +93,6 @@ static char global_resource_path[MAX_RESOURCE_PATH];
 /*
 Private
 */
-
-static int read_int64(FILE *fd, int64_t *p_out, size_t n) {
-  return fread(p_out, sizeof(int64_t), n, fd) == n;
-}
 
 static void print_array(char *msg, double* arr, bfm_index_t len) {
   bfm_index_t i;
@@ -324,6 +321,9 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
 
+  size_t k_max = 100, nblocks_max = 100; // TODO
+  plan->bfm_plan = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+
   plan->Nside = Nside;
   plan->lmax = lmax;
   plan->mmax = mmax;
@@ -351,6 +351,7 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   fastsht_free_grid_info(plan->grid);
   fastsht_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
+  bfm_destroy_plan(plan->bfm_plan);
   free(plan->fft_plans);
   free(plan);
 }
@@ -463,24 +464,70 @@ void fastsht_execute(fastsht_plan plan) {
   fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
 }
 
+
+typedef struct {
+  double *input;
+  double *output;
+} transpose_apply_ctx_t;
+
+void push_q(double *buf, size_t start, size_t stop,
+            size_t nvecs, int should_add, void *ctx) {
+  double *output = ((transpose_apply_ctx_t*)ctx)->output;
+
+  size_t i, j, idx = 0;
+  if (should_add) {
+    for (i = start; i != stop; ++i) {
+      for (j = 0; j != nvecs; ++j) {
+        output[i * nvecs + j] += buf[idx++];
+      }
+    }
+  } else {
+    for (i = start; i != stop; ++i) {
+      for (j = 0; j != nvecs; ++j) {
+        output[i * nvecs + j] = buf[idx++];
+      }
+    }
+  }
+}
+
+void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
+                                   size_t nvecs, char *payload, size_t payload_len,
+                                   void *ctx) {
+  double *input = ((transpose_apply_ctx_t*)ctx)->input;
+  size_t i, j, v, k, idx = 0;
+  payload = skip_padding(payload);
+  size_t row_start = read_int64(&payload);
+  size_t row_stop = read_int64(&payload);
+  size_t ncols = stop - start;
+  double *A = (double*)payload;
+  dgemm_ccc(input + row_start * nvecs, A, buf,
+            nvecs, stop - start, row_stop - row_start, 0.0);
+}
+
+
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
                             double complex *work_a_l, double complex *output) {
   bfm_index_t ncols, nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
   double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
-  double complex *target;
   m_resource_t *rec;
   rec = plan->resources->P_matrices + 2 * m + odd;
-  ncols = 0;
+  nrows = 0;
   for (l = m + odd; l <= lmax; l += 2) {
     for (j = 0; j != nmaps; ++j) {
-      work_a_l[ncols * nmaps + j] = input_m[(l - m) * nmaps + j];
+      work_a_l[nrows * nmaps + j] = input_m[(l - m) * nmaps + j];
     }
-    ++ncols;
+    ++nrows;
   }
-  nrows = plan->grid->nrings - plan->grid->mid_ring;
-  /* Apply even matrix to evaluate g_{odd,m}(theta) at n Ass. Legendre roots*/
-  bfm_apply_d(rec->matrix_data, (double*)work_a_l, (double*)output,
-              nrows, ncols, 2 * plan->nmaps);
+  ncols = plan->grid->nrings - plan->grid->mid_ring;
+  transpose_apply_ctx_t ctx = { (double*)work_a_l, (double*)output };
+  int ret = bfm_transpose_apply_d(plan->bfm_plan,
+                                  rec->matrix_data,
+                                  nrows,
+                                  ncols,
+                                  pull_a_through_legendre_block,
+                                  push_q,
+                                  &ctx);
+  checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);
 }
 
 void fastsht_assemble_rings(fastsht_plan plan,

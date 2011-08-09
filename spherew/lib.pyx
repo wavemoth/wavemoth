@@ -233,11 +233,13 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     thetas = get_ring_thetas(Nside, positive_only=True)
     Lambda = compute_normalized_associated_legendre(m, thetas, lmax,
                                                     epsilon=1e-30)
-    Lambda_subset = Lambda[:, odd::2]
+    Lambda = Lambda.T
+    Lambda_subset = Lambda[odd::2, :]
     tree = butterfly_compress(Lambda_subset, chunk_size=chunk_size, eps=eps)
     logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
     # First, combined_matrix_size, used for computing FLOPS
     write_int64(stream, tree.size())
+    pad128(stream)
     # Then serialize the butterfly tree
     refactored_serializer(tree, Lambda_subset, stream=stream)
 

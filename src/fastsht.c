@@ -287,7 +287,7 @@ void fastsht_release_resource(precomputation_t *data) {
 }
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
-                                     double *input, double *output,
+                                     int nthreads, double *input, double *output,
                                      int ordering, char *resource_filename) {
   fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
   int nrings, iring;
@@ -298,6 +298,10 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   int n_ring_list[nmaps];
   fftw_r2r_kind kind_list[nmaps];
   int i;
+
+  if (nthreads == 0) {
+    nthreads = omp_get_max_threads();
+  }
 
   if (resource_filename != NULL) {
     /* Used in debugging/benchmarking */
@@ -314,15 +318,19 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   }
 
   nrings = 4 * Nside - 1;
-
+  
+  plan->nthreads = nthreads;
   plan->type = PLANTYPE_HEALPIX;
   plan->input = input;
   plan->output = output;
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
 
-  size_t k_max = 100, nblocks_max = 100; // TODO
-  plan->bfm_plan = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+  size_t k_max = 10000, nblocks_max = 1000; // TODO
+  plan->bfm_plans = malloc(sizeof(void*) * nthreads);
+  for (i = 0; i != nthreads; ++i) {
+    plan->bfm_plans[i] = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+  }
 
   plan->Nside = Nside;
   plan->lmax = lmax;
@@ -351,7 +359,10 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   fastsht_free_grid_info(plan->grid);
   fastsht_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
-  bfm_destroy_plan(plan->bfm_plan);
+  for (int i = 0; i != plan->nthreads; ++i) {
+    bfm_destroy_plan(plan->bfm_plans[i]);
+  }
+  free(plan->bfm_plans);
   free(plan->fft_plans);
   free(plan);
 }
@@ -383,7 +394,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
      This should play well with MPI down the road as well.
      */
 
-  #pragma omp parallel
+  #pragma omp parallel num_threads(plan->nthreads)
   {
     /* The worksharing is wholly manual, since the parallel algorithm
        is non-trivial.  */
@@ -395,6 +406,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
     
     numthreads = omp_get_num_threads();
     thread_id = omp_get_thread_num();
+    check(thread_id < plan->nthreads, "Plan allocated for less threads than being used");
 
     /* We use += to accumulate the phase information in output, so we must
        zero it up front. Zero it in parallel... */
@@ -520,7 +532,7 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
   }
   ncols = plan->grid->nrings - plan->grid->mid_ring;
   transpose_apply_ctx_t ctx = { (double*)work_a_l, (double*)output };
-  int ret = bfm_transpose_apply_d(plan->bfm_plan,
+  int ret = bfm_transpose_apply_d(plan->bfm_plans[omp_get_thread_num()],
                                   rec->matrix_data,
                                   nrows,
                                   ncols,

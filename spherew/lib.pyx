@@ -28,7 +28,7 @@ cdef extern from "fastsht.h":
     ctypedef int bfm_index_t
     
     fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax,
-                                         int nmaps,
+                                         int nmaps, int nthreads,
                                          double *input,
                                          double *output,
                                          int ordering,
@@ -86,7 +86,8 @@ cdef class ShtPlan:
     def __cinit__(self, int Nside, int lmax, int mmax,
                   np.ndarray[double complex, ndim=2, mode='c'] input,
                   np.ndarray[double, ndim=2, mode='c'] output,
-                  ordering, phase_shifts=True, bytes matrix_data_filename=None):
+                  ordering, phase_shifts=True, bytes matrix_data_filename=None,
+                  nthreads=0):
         global _configured
         cdef int flags
         if ordering == 'mmajor':
@@ -105,7 +106,7 @@ cdef class ShtPlan:
             fastsht_configure(os.environ['SHTRESOURCES'])
             _configured = True
         
-        self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1],
+        self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1], nthreads,
                                             <double*>input.data, <double*>output.data,
                                             flags, <char*>matrix_data_filename)
         self.Nside = Nside

@@ -34,27 +34,22 @@ def plot_map(m, title=None):
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
 
-class TestLogger:
-    def info(self, msg):
-        print msg
-
-matrix_data_filename = None
-
-def setup():
-    global matrix_data_filename
-    from io import BytesIO
-
-    fd, matrix_data_filename = mkstemp()
-    with file(matrix_data_filename, 'w') as f:
-        compute_resources(f, lmax, lmax, Nside, chunk_size=4, eps=1e-10,
-                          logger=TestLogger())
+matrix_data_filenames = []
 
 def teardown():
-    os.unlink(matrix_data_filename)
+    for f in matrix_data_filenames:
+        os.unlink(f)
+    del matrix_data_filenames[:]
 
 def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
     if lmax is None:
         lmax = 2 * Nside
+
+    fd, matrix_data_filename = mkstemp()
+    matrix_data_filenames.append(matrix_data_filename) # schedule cleanup
+    with file(matrix_data_filename, 'w') as f:
+        compute_resources(f, lmax, lmax, Nside, chunk_size=4, eps=1e-10)
+
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((12*Nside**2, nmaps))
     plan = ShtPlan(Nside, lmax, lmax, input, output, 'mmajor',
@@ -90,15 +85,15 @@ def do_deterministic(nthreads):
         h.update(x.data)
         return h.hexdigest()
 
-    plan = make_plan(5, Nside=8)
-    plan.input[lm_to_idx_mmajor(10, 4)] = 1 + 1j
     with use_num_threads(nthreads):
+        plan = make_plan(5, Nside=16, nthreads=nthreads)
+        plan.input[lm_to_idx_mmajor(10, 4)] = 1 + 1j
         h0 = hash_array(plan.execute())
-        for i in range(2000):
+        for i in range(200):
             h1 = hash_array(plan.execute())
             assert h0 == h1, "Non-deterministic behaviour, %d threads" % nthreads
 
-def test_deterministic():
+def test_deterministic_multithread():
     "Smoke-test for deterministic behaviour multi-threaded"
     do_deterministic(16)
 

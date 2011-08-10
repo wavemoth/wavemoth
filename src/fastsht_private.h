@@ -40,16 +40,18 @@ struct _fastsht_plan {
   int type;
   int lmax, mmax;
   int nmaps;
+  int nthreads;
   double *output, *input;
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
   int did_allocate_resources;
   int Nside;
-  bfm_plan *bfm_plan;
+  bfm_plan **bfm_plans;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, double complex *work_a_l, double complex *output);
+void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
+                            double complex *work_a_l, double complex *output);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 void fastsht_assemble_rings(fastsht_plan plan,
                             int ms_len, int *ms,

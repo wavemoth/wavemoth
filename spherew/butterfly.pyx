@@ -878,7 +878,9 @@ def serialize_node(stream, node):
 def refactored_serializer(root, matrix_provider, stream=None):
     if stream is None:
         stream = BytesIO()
-
+    start_pos = stream.tell()
+    if start_pos % 16 != 0:
+        raise ValueError('Please align the stream on a 128-bit boundary')
     matrix_provider = as_matrix_provider(matrix_provider)
 
     # Only support one root node for now
@@ -913,7 +915,7 @@ def refactored_serializer(root, matrix_provider, stream=None):
     # Now follows residual matrix payloads
     pos = stream.tell()
     stream.seek(residual_pos)
-    write_int64(stream, pos) # patch pointer
+    write_int64(stream, pos - start_pos) # patch pointer
     stream.seek(pos)
 
     # Table of offsets to each R block, of len remainder_blocks + 1(!). The +1
@@ -931,7 +933,7 @@ def refactored_serializer(root, matrix_provider, stream=None):
     end_pos = stream.tell()
     stream.seek(offsets_pos)
     for offset in R_offsets:
-        write_int64(stream, offset)
+        write_int64(stream, offset - start_pos)
     stream.seek(end_pos)
 
     # Write nodes and record offsets
@@ -944,7 +946,7 @@ def refactored_serializer(root, matrix_provider, stream=None):
     end_pos = stream.tell()
     stream.seek(heap_pos)
     for offset in node_offsets:
-        write_int64(stream, offset)
+        write_int64(stream, offset - start_pos)
     stream.seek(end_pos)
 
     return stream

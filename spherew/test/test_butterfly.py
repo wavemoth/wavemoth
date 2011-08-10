@@ -397,6 +397,8 @@ def test_compress_generated():
 # Butterfly application
 #
 
+from io import BytesIO
+
 def test_transpose_apply_python():
     i, j = np.ogrid[:10, :10]
     A = (i * j).astype(np.double)
@@ -410,7 +412,10 @@ def test_transpose_apply_c():
     i, j = np.ogrid[:20, :10]
     A = (i * j).astype(np.double)
     A_compressed = butterfly_compress(A, chunk_size=3)
-    matrix_data = refactored_serializer(A_compressed, A).getvalue()
+    stream = BytesIO() # ensure that matrix data can be embedded in larger stream
+    stream.write('a' * 160)
+    matrix_data = refactored_serializer(A_compressed, A, stream=stream).getvalue()
+    matrix_data = matrix_data[160:]
     x = ndrange((20, 2))
     y = plan.transpose_apply(matrix_data, x)
     assert_almost_equal(np.dot(A.T, x), y)

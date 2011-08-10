@@ -108,7 +108,9 @@ cdef class ShtPlan:
         
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1], nthreads,
                                             <double*>input.data, <double*>output.data,
-                                            flags, <char*>matrix_data_filename)
+                                            flags,
+                                            NULL if matrix_data_filename is None
+                                            else <char*>matrix_data_filename)
         self.Nside = Nside
         self.lmax = lmax
         if not phase_shifts:

@@ -19,7 +19,7 @@ def plot_map(m, title=None):
     from cmb.maps import pixel_sphere_map
     pixel_sphere_map(m[0, :]).plot(title=title)
 
-Nside = 512
+Nside = 256
 lmax = 2 * Nside
 nmaps = 1
 
@@ -28,8 +28,8 @@ ring_offsets = np.cumsum(np.r_[0, ring_counts])[2*Nside-1:]
 
 
 input = np.zeros(((lmax + 1) * (lmax + 2) // 2, nmaps), dtype=np.complex128)
-sht_output = np.zeros((nmaps, 12 * Nside**2))
-psht_output = np.zeros((nmaps, 12 * Nside**2))
+sht_output = np.zeros((12 * Nside**2, nmaps))
+psht_output = np.zeros((12 * Nside**2, nmaps), order='F')
 
 sht_plan = ShtPlan(Nside, lmax, lmax, input, sht_output, 'mmajor')
 psht_plan = PshtMmajorHealpix(lmax=lmax, Nside=Nside, nmaps=nmaps)

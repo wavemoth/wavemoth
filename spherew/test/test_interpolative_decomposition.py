@@ -74,4 +74,16 @@ def test_sparse_repr():
     yield eq_, A_ip.shape[1], A.shape[1] - len(iden_list)
     yield eq_, len(iden_list), 2
 
-    
+def test_lssolve():
+    x, y = np.ogrid[1:2:20j, 0:2:5j]
+    A = x**2 * np.sin(y)
+
+    selection = np.asarray([True, True, False, False, True])
+    # boolean selector
+    S = lssolve(A, selection)
+    assert_almost_equal(np.dot(A[:, selection], S), A[:, ~selection])
+
+    # integer selector
+    S = lssolve(A, np.arange(5)[selection])
+    assert_almost_equal(np.dot(A[:, selection], S), A[:, ~selection])
+

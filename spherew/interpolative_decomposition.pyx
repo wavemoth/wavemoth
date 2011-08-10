@@ -5,11 +5,31 @@ cdef extern:
     void iddp_id "iddp_id_"(double *eps, int *m, int *n,
                             double *a, int *krank, int *ilist,
                             double *rnorms)
-    void idd_reconint "idd_reconint_"(int *n,
-                                      int *ilist,
-                                      int *krank,
-                                      double *proj,
-                                      double *p)
+    void idd_lssolve "idd_lssolve_"(int *m, int *n, double *a, int *krank)
+
+def lssolve(A, selected_columns):
+    """
+    Finds S so that np.dot(A[:, selected_columns], S) ~= A[:, ~selected_columns].
+    (Although selected_columns is allowed to be integers as well)
+    """
+    if not isinstance(selected_columns, np.ndarray):
+        raise TypeError('selected_columns must be array')
+    if selected_columns.dtype.type != np.bool_:
+        mask = np.zeros(A.shape[1], dtype=np.bool)
+        mask[selected_columns] = True
+        selected_columns = mask
+    cdef int m, n, k
+    k = selected_columns.sum()
+    cdef np.ndarray[double, ndim=2, mode='fortran'] buf = np.empty(A.shape, order='F')
+    buf[:, :k] = A[:, selected_columns]
+    buf[:, k:] = A[:, ~selected_columns]
+    m = buf.shape[0]
+    n = buf.shape[1]
+    idd_lssolve(&m, &n, <double*>buf.data, &k)
+    out = buf.reshape(n * m, order='F')
+    out = out[:k * (n - k)]
+    out = out.reshape(k, n - k, order='F')
+    return out
 
 def inverse_permutation(perm):
     invp = np.empty_like(perm)

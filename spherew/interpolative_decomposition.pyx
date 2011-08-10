@@ -9,8 +9,11 @@ cdef extern:
 
 def lssolve(A, selected_columns):
     """
-    Finds S so that np.dot(A[:, selected_columns], S) ~= A[:, ~selected_columns].
-    (Although selected_columns is allowed to be integers as well)
+    Finds S so that np.dot(A[:, selected_columns], S) ~= A[:, ~selected_columns]
+    (assuming enough columns are selected; as many columns should be selected
+    as the column rank of the matrix).
+    
+    Although selected_columns is allowed to be integers as well.
     """
     if not isinstance(selected_columns, np.ndarray):
         raise TypeError('selected_columns must be array')

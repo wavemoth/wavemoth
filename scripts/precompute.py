@@ -35,24 +35,23 @@ class PrintLogger:
     def info(self, msg):
         print msg
 
-def compute_m(filename, m, lmax, Nside, chunk_size=64, eps=1e-15):
+def compute_m(filename, m, odd, lmax, Nside, chunk_size=64, eps=1e-15):
     filename = '%s-%d' % (filename, os.getpid())
     stream = BytesIO()
-    for odd in [0, 1]:
-        compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, PrintLogger())
-        # Store to HDF file for future concatenation
-        stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
-        f = tables.openFile(filename, 'a')
-        try:
-            group = f.createGroup('/m%d' % m, ['even', 'odd'][odd],
-                                  createparents=True)
-            f.setNodeAttr(group, 'lmax', lmax)
-            f.setNodeAttr(group, 'm', m)
-            f.setNodeAttr(group, 'odd', odd)
-            f.setNodeAttr(group, 'Nside', Nside)
-            f.createArray(group, 'matrix_data', stream_arr)
-        finally:
-            f.close()
+    compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, PrintLogger())
+    # Store to HDF file for future concatenation
+    stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
+    f = tables.openFile(filename, 'a')
+    try:
+        group = f.createGroup('/m%d' % m, ['even', 'odd'][odd],
+                              createparents=True)
+        f.setNodeAttr(group, 'lmax', lmax)
+        f.setNodeAttr(group, 'm', m)
+        f.setNodeAttr(group, 'odd', odd)
+        f.setNodeAttr(group, 'Nside', Nside)
+        f.createArray(group, 'matrix_data', stream_arr)
+    finally:
+        f.close()
 
 class ComputedFuture(object):
     def __init__(self, result):
@@ -75,8 +74,9 @@ def compute_with_workers(args):
     else:
         proc = ProcessPoolExecutor(max_workers=args.parallel)
     for m in range(0, args.lmax + 1, args.stride):
-        futures.append(proc.submit(compute_m, args.target, m, args.lmax, args.Nside,
-                                   chunk_size=args.chunk_size, eps=args.tolerance))
+        for odd in range(2):
+            futures.append(proc.submit(compute_m, args.target, m, odd, args.lmax, args.Nside,
+                                       chunk_size=args.chunk_size, eps=args.tolerance))
     for fut in futures:
         fut.result()
 
@@ -86,6 +86,8 @@ def serialize_from_hdf_files(args, target):
     """
     print 'Merging...'
     infilenames = glob('%s-*' % target)
+    if os.path.isdir(target):
+        target = os.path.join(target, "%d.dat" % args.Nside)
     with file(target, 'w') as outfile:
         infiles = [tables.openFile(x) for x in infilenames]
 

@@ -89,9 +89,13 @@ cdef class ButterflyPlan:
         bfm_query_matrix_data(<char*>matrix_data, &info)
         cdef size_t ncols = info.ncols
 
-        self.input_array = np.asarray(x, dtype=np.double)
-        output_array = self.output_array = np.zeros((ncols, self.nvecs))
+        need_realign = False
         try:
+            self.input_array = np.asarray(x, dtype=np.double)
+            if self.input_array.shape[0] != info.nrows:
+                raise ValueError("Invalid shape for x, got %s, wanted %s" % (
+                    self.input_array.shape[0], info.nrows))
+            output_array = self.output_array = np.zeros((ncols, self.nvecs))
             need_realign = <size_t><char*>matrix_data % 16 != 0
             if need_realign:
                 buf = <char*>memalign(16, len(matrix_data))
@@ -177,7 +181,7 @@ def pad128(stream):
 
 class IdentityNode(object):
     def __init__(self, n, remainder_blocks=None):
-        self.ncols = self.nrows = n
+        self.ncols = self.nrows = self.node_ncols = self.node_nrows = n
         self.block_heights = [n]
         if remainder_blocks is None:
             remainder_blocks = [RemainderBlockInfo(0, n, np.asarray([]))]
@@ -199,10 +203,6 @@ class IdentityNode(object):
     def print_tree(self, indent='', stream=sys.stdout):
         stream.write('%s%r\n' % (indent, self))
                                          
-    def write_to_stream(self, stream):
-        write_index_t(stream, 0)
-        write_index_t(stream, self.ncols)
-
     def apply(self, x):
         return x
 
@@ -253,11 +253,6 @@ class InterpolationBlock(object):
         if self.interpolant.shape[0] != k:
             raise ValueError("interpolant.shape[0] != k")
         
-    def write_to_stream(self, stream):
-        write_array(stream, self.filter)
-        pad128(stream)
-        write_array(stream, self.interpolant)
-
     def apply(self, x):
         if len(self.filter) == 0:
             assert x.shape[0] == 0
@@ -311,9 +306,6 @@ RemainderBlockInfo = namedtuple('RemainderBlockInfo',
                                 'row_start row_stop col_indices')
 
 class InnerNode(object):
-    # ncols - "virtual" number of columns
-    # node_ncols - number of columns of only this node (=sum(nrows of children))
-    # nrows - number of rows = sum(block_heights)
     
     def __init__(self, blocks, children, remainder_blocks=None):
         if 2**int(np.log2(len(blocks))) != len(blocks):
@@ -327,12 +319,13 @@ class InnerNode(object):
                 raise ValueError("Nonconforming matrices")
         self.blocks = blocks
         self.ncols = sum(child.ncols for child in children)
-        self.node_ncols = sum(child.nrows for child in children)
+        self.node_ncols = sum(child.node_nrows for child in children)
         self.children = children
         self.block_heights = sum([[T_ip.shape[0], B_ip.shape[0]]
                                  for T_ip, B_ip in blocks], [])
-        self.nrows = sum(self.block_heights)
+        self.node_nrows = sum(self.block_heights)
 
+        self.nrows = 0
         if remainder_blocks is not None:
             if not isinstance(remainder_blocks, list):
                 raise TypeError("expected list for remainder_blocks")
@@ -342,7 +335,9 @@ class InnerNode(object):
                 remainder_blocks, self.block_heights):
                 if len(rinfo.col_indices) != bh:
                     raise ValueError("nonconforming remainder block specification")
+                self.nrows += rinfo.row_stop - rinfo.row_start
         else:
+            self.nrows = self.node_nrows
             remainder_blocks = [RemainderBlockInfo(0, n, np.asarray([])) for n in
                                 self.block_heights]
         self.remainder_blocks = remainder_blocks
@@ -358,33 +353,19 @@ class InnerNode(object):
         return len(self.block_heights)
 
     def __repr__(self):
-        return '<InnerNode %dx%d(%d) block_heights=%r>' % (
-            self.nrows, self.ncols,
-            self.node_ncols, self.block_heights)
+        return '<InnerNode %dx%d|%dx%d block_heights=%r>' % (
+            self.nrows, self.ncols, self.node_nrows, self.node_ncols, self.block_heights)
 
     def print_tree(self, indent='', stream=sys.stdout):
         stream.write('%s%r\n' % (indent, self))
         for child in self.children:
             child.print_tree(indent + '  ', stream=stream)
 
-    def write_to_stream(self, stream):
-        L, R = self.children
-        write_index_t(stream, len(self.block_heights))
-        write_array(stream, np.asarray(self.block_heights, dtype=index_dtype))
-        write_index_t(stream, L.nrows)
-        write_index_t(stream, R.nrows)
-        write_index_t(stream, L.ncols)
-        L.write_to_stream(stream)
-        R.write_to_stream(stream)
-        for T_ip, B_ip in self.blocks:
-            T_ip.write_to_stream(stream)
-            B_ip.write_to_stream(stream)
-
     def as_array(self, out=None):
         "Convert to dense array, for use in tests"
         if out is None:
-            out = np.zeros((self.nrows, self.node_ncols))
-        elif out.shape != (self.nrows, self.node_ncols):
+            out = np.zeros((self.node_nrows, self.node_ncols))
+        elif out.shape != (self.node_nrows, self.node_ncols):
             raise ValueError('out has wrong shape')
         i = j = 0
         for T_ip, B_ip in self.blocks:
@@ -763,14 +744,23 @@ def serialize_butterfly_matrix(root, matrix_provider, num_levels=None, stream=No
     tree_depth = root.get_max_depth()
     if num_levels is None:
         num_levels = tree_depth
+    elif num_levels == 0:
+        raise NotImplementedError() # does not work with leaf nodes at root
 
-    skip_levels = tree_depth - num_levels
+    skip_levels = max(0, tree_depth - num_levels)
 
     # Only support one root node for now
     root_count = 2**skip_levels
     heap = heapify(root, skip_levels)
+    forest = heap[:root_count]
 
-    write_int32(stream, root.nrows)
+    for r in forest:
+        if r.nrows != forest[0].nrows:
+            assert False
+    k_max = max([r.get_k_max() for r in forest])
+    nblocks_max = max([r.get_nblocks_max() for r in forest])
+    
+    write_int32(stream, forest[0].nrows)
     write_int32(stream, root.ncols)
     write_int32(stream, root.get_k_max())
     write_int32(stream, root.get_nblocks_max())
@@ -791,7 +781,7 @@ def serialize_butterfly_matrix(root, matrix_provider, num_levels=None, stream=No
     node_offsets = [0] * len(heap)
 
     # Now follows residual matrix payloads
-    for i, node in enumerate(heap[:root_count]):
+    for i, node in enumerate(forest):
         # patch pointer
         pos = stream.tell()
         stream.seek(residual_pos + 8 * i)
@@ -859,17 +849,17 @@ def tree_to_matrices(tree):
         nrows = ncols = 0
         children = []
         for node in nodes_on_level:
-            nrows += node.nrows
+            nrows += node.node_nrows
             ncols += node.node_ncols
             children.extend(node.children)
-        nrows_children = sum([child.nrows for child in children])
+        nrows_children = sum([child.node_nrows for child in children])
 
         # Interpolation matrix            
         M = np.zeros((nrows, ncols))
         i = j = 0
         for node in nodes_on_level:
-            node.as_array(out=M[i:i + node.nrows, j:j+node.node_ncols])
-            i += node.nrows
+            node.as_array(out=M[i:i + node.node_nrows, j:j+node.node_ncols])
+            i += node.node_nrows
             j += node.node_ncols
         matrices.append(M)
 
@@ -880,7 +870,7 @@ def tree_to_matrices(tree):
             L, R = node.children
             i = i
             jl = jr
-            jr += L.nrows
+            jr += L.node_nrows
             for lh, rh in zip(L.block_heights, R.block_heights):
                 P[i:i + lh, jl:jl + lh] = np.eye(lh)
                 i += lh

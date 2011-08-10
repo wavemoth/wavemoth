@@ -135,14 +135,10 @@ def test_transpose_num_levels():
                        InterpolationBlock([0] * 8, [[]] * 8))],
                      [IdentityNode(4), IdentityNode(4)])
     matrix_data = serialize_butterfly_matrix(node, NoPayload(), num_levels=0).getvalue()
-    x = ndrange((ncols, nvecs))
+    x = ndrange((4, nvecs))
     y = plan.transpose_apply(matrix_data, x)
-    print x
-    print y
-    # TODO sort out some confusion over nrows etc. for ButterflyPlan
-    ok_(all(x[:4, :] == y[:4, :]))
-    ok_(all(x[:4, :] == y[4:, :]))
-    
+    ok_(all(x == y[:4, :]))
+    ok_(all(x == y[4:, :]))
 
 def test_transpose_apply_small_fullrank():
     "butterfly.c.in: Transpose application of single S-matrix with all blocks of full rank"
@@ -353,13 +349,20 @@ def test_transpose_apply_c():
     i, j = np.ogrid[:20, :10]
     A = (i * j).astype(np.double)
     A_compressed = butterfly_compress(A, chunk_size=3)
-    stream = BytesIO() # ensure that matrix data can be embedded in larger stream
-    stream.write('a' * 160)
-    matrix_data = serialize_butterfly_matrix(A_compressed, A, stream=stream).getvalue()
-    matrix_data = matrix_data[160:]
-    x = ndrange((20, 2))
-    y = plan.transpose_apply(matrix_data, x)
-    assert_almost_equal(np.dot(A.T, x), y)
+
+    def test(num_levels):
+        stream = BytesIO() # ensure that matrix data can be embedded in larger stream
+        stream.write('a' * 160)
+        matrix_data = serialize_butterfly_matrix(A_compressed, A, stream=stream,
+                                                 num_levels=num_levels).getvalue()
+        matrix_data = matrix_data[160:]
+        x = ndrange((20, 2))
+        y = plan.transpose_apply(matrix_data, x)
+        assert_almost_equal(np.dot(A.T, x), y)
+
+    yield test, 1
+    yield test, 2
+    yield test, 200
 
 
 #

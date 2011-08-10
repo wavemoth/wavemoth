@@ -23,6 +23,7 @@ from spherew.fastsht import *
 from spherew.benchmark_utils import *
 from spherew import *
 from io import BytesIO
+from spherew.utils import FakeExecutor
 
 np.seterr(all='raise')
 
@@ -53,16 +54,6 @@ def compute_m(filename, m, odd, lmax, Nside, chunk_size=64, eps=1e-15):
     finally:
         f.close()
 
-class ComputedFuture(object):
-    def __init__(self, result):
-        self._result = result
-    def result(self):
-        return self._result
-
-class SerialExecutor(object):
-    def submit(self, func, *args, **kw):
-        return ComputedFuture(func(*args, **kw))
-
 def compute_with_workers(args):
     # Delete all files matching target-*
     for fname in glob('%s-*' % args.target):
@@ -70,7 +61,7 @@ def compute_with_workers(args):
     # Each worker will generate one HDF file
     futures = []
     if args.parallel == 1:
-        proc = SerialExecutor()
+        proc = FakeExecutor()
     else:
         proc = ProcessPoolExecutor(max_workers=args.parallel)
     for m in range(0, args.lmax + 1, args.stride):

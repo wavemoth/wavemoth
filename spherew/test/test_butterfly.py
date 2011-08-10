@@ -38,29 +38,6 @@ def test_permutations_to_filter():
 #
 # Tests for refactored application
 #
-class Node(object):
-    def __init__(self, value, children=[]):
-        self.value = value
-        self.children = children
-    def __eq__(self, other):
-        return self.value == int(other)
-    def __index__(self):
-        return self.value
-    def __repr__(self):
-        return '<%d>' % self.value
-
-def test_heap_size():
-    def make_tree(d):
-        if d == 0:
-            return 1, Node(1)
-        else:
-            lc, l = make_tree(d - 1)
-            rc, r = make_tree(d - 1)
-            return lc + rc + 1, Node(1, [l, r])
-
-    for nlevels in range(5):
-        count, root = make_tree(nlevels)
-        ok_(count == find_heap_size(root))
 
 def test_heapify():
 

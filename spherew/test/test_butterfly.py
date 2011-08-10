@@ -294,18 +294,17 @@ def test_transpose_apply_tree_generated():
 
     nblocks = 2**3
     root = make_tree(nblocks // 2)
-    #root.print_tree()
     
-    matrices = tree_to_matrices(root)
-    #for M in matrices:
-    #    print M
-
+    eq_(kmax[0], root.get_k_max())
+    eq_(nblocks, root.get_nblocks_max())
+    
     nvecs = 2
     plan = ButterflyPlan(k_max=kmax[0], nblocks_max=nblocks, nvecs=nvecs)
 
     matrix_data = refactored_serializer(root, NoPayload()).getvalue()
     x = ndrange((root.nrows, nvecs))
 
+    matrices = tree_to_matrices(root)
     y0 = compute_direct(matrices, x)
     y = plan.transpose_apply(matrix_data, x)
     ok_(all(y0 == y))

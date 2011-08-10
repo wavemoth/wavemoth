@@ -244,6 +244,12 @@ class IdentityNode(object):
         self.remainder_blocks = remainder_blocks
         self.children = []
 
+    def get_k_max(self):
+        return self.ncols
+
+    def get_nblocks_max(self):
+        return 1
+
     def __repr__(self):
         return '<IdentityNode %dx%d>' % (self.ncols, self.ncols)
 
@@ -479,6 +485,12 @@ class InnerNode(object):
                                 self.block_heights]
         self.remainder_blocks = remainder_blocks
             
+    def get_k_max(self):
+        my_max = max(self.block_heights)
+        return max([my_max] + [c.get_k_max() for c in self.children])
+
+    def get_nblocks_max(self):
+        return len(self.block_heights)
 
     def __repr__(self):
         return '<InnerNode %dx%d(%d) block_heights=%r>' % (

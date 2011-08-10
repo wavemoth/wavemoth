@@ -190,6 +190,9 @@ class IdentityNode(object):
     def get_nblocks_max(self):
         return 1
 
+    def get_max_depth(self):
+        return 0
+
     def __repr__(self):
         return '<IdentityNode %dx%d>' % (self.ncols, self.ncols)
 
@@ -343,6 +346,9 @@ class InnerNode(object):
             remainder_blocks = [RemainderBlockInfo(0, n, np.asarray([])) for n in
                                 self.block_heights]
         self.remainder_blocks = remainder_blocks
+
+    def get_max_depth(self):
+        return max([x.get_max_depth() for x in self.children]) + 1
             
     def get_k_max(self):
         my_max = max(self.block_heights)
@@ -692,32 +698,38 @@ def butterfly_compress(matrix_provider, chunk_size, shape=None, eps=1e-10,
     root = butterfly_core(col, row, shape[0], partition, matrix_provider, eps)
     return root
 
-def find_max_depth(node):
-    if len(node.children) == 0:
-        return 0
-    else:
-        return 1 + max([find_max_depth(child) for child in node.children])
+def find_heap_size(node, skip_levels=0):
+    K = node.get_max_depth()
+    return 2**(K + 1) - 2**skip_levels
 
-def find_heap_size(node):
-    K = find_max_depth(node)
-    return 2**(K + 1) - 1
-
-def heapify(node, first_idx=1, idx=1, heap=None):
-    if heap is None:
-        heap = [None] * find_heap_size(node)
-        
+def _heapify(node, first_idx, idx, heap):
     heap[idx - first_idx] = node
     if len(node.children) == 0:
         return heap
     else:
-        heapify(node.children[0], first_idx, 2 * idx, heap)
+        _heapify(node.children[0], first_idx, 2 * idx, heap)
         if len(node.children) == 1:
             heap[2 * idx + 1 - first_idx] = None
         else:
-            heapify(node.children[1], first_idx, 2 * idx + 1, heap)
+            _heapify(node.children[1], first_idx, 2 * idx + 1, heap)
         if len(node.children) > 2:
             raise ValueError('Not a binary tree')
 
+    return heap
+
+def fetch_forest(node, skip_levels):
+    if (skip_levels == 0):
+        return [node]
+    return sum([fetch_forest(child, skip_levels - 1) for child in node.children], [])
+
+def heapify(root, skip_levels=0):
+    heap = [None] * find_heap_size(root, skip_levels=skip_levels)
+    num_roots = 2**skip_levels
+    heap[:num_roots] = fetch_forest(root, skip_levels)
+    for i, root in enumerate(heap[:num_roots]):
+        if root is not None:
+            # The first index is always the same as the number of roots
+            _heapify(root, num_roots, num_roots + i, heap)
     return heap
 
 def serialize_node(stream, node):
@@ -740,7 +752,7 @@ def serialize_node(stream, node):
         raise AssertionError()
     
 
-def serialize_butterfly_matrix(root, matrix_provider, stream=None):
+def serialize_butterfly_matrix(root, matrix_provider, num_levels=None, stream=None):
     if stream is None:
         stream = BytesIO()
     start_pos = stream.tell()
@@ -748,56 +760,61 @@ def serialize_butterfly_matrix(root, matrix_provider, stream=None):
         raise ValueError('Please align the stream on a 128-bit boundary')
     matrix_provider = as_matrix_provider(matrix_provider)
 
-    # Only support one root node for now
-    first_level_size = 1
-    heap_first_index = 1
+    tree_depth = root.get_max_depth()
+    if num_levels is None:
+        num_levels = tree_depth
 
-    heap_size = find_heap_size(root)
-    heap = [None] * heap_size
-    heapify(root, heap_first_index, 1, heap)
+    skip_levels = tree_depth - num_levels
+
+    # Only support one root node for now
+    root_count = 2**skip_levels
+    heap = heapify(root, skip_levels)
 
     write_int32(stream, root.nrows)
     write_int32(stream, root.ncols)
     write_int32(stream, root.get_k_max())
     write_int32(stream, root.get_nblocks_max())
     write_int64(stream, root.size())
-    write_int32(stream, first_level_size)
-    write_int32(stream, heap_size)
-    write_int32(stream, heap_first_index)
+    write_int32(stream, root_count)
+    write_int32(stream, len(heap))
+    write_int32(stream, root_count)
     write_int32(stream, 0)
     # Output placeholder residual matrix payload table of size first_level_size
     residual_pos = stream.tell()
-    write_int64(stream, 0)
+    for i in range(root_count):
+        write_int64(stream, 0)
 
     # Output placeholder heap table
     heap_pos = stream.tell()
     for node in heap:
         write_int64(stream, 0)
-    node_offsets = [0] * heap_size
+    node_offsets = [0] * len(heap)
 
     # Now follows residual matrix payloads
-    pos = stream.tell()
-    stream.seek(residual_pos)
-    write_int64(stream, pos - start_pos) # patch pointer
-    stream.seek(pos)
+    for i, node in enumerate(heap[:root_count]):
+        # patch pointer
+        pos = stream.tell()
+        stream.seek(residual_pos + 8 * i)
+        write_int64(stream, pos - start_pos)
+        stream.seek(pos)
 
-    # Table of offsets to each R block, of len remainder_blocks + 1(!). The +1
-    # is here to allow computing sizes...
-    write_int64(stream, len(root.remainder_blocks))
-    offsets_pos = stream.tell()
-    for _ in range(len(root.remainder_blocks) + 1):
-        write_int64(stream, 0)
-    R_offsets = [0] * (len(root.remainder_blocks) + 1)
-    for idx, (row_start, row_stop, col_indices) in enumerate(root.remainder_blocks):
-        R_offsets[idx] = stream.tell()
-        matrix_provider.serialize_block_payload(stream, row_start, row_stop, col_indices)
-    R_offsets[idx + 1] = stream.tell()
+        # Table of offsets to each R block, of len remainder_blocks + 1(!). The +1
+        # is here to allow computing sizes...
+        write_int64(stream, len(node.remainder_blocks))
+        offsets_pos = stream.tell()
+        for _ in range(len(node.remainder_blocks) + 1):
+            write_int64(stream, 0)
+            R_offsets = [0] * (len(node.remainder_blocks) + 1)
+            for idx, (row_start, row_stop, col_indices) in enumerate(node.remainder_blocks):
+                R_offsets[idx] = stream.tell()
+                matrix_provider.serialize_block_payload(stream, row_start, row_stop, col_indices)
+        R_offsets[idx + 1] = stream.tell()
         
-    end_pos = stream.tell()
-    stream.seek(offsets_pos)
-    for offset in R_offsets:
-        write_int64(stream, offset - start_pos)
-    stream.seek(end_pos)
+        end_pos = stream.tell()
+        stream.seek(offsets_pos)
+        for offset in R_offsets:
+            write_int64(stream, offset - start_pos)
+        stream.seek(end_pos)
 
     # Write nodes and record offsets
     for i, node in enumerate(heap):

@@ -506,7 +506,6 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
   char *payloads[((nblocks == 0) ? 1 : nblocks) + 1];
 
   if (is_root) {
-    assert(target_start == 0);
     char *payload_head = ctx->residual_payload_headers[ctx->current_root_idx];
     size_t n = read_int64(&payload_head);
     assert((n == nblocks) || (nblocks == 0 && n == 1));
@@ -625,14 +624,14 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   */
   ctx.add_push = 0;
   ctx.current_root_idx = 0;
+  size_t start = 0;
   for (size_t inode = info.heap_first_index;
        inode != info.heap_first_index + info.first_level_size;
        ++inode) {
-    size_t stop = transpose_apply_node(&ctx, inode, 0, NULL);
-    assert(stop == info.ncols);
-    ctx.add_push = 1; /* Any remaining root nodes require addition. */
+    start = transpose_apply_node(&ctx, inode, start, NULL);
     ctx.current_root_idx++;
   }
+  assert(start == info.ncols);
   
   return 0;
 }

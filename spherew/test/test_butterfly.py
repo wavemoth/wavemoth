@@ -38,6 +38,34 @@ def test_permutations_to_filter():
 #
 # Tests for refactored application
 #
+class Node(object):
+    def __init__(self, value, children=[]):
+        self.value = value
+        self.children = children
+    def __eq__(self, other):
+        return self.value == int(other)
+    def __index__(self):
+        return self.value
+    def __repr__(self):
+        return '<%d>' % self.value
+    def get_max_depth(self):
+        if len(self.children) == 0:
+            return 0
+        else:
+            return max([0 if x is None else x.get_max_depth() for x in self.children]) + 1
+
+def test_heap_size():
+    def make_tree(d):
+        if d == 0:
+            return 1, Node(1)
+        else:
+            lc, l = make_tree(d - 1)
+            rc, r = make_tree(d - 1)
+            return lc + rc + 1, Node(1, [l, r])
+
+    for nlevels in range(5):
+        count, root = make_tree(nlevels)
+        ok_(count == find_heap_size(root))
 
 def test_heapify():
 
@@ -45,11 +73,30 @@ def test_heapify():
         Node(1, [Node(3), Node(4)]),
         Node(2, [Node(5)])
         ]))
-    eq_(heap, [0, 1, 2, 3, 4, 5, None])
+    yield eq_, heap, [0, 1, 2, 3, 4, 5, None]
     heap = heapify(Node(10))
-    eq_(heap, [10])
+    yield eq_, heap, [10]
     heap = heapify(Node(1, [Node(3, [Node(4)])]))
-    eq_(heap, [1, 3, None, 4, None, None, None])
+    yield eq_, heap, [1, 3, None, 4, None, None, None]
+
+
+    heap = heapify(Node(0, [
+        Node(1, [Node(3), Node(4)]),
+        Node(2, [Node(5)])
+        ]), skip_levels = 1)
+    eq_(heap, [1, 2, 3, 4, 5, None])
+
+    heap = heapify(Node(0, [
+        Node(1, [Node(3), Node(4)]),
+        Node(2, [Node(5), Node(6)])
+        ]), skip_levels = 2)
+    eq_(heap, [3, 4, 5, 6])
+
+    heap = heapify(Node(0, [
+        Node(1, [Node(3), Node(4)]),
+        Node(2, [Node(5), None])
+        ]), skip_levels = 2)
+    eq_(heap, [3, 4, 5, None])
 
 def ndrange(shape, start=0, dtype=np.double):
     return np.arange(start, np.prod(shape) + start, dtype=dtype).reshape(shape)
@@ -78,6 +125,24 @@ def test_transpose_apply_leaf():
     x = ndrange((ncols, nvecs))
     y = plan.transpose_apply(matrix_data, x)
     ok_(all(x == y))
+
+def test_transpose_num_levels():
+    "butterfly.c.in: Transpose application of two identity matrices, horizontally stacked"
+    nvecs = 2
+    nrows = ncols = 8
+    plan = ButterflyPlan(k_max=nrows, nblocks_max=2, nvecs=nvecs)
+    node = InnerNode([(InterpolationBlock([0] * 8, [[]] * 8),
+                       InterpolationBlock([0] * 8, [[]] * 8))],
+                     [IdentityNode(4), IdentityNode(4)])
+    matrix_data = serialize_butterfly_matrix(node, NoPayload(), num_levels=0).getvalue()
+    x = ndrange((ncols, nvecs))
+    y = plan.transpose_apply(matrix_data, x)
+    print x
+    print y
+    # TODO sort out some confusion over nrows etc. for ButterflyPlan
+    ok_(all(x[:4, :] == y[:4, :]))
+    ok_(all(x[:4, :] == y[4:, :]))
+    
 
 def test_transpose_apply_small_fullrank():
     "butterfly.c.in: Transpose application of single S-matrix with all blocks of full rank"

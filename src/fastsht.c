@@ -506,11 +506,9 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                    size_t nvecs, char *payload, size_t payload_len,
                                    void *ctx) {
   double *input = ((transpose_apply_ctx_t*)ctx)->input;
-  size_t i, j, v, k, idx = 0;
   payload = skip_padding(payload);
   size_t row_start = read_int64(&payload);
   size_t row_stop = read_int64(&payload);
-  size_t ncols = stop - start;
   double *A = (double*)payload;
   dgemm_ccc(input + row_start * nvecs, A, buf,
             nvecs, stop - start, row_stop - row_start, 0.0);
@@ -562,7 +560,6 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
   double *output;
   int nmaps = plan->nmaps;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
-  bfm_index_t npix = 12 * plan->Nside * plan->Nside;
   double *phi0s = plan->grid->phi0s;
 
 
@@ -667,7 +664,7 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
   #pragma omp parallel
   {
     double *ring_data;
-    int iring, imap;
+    int iring;
     #pragma omp for schedule(dynamic, 16)
     for (iring = ring_start; iring < ring_end; ++iring) {
       ring_data = output + nmaps * ring_offsets[iring];

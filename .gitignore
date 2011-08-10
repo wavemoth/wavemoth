@@ -39,3 +39,11 @@ jobstore
 precomputed.dat
 
 /resources
+
+# Results of templates
+src/butterfly.c
+src/butterfly.h
+c/legendre_transform.c
+
+# Common debug files
+*.s

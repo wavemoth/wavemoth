@@ -4,7 +4,7 @@ import os
 import numpy as np
 
 from butterfly import write_int64, pad128
-from butterfly import butterfly_compress, refactored_serializer
+from butterfly import butterfly_compress, serialize_butterfly_matrix
 
 np.import_array()
 
@@ -241,7 +241,7 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     tree = butterfly_compress(Lambda_subset, chunk_size=chunk_size, eps=eps)
     logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
     # Serialize the butterfly tree to the stream
-    refactored_serializer(tree, Lambda_subset, stream=stream)
+    serialize_butterfly_matrix(tree, Lambda_subset, stream=stream)
 
 def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,
                       logger=null_logger, compute_matrix_func=compute_resources_for_m):

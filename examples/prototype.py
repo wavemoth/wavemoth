@@ -60,6 +60,7 @@ class InnerSumPerM:
             print 'Ratio in final blocks:', (
                 (self.P_even.S_node.size() + self.P_odd.S_node.size()) /
                 (self.P_even.size() + self.P_odd.size()))
+            1/0 #TODO: Below uses old API
             self.P_even = serialize_butterfly_matrix(self.P_even)
             self.P_odd = serialize_butterfly_matrix(self.P_odd)
         else:

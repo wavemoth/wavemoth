@@ -153,70 +153,6 @@ cdef class DenseResidualButterfly(ButterflyPlan):
                         buf,
                         nvecs, stop - start, row_stop - row_start, 0.0)
 
-cdef class SerializedMatrix:
-    cdef char *buf
-    cdef bint owns_data
-    cdef object matrixdata
-    cdef public int nrows, ncols
-    cdef size_t buflen
-    
-    def __cinit__(self, bytes matrixdata, bfm_index_t nrows, bfm_index_t ncols):
-        self.owns_data = <Py_ssize_t><char*>matrixdata % 16 != 0
-        if self.owns_data:
-            self.buf = <char*>memalign(16, len(matrixdata))
-            memcpy(self.buf, <char*>matrixdata, len(matrixdata))
-            self.matrixdata = None
-        else:
-            self.buf = <char*>matrixdata
-            self.matrixdata = matrixdata
-        self.buflen = len(matrixdata)
-        self.nrows = nrows
-        self.ncols = ncols
-
-    def __dealloc__(self):
-        if self.owns_data:
-            free(self.buf)
-            self.owns_data = False
-
-    def __reduce__(self):
-        matrixdata = PyBytes_FromStringAndSize(self.buf, self.buflen)
-        return (SerializedMatrix, (matrixdata, self.nrows, self.ncols))
-
-    def apply(self, vec, out=None, repeats=1):
-        vec = np.ascontiguousarray(vec, dtype=np.double)
-        orig_ndim = vec.ndim
-        if vec.ndim == 1:
-            vec = vec.reshape((vec.shape[0], 1))
-        elif vec.ndim > 2:
-            raise ValueError()
-        if vec.shape[0] != self.ncols:
-            raise ValueError("Matrix does not conform to vector")
-        if out is None:
-            out = np.zeros((self.nrows, vec.shape[1]), dtype=np.double)
-
-        cdef np.ndarray[double, ndim=2, mode='c'] vec_ = vec
-        cdef np.ndarray[double, ndim=2, mode='c'] out_ = out
-
-        cdef int i
-        for i in range(repeats):
-            ret = bfm_apply_d(self.buf, <double*>vec_.data,
-                              <double*>out_.data, self.nrows, self.ncols, vec.shape[1])
-        if ret != 0:
-            raise ButterflyMatrixError('Error code %d' % ret)
-        if orig_ndim == 1:
-            out = out[:, 0]
-        return out
-
-    def digest(self):
-        import hashlib
-        d = hashlib.sha1()
-        d.update(self.get_data())
-        return d.hexdigest()
-
-    def get_data(self):
-        return PyBytes_FromStringAndSize(self.buf, self.buflen)
-
-
 cdef write_bin(stream, char *buf, Py_ssize_t size):
     stream.write(PyBytes_FromStringAndSize(buf, size))
 
@@ -301,87 +237,6 @@ def format_numbytes(x):
         units = 'GB'
         x /= 1024**3
     return '%.1f %s' % (x, units)
-
-class RootNode(object):
-    def __init__(self, D_blocks, S_node):
-        self.D_blocks = [np.ascontiguousarray(D, dtype=np.double)
-                         for D in D_blocks]
-        if len(self.D_blocks) != 2 * len(S_node.blocks):
-            raise ValueError("Wrong number of diagonal blocks w.r.t. S_node")
-        self.S_node = S_node
-        self.nrows = sum(block.shape[0] for block in self.D_blocks)
-        self.ncols = S_node.ncols
-        for D, ip in zip(self.D_blocks, unroll_pairs(self.S_node.blocks)):
-            if D.shape[1] != ip.shape[0]:
-                raise ValueError('Nonconforming matrices')
-
-    def write_to_stream(self, stream):
-        # We write both D_blocks and the first S_node interleaved
-        # HEADER
-        write_index_t(stream, len(self.D_blocks) // 2) # order field
-        write_index_t(stream, self.nrows)
-        write_index_t(stream, self.ncols)
-        # ROOT NODE
-        write_index_t(stream, len(self.D_blocks))
-        block_heights = np.asarray(
-            [D.shape[0] for D in self.D_blocks], dtype=index_dtype)
-        write_array(stream, block_heights)
-        L, R = self.S_node.children
-        write_index_t(stream, L.nrows)
-        write_index_t(stream, R.nrows)
-        write_index_t(stream, L.ncols)
-        L.write_to_stream(stream)
-        R.write_to_stream(stream)
-        
-        for D, ip_block in zip(self.D_blocks, unroll_pairs(self.S_node.blocks)):
-            write_index_t(stream, D.shape[1])
-            ip_block.write_to_stream(stream)
-            pad128(stream)
-            write_array(stream, D)
-
-    def apply(self, x):
-        assert x.ndim == 2
-        y = self.S_node.apply(x)
-        out = np.empty((self.nrows, x.shape[1]), np.double)
-        i_out = 0
-        i_y = 0
-        for block in self.D_blocks:
-            m, n = block.shape
-            out[i_out:i_out + m, :] = np.dot(block, y[i_y:i_y + n, :])
-            i_out += m
-            i_y += n
-        return out
-
-    def size(self):
-        return (self.S_node.size() +
-                sum(np.prod(block.shape) for block in self.D_blocks))
-
-    def get_multilevel_stats(self):
-        """
-        Returns two arrays:
-         - The interpolation block sizes at each level (in # of floats).
-         - The size of remainder matrices, if compression was stopped
-           at this level.
-
-        The first element in each list corresponds to the level of self.
-        """
-        return self.S_node.get_multilevel_stats()        
-
-    def get_stats(self):
-        # Todo: rename to __repr__ or something...
-        if self.nrows == 0 or self.ncols == 0:
-            return "empty"
-        Plms_size = sum(np.prod(block.shape) for block in self.D_blocks)
-        size = self.size()
-        dense = self.nrows * self.ncols
-        return "%.2f -> %s (%.2f -> %s Plms), blocks=%d+%d" % (
-            size / dense,
-            format_numbytes(size * 8),
-            Plms_size / size,
-            format_numbytes(Plms_size * 8),
-            len(self.D_blocks),
-            self.S_node.count_blocks()
-            )
 
 class InterpolationBlock(object):
     def __init__(self, filter, interpolant):
@@ -837,12 +692,6 @@ def butterfly_compress(matrix_provider, chunk_size, shape=None, eps=1e-10,
     root = butterfly_core(col, row, shape[0], partition, matrix_provider, eps)
     return root
 
-def serialize_butterfly_matrix(M):
-    data = BytesIO()
-    M.write_to_stream(data)
-    return SerializedMatrix(data.getvalue(), M.nrows, M.ncols)
-
-
 def find_max_depth(node):
     if len(node.children) == 0:
         return 0
@@ -891,7 +740,7 @@ def serialize_node(stream, node):
         raise AssertionError()
     
 
-def refactored_serializer(root, matrix_provider, stream=None):
+def serialize_butterfly_matrix(root, matrix_provider, stream=None):
     if stream is None:
         stream = BytesIO()
     start_pos = stream.tell()

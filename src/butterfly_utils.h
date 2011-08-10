@@ -15,6 +15,12 @@ static inline bfm_index_t read_index(char **head) {
   return result;
 }
 
+static inline int32_t read_int32(char **head) {
+  int32_t result = *(int32_t*)*head;
+  *head += sizeof(int32_t);
+  return result;
+}
+
 static inline int64_t read_int64(char **head) {
   int64_t result = *(int64_t*)*head;
   *head += sizeof(int64_t);

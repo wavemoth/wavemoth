@@ -583,12 +583,11 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
 
 int bfm_transpose_apply_d(bfm_plan *plan,
                           char *matrix_data,
-                          size_t nrows, 
-                          size_t ncols,
                           pull_func_t pull_func,
                           push_func_t push_func,
                           void *caller_ctx) {
   bfm_transpose_apply_context ctx;
+  bfm_matrix_data_info info;
   char *head = matrix_data;
   ctx.caller_ctx = caller_ctx;
   ctx.pull_func = pull_func;
@@ -605,27 +604,18 @@ int bfm_transpose_apply_d(bfm_plan *plan,
      The heap base pointer is the virtual zero level, i.e., it
      incorporates the subtraction of the first index.
   */
-  int32_t *header_fields = (int32_t*)head; 
-  checkf(header_fields[0] == nrows, "Data says nrows==%d, caller says nrows==%d",
-         header_fields[0], (int)nrows);
-  checkf(header_fields[1] == ncols, "Data says ncols==%d, caller says ncols==%d",
-         header_fields[1], (int)ncols);
-  size_t first_level_size = header_fields[2];
-  size_t heap_size = ((int32_t*)head)[3];
-  size_t node_heap_first_index = ((int32_t*)head)[4];
-  /* One padding */
-  head += sizeof(int32_t[6]);
+  head = bfm_query_matrix_data(head, &info);
 
   /* Read residual matrix payload data */
-  char *residual_payload_headers[first_level_size];
+  char *residual_payload_headers[info.first_level_size];
   ctx.residual_payload_headers = residual_payload_headers;
-  read_pointer_list(&head, residual_payload_headers, first_level_size, matrix_data);
+  read_pointer_list(&head, residual_payload_headers, info.first_level_size, matrix_data);
 
   /* Read tree node pointers in binary heap structure */
-  char *heap_buf[heap_size];
-  ctx.node_heap = heap_buf - node_heap_first_index;
+  char *heap_buf[info.heap_size];
+  ctx.node_heap = heap_buf - info.heap_first_index;
 
-  read_pointer_list(&head, heap_buf, heap_size, matrix_data);
+  read_pointer_list(&head, heap_buf, info.heap_size, matrix_data);
 
 
   /* Start to apply the root level. 
@@ -635,14 +625,27 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   */
   ctx.add_push = 0;
   ctx.current_root_idx = 0;
-  for (size_t inode = node_heap_first_index;
-       inode != node_heap_first_index + first_level_size;
+  for (size_t inode = info.heap_first_index;
+       inode != info.heap_first_index + info.first_level_size;
        ++inode) {
     size_t stop = transpose_apply_node(&ctx, inode, 0, NULL);
-    assert(stop == ncols);
+    assert(stop == info.ncols);
     ctx.add_push = 1; /* Any remaining root nodes require addition. */
     ctx.current_root_idx++;
   }
   
   return 0;
+}
+
+char *bfm_query_matrix_data(char *head, bfm_matrix_data_info *info) {
+  info->nrows = read_int32(&head);
+  info->ncols = read_int32(&head);
+  info->k_max = read_int32(&head);
+  info->nblocks_max = read_int32(&head);
+  info->element_count = read_int64(&head);
+  info->first_level_size = read_int32(&head);
+  info->heap_size = read_int32(&head);
+  info->heap_first_index = read_int32(&head);
+  read_int32(&head);
+  return head;
 }

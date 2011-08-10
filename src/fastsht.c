@@ -43,6 +43,10 @@ static INLINE int imin(int a, int b) {
   return (a < b) ? a : b;
 }
 
+static INLINE size_t zmax(size_t a, size_t b) {
+  return (a > b) ? a : b;
+}
+
 /** A more useful mod function; the result will have the same sign as
     the divisor rather than the dividend.
  */
@@ -70,7 +74,6 @@ at the time, this will definitely change.
 typedef struct {
   char *matrix_data;
   size_t matrix_len;
-  int64_t combined_matrix_size;
 } m_resource_t;
 
 struct _precomputation_t {
@@ -170,10 +173,9 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
   fd = -1;
   head = data->mmapped_buffer;
   /* Read mmax, allocate arrays, read offsets */
-  lmax = ((int64_t*)head)[0];
-  mmax = ((int64_t*)head)[1];
-  *out_Nside = Nside = ((int64_t*)head)[2];
-  head += sizeof(int64_t[3]);
+  lmax = read_int64(&head);
+  mmax = read_int64(&head);
+  *out_Nside = Nside = read_int64(&head);
   data->P_matrices = malloc(sizeof(m_resource_t[2 * (mmax + 1)]));
   data->lmax = lmax;
   data->mmax = mmax;
@@ -193,8 +195,6 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
         rec->matrix_data = NULL;
         continue;
       }
-      rec->combined_matrix_size = ((int64_t*)head)[0];
-      head = skip_padding(head + sizeof(int64_t[1]));
       rec->matrix_data = head;
       rec->matrix_len = offsets[4 * m + 2 * odd + 1];
     }
@@ -326,7 +326,17 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
 
-  size_t k_max = 10000, nblocks_max = 1000; // TODO
+  size_t k_max = 0, nblocks_max = 0;
+  for (int m = 0; m != mmax; ++m) {
+    for (int odd = 0; odd != 2; ++odd) {
+      bfm_matrix_data_info info;
+      bfm_query_matrix_data((plan->resources->P_matrices + 2 * m + odd)->matrix_data,
+                            &info);
+      k_max = zmax(k_max, info.k_max);
+      nblocks_max = zmax(nblocks_max, info.nblocks_max);
+    }
+  }
+
   plan->bfm_plans = malloc(sizeof(void*) * nthreads);
   for (i = 0; i != nthreads; ++i) {
     plan->bfm_plans[i] = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
@@ -369,7 +379,10 @@ void fastsht_destroy_plan(fastsht_plan plan) {
 
 int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
   int64_t N, nvecs;
-  N = (plan->resources->P_matrices + 2 * m + odd)->combined_matrix_size;
+  bfm_matrix_data_info info;
+  bfm_query_matrix_data((plan->resources->P_matrices + 2 * m + odd)->matrix_data,
+                        &info);
+  N = info.element_count;
   nvecs = 2;
   N *= nvecs;
   return N * 2; /* count mul and add seperately */
@@ -517,7 +530,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
                             double complex *work_a_l, double complex *output) {
-  bfm_index_t ncols, nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
+  bfm_index_t nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
   double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
   m_resource_t *rec;
   rec = plan->resources->P_matrices + 2 * m + odd;
@@ -528,12 +541,9 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
     }
     ++nrows;
   }
-  ncols = plan->grid->nrings - plan->grid->mid_ring;
   transpose_apply_ctx_t ctx = { (double*)work_a_l, (double*)output };
   int ret = bfm_transpose_apply_d(plan->bfm_plans[omp_get_thread_num()],
                                   rec->matrix_data,
-                                  nrows,
-                                  ncols,
                                   pull_a_through_legendre_block,
                                   push_q,
                                   &ctx);

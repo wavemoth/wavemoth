@@ -37,11 +37,14 @@ cdef extern from "butterfly.h":
 
     int bfm_transpose_apply_d(bfm_plan *plan,
                               char *matrix_data,
-                              size_t nrows, 
-                              size_t ncols,
                               pull_func_t pull_func,
                               push_func_t push_func,
                               void *caller_ctx)
+    
+    ctypedef struct bfm_matrix_data_info:
+        size_t nrows, ncols
+
+    char *bfm_query_matrix_data(char *head, bfm_matrix_data_info *info)
 
     
 
@@ -82,8 +85,9 @@ cdef class ButterflyPlan:
         cdef bint need_realign
 
         # Read ncols from matrix_data
-        cdef int32_t *matrix_data_header = <int32_t*><char*>matrix_data
-        cdef int32_t ncols = matrix_data_header[1]
+        cdef bfm_matrix_data_info info
+        bfm_query_matrix_data(<char*>matrix_data, &info)
+        cdef size_t ncols = info.ncols
 
         self.input_array = np.asarray(x, dtype=np.double)
         output_array = self.output_array = np.zeros((ncols, self.nvecs))
@@ -94,7 +98,7 @@ cdef class ButterflyPlan:
                 memcpy(buf, <char*>matrix_data, len(matrix_data))
             else:
                 buf = <char*>matrix_data
-            ret = bfm_transpose_apply_d(self.plan, buf, x.shape[0], ncols,
+            ret = bfm_transpose_apply_d(self.plan, buf,
                                         &pull_input_callback, &push_output_callback,
                                         <void*>self)
             if ret != 0:
@@ -903,17 +907,15 @@ def refactored_serializer(root, matrix_provider, stream=None):
     heap = [None] * heap_size
     heapify(root, heap_first_index, 1, heap)
 
-    nrows_R = 0
-    for row_start, row_stop, col_indices in root.remainder_blocks:
-        nrows_R += row_stop - row_start
-
-    write_int32(stream, nrows_R)
+    write_int32(stream, root.nrows)
     write_int32(stream, root.ncols)
+    write_int32(stream, root.get_k_max())
+    write_int32(stream, root.get_nblocks_max())
+    write_int64(stream, root.size())
     write_int32(stream, first_level_size)
     write_int32(stream, heap_size)
     write_int32(stream, heap_first_index)
     write_int32(stream, 0)
-
     # Output placeholder residual matrix payload table of size first_level_size
     residual_pos = stream.tell()
     write_int64(stream, 0)

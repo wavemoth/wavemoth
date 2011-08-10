@@ -238,10 +238,7 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     Lambda_subset = Lambda[odd::2, :]
     tree = butterfly_compress(Lambda_subset, chunk_size=chunk_size, eps=eps)
     logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
-    # First, combined_matrix_size, used for computing FLOPS
-    write_int64(stream, tree.size())
-    pad128(stream)
-    # Then serialize the butterfly tree
+    # Serialize the butterfly tree to the stream
     refactored_serializer(tree, Lambda_subset, stream=stream)
 
 def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,

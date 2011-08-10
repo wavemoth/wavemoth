@@ -138,12 +138,16 @@ void bfm_destroy_plan(bfm_plan *plan);
 
 int bfm_transpose_apply_d(bfm_plan *plan,
                           char *matrix_data,
-                          size_t nrows, 
-                          size_t ncols,
                           pull_func_t pull_func,
                           push_func_t push_func,
                           void *caller_ctx);
 
+typedef struct {
+  size_t nrows, ncols, k_max, nblocks_max, element_count;
+  size_t first_level_size, heap_size, heap_first_index;
+} bfm_matrix_data_info;
+
+char *bfm_query_matrix_data(char *head, bfm_matrix_data_info *info);
 
 /*
 PRIVATE ROUTINES

@@ -155,39 +155,6 @@ def test_merge_even_odd_and_transpose():
     assert np.all(rings[0] == [0, 8, 0, 10])
     assert np.all(rings[3] == [0, 2, 0, 0, 0, 0, 0, 4])
 
-def test_legendre_transform():
-    nvecs = 2
-    Nside = 2048
-    ixmin = 340
-    m = 10
-    lmin = m + 200
-
-    def test(nx, nk):
-        lmax = lmin + nk
-        ixmax = ixmin + nx
-        ls = np.arange(lmin, lmax, 2)
-        nodes = get_ring_thetas(Nside, positive_only=True)[ixmin:ixmax]
-        P = compute_normalized_associated_legendre(m, nodes, lmax, epsilon=1e-30)
-        P = (P.T)[(lmin - m):(lmax - m):2, :].copy('C')
-        x_squared = np.cos(nodes)**2
-        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs + 1)[None, :].astype(np.double)
-        k_start = np.zeros(x_squared.shape[0], dtype=np.int64)
-        y0 = np.dot(a.T, P).T
-        for use_sse in [False, True]:
-            y = np.zeros((x_squared.shape[0], a.shape[1]))
-            associated_legendre_transform(m, lmin, k_start, a, y, x_squared,
-                                          P[0, :].copy('C'), P[1, :].copy('C'), use_sse=use_sse)
-            for j in range(nvecs):
-                assert_almost_equal(y0[:, j], y[:, j])
-                #plt.plot(y0[:, 1])
-                #plt.plot(y[:, 1])
-                #plt.show()
-
-    for xcase in range(10):
-        for kcase in [0, 1]:
-            yield test, 20 + xcase, 10 + kcase
-
-
 def test_healpix_phi0():
     phi0s = lib._get_healpix_phi0s(16)
     yield assert_almost_equal, phi0s, healpix.get_ring_phi0(16)
@@ -228,3 +195,40 @@ def test_accuracy_against_psht():
 
     yield test, 1e-7
     yield test, 1e-11
+
+
+
+#
+# Brute-force Legendre transforms
+#
+
+def test_legendre_transform():
+    nvecs = 2
+    Nside = 2048
+    ixmin = 340
+    m = 10
+    lmin = m + 200
+
+    def test(nx, nk):
+        lmax = lmin + nk
+        ixmax = ixmin + nx
+        ls = np.arange(lmin, lmax, 2)
+        nodes = get_ring_thetas(Nside, positive_only=True)[ixmin:ixmax]
+        P = compute_normalized_associated_legendre(m, nodes, lmax, epsilon=1e-30)
+        P = (P.T)[(lmin - m):(lmax - m):2, :].copy('C')
+        x_squared = np.cos(nodes)**2
+        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs + 1)[None, :].astype(np.double)
+        y0 = np.dot(a.T, P).T
+        for use_sse in [False, True]:
+            y = np.zeros((x_squared.shape[0], a.shape[1]))
+            associated_legendre_transform(m, lmin, a, y, x_squared,
+                                          P[0, :].copy('C'), P[1, :].copy('C'), use_sse=use_sse)
+            for j in range(nvecs):
+                assert_almost_equal(y0[:, j], y[:, j])
+                #plt.plot(y0[:, 1])
+                #plt.plot(y[:, 1])
+                #plt.show()
+
+    for xcase in range(10):
+        for kcase in [0, 1]:
+            yield test, 20 + xcase, 10 + kcase

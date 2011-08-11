@@ -15,7 +15,6 @@ void fastsht_associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t
 
 void fastsht_associated_legendre_transform(size_t nx, size_t nl,
                                            size_t nvecs,
-                                           size_t *k_start, 
                                            double *a_l,
                                            double *y,
                                            double *x_squared, 
@@ -24,7 +23,6 @@ void fastsht_associated_legendre_transform(size_t nx, size_t nl,
 
 void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                size_t nvecs,
-                                               size_t *k_start, 
                                                double *a_l,
                                                double *y,
                                                double *x_squared, 

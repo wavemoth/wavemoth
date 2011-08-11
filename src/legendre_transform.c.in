@@ -29,7 +29,6 @@ nregs = 1 if single else xchunksize // 2
 static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
                                                          size_t ix_stop,
                                                          size_t nk,
-                                                         size_t *k_start,
                                                          double *a,
                                                          double *y,
                                                          double *x_squared,
@@ -62,12 +61,8 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
   for (i = ix_start; i != ix_stop; i += {{xchunksize}}) {
     /* In comments and variable names we will assume that k starts on
        0 to keep things brief; however, this is a dynamic quantity to
-       support ignoring near-zero parts of P. The precomputation should
-       ensure that k_start is constant over the block-sizes we end up
-       using. */
-    for (s = 1; s != {{xchunksize}}; ++s) assert(k_start[i] == k_start[i + s]);
-    k = k_start[i];
-
+       support ignoring near-zero parts of P. */
+    k = 0;
     /* We loop over k in the inner-most loop and fully compute y_ij
        before storing it.
 
@@ -279,7 +274,6 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
 
 void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
                                                size_t nvecs,
-                                               size_t *k_start, 
                                                double *a,
                                                double *y,
                                                double *x_squared, 
@@ -300,7 +294,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
   {{for xchunksize in [6, 2, 1]}}
   n = nx - nx % {{xchunksize}};
   if (i != n) {
-    legendre_transform_chunk{{xchunksize}}_nvec2(i, n, nk, k_start, a, y,
+    legendre_transform_chunk{{xchunksize}}_nvec2(i, n, nk, a, y,
                                                  x_squared, auxdata, P, Pp1);
   }
   i = n;
@@ -309,19 +303,18 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
 
 void fastsht_associated_legendre_transform(size_t nx, size_t nk,
                                            size_t nvecs,
-                                           size_t *k_start, 
                                            double *a,
                                            double *y,
                                            double *x_squared, 
                                            double *auxdata,
                                            double *P, double *Pp1) {
-  size_t i, k, j, k_start_val;
+  size_t i, k, j;
   double Pval, Pval_prev, Pval_prevprev;
 
   assert(nk >= 2);
   for (i = 0; i != nx; ++i) {
     /* First get away with the precomputed values. This also zeros the output buffer. */
-    k = k_start[i];
+    k = 0;
     Pval_prevprev = P[i];
     Pval_prev = Pp1[i];
     for (j = 0; j != nvecs; ++j) {

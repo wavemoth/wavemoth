@@ -128,6 +128,7 @@ def test_transpose_apply_leaf():
 
 def test_transpose_num_levels():
     "butterfly.c.in: Transpose application of two identity matrices, horizontally stacked"
+    raise SkipTest("Need to rewrite this to a num_levels=1 test")
     nvecs = 2
     nrows = ncols = 8
     plan = ButterflyPlan(k_max=nrows, nblocks_max=2, nvecs=nvecs)

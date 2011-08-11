@@ -523,28 +523,31 @@ def butterfly_core(col, row, nrows, partition, matrix_provider, eps):
     # partition[-1] == ncols.
     if len(partition) == 1:
         stop = partition[0]
-        return IdentityNode(partition[0] - col, remainder_blocks=[
+        col_indices = np.arange(col, stop)
+        columns_array = matrix_provider.get_block(row, nrows, col_indices)
+        return [columns_array], IdentityNode(stop - col, remainder_blocks=[
             RemainderBlockInfo(row_start=row, row_stop=nrows,
-                               col_indices=np.arange(col, partition[0]))])
+                               col_indices=col_indices)])
 
     mid = len(partition) // 2
-    L_node = butterfly_core(col, row, nrows, partition[:mid],
-                            matrix_provider, eps)
-    R_node = butterfly_core(col + L_node.ncols, row, nrows, partition[mid:],
-                            matrix_provider, eps)
+    L_k_list, L_node = butterfly_core(col, row, nrows, partition[:mid],
+                                      matrix_provider, eps)
+    R_k_list, R_node = butterfly_core(col + L_node.ncols, row, nrows, partition[mid:],
+                                      matrix_provider, eps)
 
     # Compress further
     out_remainders = []
     out_interpolants = []
-    for L_remainder, R_remainder in zip(L_node.remainder_blocks,
-                                        R_node.remainder_blocks):
+    residual_array_list = []
+    for L_remainder, R_remainder, L, R in zip(L_node.remainder_blocks,
+                                              R_node.remainder_blocks,
+                                              L_k_list,
+                                              R_k_list):
         row_start = L_remainder.row_start
         row_stop = L_remainder.row_stop
         assert row_start == R_remainder.row_start
         assert row_stop == R_remainder.row_stop
         # Horizontal join
-        L = matrix_provider.get_block(row_start, row_stop, L_remainder.col_indices)
-        R = matrix_provider.get_block(row_start, row_stop, R_remainder.col_indices)
         LR_col_indices = np.hstack([L_remainder.col_indices,
                                     R_remainder.col_indices])
         LR = np.hstack([L, R])
@@ -556,17 +559,23 @@ def butterfly_core(col, row, nrows, partition, matrix_provider, eps):
         interpolant_pair = []
         i = row_start
         for X in [T, B]:
-            col_indices, interpolant = matrix_interpolative_decomposition(X, eps)
-            col_indices = LR_col_indices[col_indices]
+            relative_col_indices, interpolant = matrix_interpolative_decomposition(X, eps)
+            absolute_col_indices = LR_col_indices[relative_col_indices]
             interpolant_pair.append(interpolant)
             out_remainders.append(RemainderBlockInfo(row_start=i,
                                                      row_stop=i + X.shape[0],
-                                                     col_indices=col_indices))
+                                                     col_indices=absolute_col_indices))
+            if len(relative_col_indices) > 0:
+                X_k = X[:, relative_col_indices]
+            else:
+                X_k = X[:, 0:0]
+            X_k = X_k.copy('F') # Avoid holding a reference to the data we're eliminating
+            residual_array_list.append(X_k)
             i += X.shape[0]
         out_interpolants.append(interpolant_pair)
 
-    return InnerNode(out_interpolants, (L_node, R_node),
-                     out_remainders)
+    return residual_array_list, InnerNode(out_interpolants, (L_node, R_node),
+                                          out_remainders)
 
 def get_number_of_levels(n, min):
     levels = 0
@@ -651,7 +660,7 @@ def butterfly_compress(matrix_provider, chunk_size, shape=None, eps=1e-10,
         
     partition = make_partition(col, shape[1], chunk_size)
     partition = pad_with_empty_columns(partition)
-    root = butterfly_core(col, row, shape[0], partition, matrix_provider, eps)
+    residual, root = butterfly_core(col, row, shape[0], partition, matrix_provider, eps)
     return root
 
 def find_heap_size(node, skip_levels=0):

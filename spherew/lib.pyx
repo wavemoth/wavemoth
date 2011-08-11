@@ -6,9 +6,11 @@ from io import BytesIO
 
 from concurrent.futures import ProcessPoolExecutor
 
-from butterfly import write_int64, pad128
+from butterfly import write_int64, pad128, write_array
 from butterfly import butterfly_compress, serialize_butterfly_matrix
 from utils import FakeExecutor
+from .legendre import compute_normalized_associated_legendre
+from .healpix import get_ring_thetas
 
 
 np.import_array()
@@ -221,6 +223,35 @@ class NullLogger(object):
 
 null_logger = NullLogger()
 
+class LegendreMatrixProvider(object):
+    def __init__(self, m, odd, Nside):
+        self.m, self.odd = m, odd
+        self.thetas = get_ring_thetas(Nside, positive_only=True)
+        self.xs = np.cos(self.thetas)
+        self.ncols_full_matrix = self.xs.shape[0]
+
+    def row_to_l(self, rowidx):
+        return self.m + 2 * rowidx + self.odd
+
+    def get_block(self, row_start, row_stop, col_indices):
+        if len(col_indices) > 0 and row_stop > row_start:
+            thetas = self.thetas[col_indices]
+            lmin = self.row_to_l(row_start)
+            lmax = self.row_to_l(row_stop - 1)
+            Lambda = compute_normalized_associated_legendre(self.m, thetas, lmax,
+                                                            epsilon=1e-30)
+            return Lambda.T[lmin - self.m::2, :]
+        else:
+            return np.zeros((row_stop - row_start, len(col_indices)))
+
+    def serialize_block_payload(self, stream, row_start, row_stop, col_indices):
+        pad128(stream)
+        block = np.asfortranarray(self.get_block(row_start, row_stop, col_indices),
+                                  dtype=np.double)
+        write_int64(stream, row_start)
+        write_int64(stream, row_stop)
+        write_array(stream, block)
+
 def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
                             eps, num_levels, logger=null_logger):
     """
@@ -229,23 +260,19 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     of computing between processes. See compute_resources.
     """
     # TODO: Computes Legendre matrix twice, for even and odd case!
-    from .healpix import get_ring_thetas
-    from .legendre import compute_normalized_associated_legendre
 
     # Compute & compress matrix
-    thetas = get_ring_thetas(Nside, positive_only=True)
-    Lambda = compute_normalized_associated_legendre(m, thetas, lmax,
-                                                    epsilon=1e-30)
-    Lambda = Lambda.T
-    Lambda_subset = Lambda[odd::2, :]
-    tree = butterfly_compress(Lambda_subset, chunk_size=chunk_size, eps=eps)
+    provider = LegendreMatrixProvider(m, odd, Nside)
+    nk = (lmax - m - odd) // 2 + 1
+    tree = butterfly_compress(provider, shape=(nk, provider.ncols_full_matrix),
+                              chunk_size=chunk_size, eps=eps)
     logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
     # Serialize the butterfly tree to the stream
-    serialize_butterfly_matrix(tree, Lambda_subset, num_levels=num_levels, stream=stream)
+    serialize_butterfly_matrix(tree, provider, num_levels=num_levels, stream=stream)
     return stream
 
 def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,
-                      num_levels=None, max_workers=None,
+                      num_levels=None, max_workers=1,
                       logger=null_logger, compute_matrix_func=compute_resources_for_m):
     if max_workers == 1:
         proc = FakeExecutor()

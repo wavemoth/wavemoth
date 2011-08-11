@@ -287,21 +287,6 @@ class InterpolationBlock(object):
     def size(self):
         return np.prod(self.interpolant.shape)
 
-class RemainderBlockProvider(object):
-    """
-    Override this class to plug in matrices that can be
-    generated on the fly to butterfly compression.
-    """
-    def get_block(self, row_start, row_stop, col_indices):
-        raise NotImplementedError()
-
-class DenseArrayBlockProvider(RemainderBlockProvider):
-    def __init__(self, array):
-        self.array = array
-        
-    def get_block(self, row_start, row_stop, col_indices):
-        return self.array[row_start:row_stop, col_indices]
-
 RemainderBlockInfo = namedtuple('RemainderBlockInfo',
                                 'row_start row_stop col_indices')
 
@@ -532,16 +517,6 @@ def matrix_interpolative_decomposition(A, eps):
     iden_list, ipol_list, A_ip = sparse_interpolative_decomposition(A, eps)
     filter = permutations_to_filter(iden_list, ipol_list)
     return iden_list, InterpolationBlock(filter, A_ip)
-
-def pick_array_columns(A, indices):
-    return A[:, indices] if len(indices) > 0 else A[:, 0:0]
-
-def pick_remainder_block(A, rinfo):
-    row_start, row_stop, indices = rinfo
-    if len(indices) > 0:
-        return A[row_start:row_stop, indices]
-    else:
-        return np.zeros((row_stop - row_start, 0))
 
 def butterfly_core(col, row, nrows, partition, matrix_provider, eps):
     # partition: list of end-column-index of each column block;

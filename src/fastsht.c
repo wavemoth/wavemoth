@@ -13,6 +13,7 @@
 #include "fmm1d.h"
 #include "blas.h"
 #include "butterfly_utils.h"
+#include "legendre_transform.h"
 
 /* For memory mapping */
 #include <sys/types.h>
@@ -111,15 +112,6 @@ Public
 */
 
 static int configured = 0;
-
-static char *skip_padding(char *ptr) {
-  size_t m = (size_t)ptr % 16;
-  if (m == 0) {
-    return ptr;
-  } else { 
-    return ptr + 16 - m;
-  }
-}
 
 void fastsht_configure(char *resource_path) {
   /*check(!configured, "Already configured");*/
@@ -519,12 +511,28 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                    size_t nvecs, char *payload, size_t payload_len,
                                    void *ctx) {
   double *input = ((transpose_apply_ctx_t*)ctx)->input;
-  payload = skip_padding(payload);
+  skip128(&payload);
   size_t row_start = read_int64(&payload);
   size_t row_stop = read_int64(&payload);
-  double *A = (double*)payload;
-  dgemm_ccc(input + row_start * nvecs, A, buf,
-            nvecs, stop - start, row_stop - row_start, 0.0);
+  size_t nk = row_stop - row_start;
+
+  input += row_start * nvecs;
+
+  if (nk <= 2 || start == stop) {
+    double *A = (double*)payload;
+    dgemm_ccc(input, A, buf,
+              nvecs, stop - start, row_stop - row_start, 0.0);
+  } else {
+    size_t nx = stop - start;
+    double *x_squared = read_aligned_array_d(&payload, nx);
+    double *P0 = read_aligned_array_d(&payload, nx);
+    double *P1 = read_aligned_array_d(&payload, nx);
+    skip128(&payload);
+    double *auxdata = (double*)payload;
+    
+    fastsht_associated_legendre_transform_sse(nx, nk, nvecs, input, buf, x_squared, auxdata,
+                                              P0, P1);
+  }
 }
 
 

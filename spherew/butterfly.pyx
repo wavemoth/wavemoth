@@ -171,7 +171,10 @@ def write_index_t(stream, bfm_index_t i):
 
 def write_array(stream, arr):
     n = stream.write(bytes(arr.data))
-    #assert n == np.prod(arr.shape) * arr.itemsize
+
+def write_aligned_array(stream, arr):
+    pad128(stream)
+    n = stream.write(bytes(arr.data))
 
 def pad128(stream):
     i = stream.tell()

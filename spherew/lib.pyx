@@ -6,7 +6,7 @@ from io import BytesIO
 
 from concurrent.futures import ProcessPoolExecutor
 
-from butterfly import write_int64, pad128, write_array
+from butterfly import write_int64, pad128, write_array, write_aligned_array
 from butterfly import butterfly_compress, serialize_butterfly_matrix
 from utils import FakeExecutor
 from .legendre import compute_normalized_associated_legendre
@@ -192,8 +192,8 @@ def associated_legendre_transform(int m, int lmin,
 
     # Pack the auxiliary data here, just to keep testcases and benchmarks
     # from having to change when internals change.
-    cdef np.ndarray[double, mode='c'] auxdata = np.empty(3 * (nk - 2))
-    fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>auxdata.data)
+    cdef np.ndarray[double, mode='c'] auxdata = (
+        associated_legendre_transform_auxdata(m, lmin, nk))
 
     if use_sse:
         for i in range(repeat):
@@ -215,7 +215,11 @@ def associated_legendre_transform(int m, int lmin,
                 <double*>auxdata.data,
                 <double*>P.data,
                 <double*>Pp1.data)
-            
+
+def associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk):
+    cdef np.ndarray[double, mode='c'] out = np.empty(3 * (nk - 2))
+    fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
+    return out
 
 class NullLogger(object):
     def info(self, msg):
@@ -246,11 +250,48 @@ class LegendreMatrixProvider(object):
 
     def serialize_block_payload(self, stream, row_start, row_stop, col_indices):
         pad128(stream)
-        block = np.asfortranarray(self.get_block(row_start, row_stop, col_indices),
-                                  dtype=np.double)
         write_int64(stream, row_start)
         write_int64(stream, row_stop)
-        write_array(stream, block)
+        if len(col_indices) == 0 or row_stop == row_start:
+            return
+
+        if row_stop - row_start > 2:
+            # First compute using normal routine up to the first two rows, making
+            # sure to not truncate results (eps=0)
+            lmin = self.row_to_l(row_start)
+            lmax = self.row_to_l(row_stop - 1)
+            thetas = self.thetas[col_indices]
+            Lambda = compute_normalized_associated_legendre(self.m, thetas, lmax,
+                                                            epsilon=0).T[lmin - self.m::2, :]
+            # Ensure that numbers are safely representable as floating point for
+            # all thetas. The below would hopefully catch this but this is a more
+            # friendly report.
+            if np.any(np.abs(Lambda) < 1e-150):
+                raise NotImplementedError("TODO: Compression routine permuted columns too much")
+            # Use the Legendre-transform implementation to compute the last row
+            # of Lambda from the first two, to proove things are numerically
+            # stable for these starting values.
+            P = Lambda[0, :].copy()
+            Pp1 = Lambda[1, :].copy()
+            a = np.zeros((Lambda.shape[0], 2))
+            a[-1,:] = 1
+            y = np.zeros((Lambda.shape[1], 2)) * np.nan
+            x_squared = self.xs[col_indices]**2
+            associated_legendre_transform(self.m, lmin, a, y, x_squared,
+                                          P, Pp1, use_sse=True)
+            if np.linalg.norm(y[:, 0] - Lambda[-1, :]) > 1e-14:
+                raise Exception("Appears to have hit a numerically unstable case, should not happen")
+
+            auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
+
+            write_aligned_array(stream, x_squared)
+            write_aligned_array(stream, P)
+            write_aligned_array(stream, Pp1)
+            write_aligned_array(stream, auxdata)
+        else:
+            block = np.asfortranarray(self.get_block(row_start, row_stop, col_indices),
+                                      dtype=np.double)
+            write_array(stream, block)
 
 def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
                             eps, num_levels, logger=null_logger):

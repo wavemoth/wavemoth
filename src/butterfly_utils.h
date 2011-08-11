@@ -40,4 +40,24 @@ static inline void read_pointer_list(char **head, char **list, size_t n, char *b
   }
 }
 
+static char *skip_padding(char *ptr) {
+  size_t m = (size_t)ptr % 16;
+  if (m == 0) {
+    return ptr;
+  } else { 
+    return ptr + 16 - m;
+  }
+}
+
+static void skip128(char **ptr) {
+  *ptr = skip_padding(*ptr);
+}
+
+static double *read_aligned_array_d(char **ptr, size_t n) {
+  skip128(ptr);
+  double *r = (double*)*ptr;
+  *ptr += sizeof(double[n]);
+  return r;
+}
+
 #endif

@@ -184,15 +184,6 @@ static void print_array(char *msg, double* arr, bfm_index_t len) {
 }
 
 
-static INLINE char *skip_padding(char *ptr) {
-  size_t m = (size_t)ptr % 16;
-  if (m == 0) {
-    return ptr;
-  } else { 
-    return ptr + 16 - m;
-  }
-}
-
 /*
 Type implementations
 */

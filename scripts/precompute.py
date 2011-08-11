@@ -118,7 +118,7 @@ parser.add_argument('--stride', type=int, default=1,
                     help='Skip m values. Results will be incorrect, '
                     'but useful for benchmarks.')
 parser.add_argument('-m', type=int, default=None, help='Evaluate for a single m')
-parser.add_argument('-e', '--tolerance', type=float, default=1e-15,
+parser.add_argument('-e', '--tolerance', type=float, default=1e-12,
                     help='tolerance')
 parser.add_argument('-l', '--num-levels', type=int, default=None,
                     help='Number of levels of compression')

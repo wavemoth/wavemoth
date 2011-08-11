@@ -92,6 +92,7 @@ def build(bld):
     
     bld(target='fastsht',
         source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
+        includes=['src'],
         use='ATLAS FFTW3 OPENMP',
         features='c cshlib')
 

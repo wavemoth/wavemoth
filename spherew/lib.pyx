@@ -2,9 +2,14 @@ cimport numpy as np
 
 import os
 import numpy as np
+from io import BytesIO
+
+from concurrent.futures import ProcessPoolExecutor
 
 from butterfly import write_int64, pad128
 from butterfly import butterfly_compress, serialize_butterfly_matrix
+from utils import FakeExecutor
+
 
 np.import_array()
 
@@ -222,7 +227,7 @@ class NullLogger(object):
 null_logger = NullLogger()
 
 def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
-                            eps, logger=null_logger):
+                            eps, num_levels, logger=null_logger):
     """
     Writes the parts of the precomputed data that corresponds to
     the m given to stream. Present only to allow easy distribution
@@ -241,26 +246,47 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     tree = butterfly_compress(Lambda_subset, chunk_size=chunk_size, eps=eps)
     logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
     # Serialize the butterfly tree to the stream
-    serialize_butterfly_matrix(tree, Lambda_subset, stream=stream)
+    serialize_butterfly_matrix(tree, Lambda_subset, num_levels=num_levels, stream=stream)
+    return stream
 
 def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,
+                      num_levels=None, max_workers=None,
                       logger=null_logger, compute_matrix_func=compute_resources_for_m):
+    if max_workers == 1:
+        proc = FakeExecutor()
+    else:
+        # This keeps it all in memory, which speeds up unit testing, but is
+        # useless for large resolutions. TODO: Refactor precomputation into OO classes.
+        proc = ProcessPoolExecutor(max_workers=max_workers)
+
     write_int64(stream, lmax)
     write_int64(stream, mmax)
     write_int64(stream, Nside)
     header_pos = stream.tell()
     for i in range(4 * (mmax + 1)):
         write_int64(stream, 0)
+        
+    futures = []
+    header_slot_offsets = []
     for m in range(0, mmax + 1):
         for odd in [0, 1]:
-            pad128(stream)
-            start_pos = stream.tell()
-            compute_matrix_func(stream, m, odd, lmax, Nside, chunk_size, eps, logger)
-            end_pos = stream.tell()
-            stream.seek(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
-            write_int64(stream, start_pos)
-            write_int64(stream, end_pos - start_pos)
-            stream.seek(end_pos)
+            substream = BytesIO()
+            fut = proc.submit(compute_matrix_func, substream, m, odd, lmax, Nside,
+                              chunk_size, eps, num_levels, logger)
+            futures.append(fut)
+            header_slot_offsets.append(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
+
+    for fut, slot in zip(futures, header_slot_offsets):
+        pad128(stream)
+        start_pos = stream.tell()
+        stream.write(fut.result().getvalue())
+        end_pos = stream.tell()
+        stream.seek(slot)
+        write_int64(stream, start_pos)
+        write_int64(stream, end_pos - start_pos)
+        stream.seek(end_pos)
+
+
+        
         
     
-

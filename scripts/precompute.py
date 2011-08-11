@@ -36,10 +36,11 @@ class PrintLogger:
     def info(self, msg):
         print msg
 
-def compute_m(filename, m, odd, lmax, Nside, chunk_size=64, eps=1e-15):
+def compute_m(filename, m, odd, lmax, Nside, chunk_size, eps, num_levels):
     filename = '%s-%d' % (filename, os.getpid())
     stream = BytesIO()
-    compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, PrintLogger())
+    compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, num_levels,
+                            PrintLogger())
     # Store to HDF file for future concatenation
     stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
     f = tables.openFile(filename, 'a')
@@ -67,7 +68,7 @@ def compute_with_workers(args):
     for m in range(0, args.lmax + 1, args.stride):
         for odd in range(2):
             futures.append(proc.submit(compute_m, args.target, m, odd, args.lmax, args.Nside,
-                                       chunk_size=args.chunk_size, eps=args.tolerance))
+                                       args.chunk_size, args.tolerance, args.num_levels))
     for fut in futures:
         fut.result()
 
@@ -90,16 +91,17 @@ def serialize_from_hdf_files(args, target):
         
         try:
             def get_matrix(stream, m, odd, lmax, Nside, chunk_size,
-                           eps, logger):
+                           eps, num_levels, logger):
                 f, g = get_group(m, odd)
                 stream.write(g.matrix_data[:])
+                return stream
 
             f, g = get_group(0, 0)
             Nside = f.getNodeAttr(g, 'Nside')
             lmax = f.getNodeAttr(g, 'lmax')
             mmax = lmax
 
-            compute_resources(outfile, lmax, mmax, Nside, chunk_size=None,
+            compute_resources(outfile, lmax, mmax, Nside, chunk_size=None, max_workers=1,
                               eps=None, logger=None, compute_matrix_func=get_matrix)
         finally:
             for x in infiles:
@@ -118,6 +120,8 @@ parser.add_argument('--stride', type=int, default=1,
 parser.add_argument('-m', type=int, default=None, help='Evaluate for a single m')
 parser.add_argument('-e', '--tolerance', type=float, default=1e-15,
                     help='tolerance')
+parser.add_argument('-l', '--num-levels', type=int, default=None,
+                    help='Number of levels of compression')
 parser.add_argument('Nside', type=int, help='Nside parameter')
 parser.add_argument('target', help='target datafile')
 args = parser.parse_args()

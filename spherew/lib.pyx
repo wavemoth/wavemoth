@@ -279,7 +279,7 @@ class LegendreMatrixProvider(object):
             x_squared = self.xs[col_indices]**2
             associated_legendre_transform(self.m, lmin, a, y, x_squared,
                                           P, Pp1, use_sse=True)
-            if np.linalg.norm(y[:, 0] - Lambda[-1, :]) > 1e-14:
+            if np.linalg.norm(y[:, 0] - Lambda[-1, :]) > 1e-10:
                 raise Exception("Appears to have hit a numerically unstable case, should not happen")
 
             auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)

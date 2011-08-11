@@ -9,6 +9,7 @@ import os
 from nose import SkipTest
 from nose.tools import eq_, ok_, assert_raises
 from numpy.testing import assert_almost_equal
+from numpy.linalg import norm
 
 from cPickle import dumps, loads
 import hashlib
@@ -41,14 +42,17 @@ def teardown():
         os.unlink(f)
     del matrix_data_filenames[:]
 
-def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
-    if lmax is None:
-        lmax = 2 * Nside
-
+def make_matrix_data(Nside, lmax, chunk_size=4, eps=1e-10):
     fd, matrix_data_filename = mkstemp()
     matrix_data_filenames.append(matrix_data_filename) # schedule cleanup
     with file(matrix_data_filename, 'w') as f:
-        compute_resources(f, lmax, lmax, Nside, chunk_size=4, eps=1e-10)
+        compute_resources(f, lmax, lmax, Nside, chunk_size=chunk_size, eps=eps)
+    return matrix_data_filename
+
+def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
+    if lmax is None:
+        lmax = 2 * Nside
+    matrix_data_filename = make_matrix_data(Nside, lmax)
 
     input = np.zeros((((lmax + 1) * (lmax + 2)) // 2, nmaps), dtype=np.complex128)
     output = np.zeros((12*Nside**2, nmaps))
@@ -188,3 +192,39 @@ def test_healpix_phi0():
     phi0s = lib._get_healpix_phi0s(16)
     yield assert_almost_equal, phi0s, healpix.get_ring_phi0(16)
 
+def test_accuracy_against_psht():
+    "Test modes"
+    from spherew.psht import PshtMmajorHealpix
+
+    Nside = 32 # needed this much to get numerical errors at all
+    lmax = Nside
+    nmaps = 1
+
+    def test(eps):
+        input = np.zeros(((lmax + 1) * (lmax + 2) // 2, nmaps), dtype=np.complex128)
+        sht_output = np.zeros((12 * Nside**2, nmaps))
+        psht_output = np.zeros((12 * Nside**2, nmaps), order='F')
+        matrix_data_filename = make_matrix_data(Nside, lmax, chunk_size=5, eps=eps)
+        sht_plan = sht_plan = ShtPlan(Nside, lmax, lmax, input, sht_output, 'mmajor',
+                                      matrix_data_filename=matrix_data_filename)
+        psht_plan = PshtMmajorHealpix(lmax=lmax, Nside=Nside, nmaps=nmaps)
+        errors = []
+        # A few pure modes
+        for idx in range(100) + range(input.shape[0] - 100, input.shape[0]):
+            input[idx] = 1 + 2j
+            psht_plan.alm2map(input, psht_output)
+            sht_plan.execute()
+            input[idx] = 0
+            errors.append(norm(sht_output - psht_output) / norm(psht_output))
+
+        # Some random maps
+        for i in range(30):
+            input[...] = np.random.normal(size=input.shape)
+            psht_plan.alm2map(input, psht_output)
+            sht_plan.execute()
+            errors.append(norm(sht_output - psht_output) / norm(psht_output))
+
+        ok_(max(errors) < 10 * eps)
+
+    yield test, 1e-7
+    yield test, 1e-11

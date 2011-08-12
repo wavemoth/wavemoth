@@ -17,6 +17,7 @@ def options(opt):
                    '(NOTE: must be configured with --with-pic)')
     opt.add_option('--with-atlas-lib', help='path to ATLAS libs to use '
                    '(NOTE: must be configured with PIC)')
+    opt.add_option('--with-acml-lib', help='path to ACML libs to use')
     opt.add_option('--with-perftools', help='path to google-perftools'
                    '(NOTE: must be configured with PIC)')
     opt.add_option('--patched-libpsht', action='store_true',
@@ -59,13 +60,7 @@ def configure(conf):
     conf.check_libpsht()
     conf.check_fftw3()
     conf.check_google_perftools()
-    conf.check_atlas()
-
-#    conf.env.LIB_BLAS = ['goto2', 'gfortran']
-#    conf.env.LIBPATH_BLAS = conf.env.RPATH_BLAS = ['/home/dagss/code/GotoBLAS2']
-
-#    conf.env.LIB_MKLBLAS = 'mkl_intel_lp64 mkl_intel_thread mkl_core iomp5 pthread m'.split()
-#    conf.env.LIBPATH_MKLBLAS = conf.env.RPATH_MKLBLAS = ['/opt/intel/mkl/lib/intel64']
+    conf.check_blas()
 
     conf.env.LIB_RT = ['rt']
     conf.env.LIB_MKL = ['mkl_rt']
@@ -93,7 +88,7 @@ def build(bld):
     bld(target='fastsht',
         source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
         includes=['src'],
-        use='ATLAS FFTW3 OPENMP',
+        use='BLAS FFTW3 OPENMP',
         features='c cshlib')
 
     bld.add_manual_dependency(
@@ -158,7 +153,7 @@ def build(bld):
     bld(source=(['spherew/blas.pyx']),
         includes=['src'],
         target='blas',
-        use='NUMPY ATLAS',
+        use='NUMPY BLAS',
         features='c pyext cshlib')
     bld.add_manual_dependency(
         bld.path.find_resource('spherew/blas.pyx'),
@@ -177,7 +172,7 @@ def build(bld):
     bld(source=['bench/cpubench.c'],
         includes=['src'],
         target='cpubench',
-        use='ATLAS OPENMP',
+        use='BLAS OPENMP',
         features='cprogram c')
 
     bld(source=['bench/shbench.c'],
@@ -265,15 +260,24 @@ def check_fftw3(conf):
     conf.end_msg(prefix if prefix else True)
 
 @conf
-def check_atlas(conf):
+def check_blas(conf):
     """
-    Settings for ATLAS
+    Settings for BLAS
     """
-    conf.start_msg("Checking for ATLAS")
-    conf.env.LIB_ATLAS = 'f77blas atlas gfortran'.split()
-    path = conf.options.with_atlas_lib
-    if path:
-        conf.env.LIBPATH_ATLAS = path
+    conf.start_msg("Checking for BLAS")
+    path = []
+    if conf.options.with_acml_lib:
+        path = conf.options.with_acml_lib
+        conf.env.LIB_BLAS = 'acml acml_mv'.split()
+        name = 'ACML'
+    else:
+        conf.env.LIB_BLAS = 'f77blas atlas gfortran'.split()
+        path = conf.options.with_atlas_lib
+        name = 'ATLAS'
+        
+    conf.env.LIBPATH_BLAS = path
+    conf.env.RPATH_BLAS = path
+            
     cfrag = dedent('''\
     void dgemm_(void); /* just check existence of symbol through compilation*/
     int main() {
@@ -284,8 +288,8 @@ def check_atlas(conf):
         fragment=cfrag,
         features = 'c',
         compile_filename='test.c',
-        use='ATLAS')
-    conf.end_msg(path if path else True)
+        use='BLAS')
+    conf.end_msg('%s at %s' % (name, path if path else '(default path)'))
 
 @conf
 def check_google_perftools(conf):

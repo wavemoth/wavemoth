@@ -749,8 +749,8 @@ def serialize_butterfly_matrix(root, matrix_provider, num_levels=None, stream=No
     
     write_int32(stream, forest[0].nrows)
     write_int32(stream, root.ncols)
-    write_int32(stream, root.get_k_max())
-    write_int32(stream, root.get_nblocks_max())
+    write_int32(stream, k_max)
+    write_int32(stream, nblocks_max)
     write_int64(stream, root.size())
     write_int32(stream, root_count)
     write_int32(stream, len(heap))

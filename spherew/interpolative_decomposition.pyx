@@ -59,7 +59,7 @@ def sparse_interpolative_decomposition(np.ndarray[double, ndim=2] A,
     """
 
     cdef int m, n, krank
-    cdef np.ndarray[double, ndim=2, mode='fortran'] buf
+    cdef np.ndarray[double, ndim=2] buf
     cdef np.ndarray[int, mode='fortran'] ilist
     cdef np.ndarray[double, mode='fortran'] rnorms
 

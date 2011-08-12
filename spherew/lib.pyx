@@ -249,49 +249,76 @@ class LegendreMatrixProvider(object):
             return np.zeros((row_stop - row_start, len(col_indices)))
 
     def serialize_block_payload(self, stream, row_start, row_stop, col_indices):
+        if len(col_indices) == 0:
+            # Zero case
+            pad128(stream)
+            write_int64(stream, 0)
+            write_int64(stream, 0)
+            return
+
+        # Use Legendre transform code
+        
+        # Our task is to find rows that are suitable to start the recursion
+        # with -- since some of the blocks will contain data that is not representable
+        # in the exponent of double precision floats.
+
+        # First compute using normal routine up to the first two rows, making
+        # sure to not truncate results this time around (eps=0)
+        lmin = self.row_to_l(row_start)
+        lmax = self.row_to_l(row_stop - 1)
+        thetas = self.thetas[col_indices]
+        Lambda = compute_normalized_associated_legendre(self.m, thetas, lmax,
+                                                        epsilon=0).T[lmin - self.m::2, :]
+        # Then, remove rows on top until we find a row containing an
+        # element larger than 1e-30
+        i = 0
+        while i < Lambda.shape[0] and np.all(np.abs(Lambda[i, :]) < 1e-30):
+            i += 1
+            lmin += 2
+        row_start += i
+        Lambda = Lambda[i:, :]
+
+        if row_stop - row_start <= 4:
+            # The size of the auxiliary and initialization data is the same
+            # as just saving the matrix, so we fall back to matrix multiplication.
+            block = np.asfortranarray(Lambda, dtype=np.double)
+            pad128(stream)
+            write_int64(stream, row_start)
+            write_int64(stream, row_stop)
+            write_array(stream, block)
+            return
+
+        # Now, we just hope that no other elements on the same row are hopelessly
+        # small. This appears to be true. If this assumption is violated at some
+        # point, we must break up into smaller Legendre transforms, potentially
+        # with extra permutations.
+        if np.any(np.abs(Lambda) < 1e-150):
+            raise NotImplementedError("TODO: Break up legendre transforms into smaller blocks."
+                                      "NOTE!: Please make a note of parameters used to trigger this "
+                                      "case!!!")
+        # Use the Legendre-transform implementation to compute the last row
+        # of Lambda from the first two, to proove things are numerically
+        # stable for these starting values.
+        P = Lambda[0, :].copy()
+        Pp1 = Lambda[1, :].copy()
+        a = np.zeros((Lambda.shape[0], 2))
+        a[-1,:] = 1
+        y = np.zeros((Lambda.shape[1], 2)) * np.nan
+        x_squared = self.xs[col_indices]**2
+        associated_legendre_transform(self.m, lmin, a, y, x_squared,
+                                      P, Pp1, use_sse=True)
+        if np.linalg.norm(y[:, 0] - Lambda[-1, :]) > 1e-14:
+            raise Exception("Appears to have hit a numerically unstable case, should not happen")
+
+        auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
+
         pad128(stream)
         write_int64(stream, row_start)
         write_int64(stream, row_stop)
-        if len(col_indices) == 0 or row_stop == row_start:
-            return
-
-        if row_stop - row_start > 2:
-            # First compute using normal routine up to the first two rows, making
-            # sure to not truncate results (eps=0)
-            lmin = self.row_to_l(row_start)
-            lmax = self.row_to_l(row_stop - 1)
-            thetas = self.thetas[col_indices]
-            Lambda = compute_normalized_associated_legendre(self.m, thetas, lmax,
-                                                            epsilon=0).T[lmin - self.m::2, :]
-            # Ensure that numbers are safely representable as floating point for
-            # all thetas. The below would hopefully catch this but this is a more
-            # friendly report.
-            if np.any(np.abs(Lambda) < 1e-150):
-                raise NotImplementedError("TODO: Compression routine permuted columns too much")
-            # Use the Legendre-transform implementation to compute the last row
-            # of Lambda from the first two, to proove things are numerically
-            # stable for these starting values.
-            P = Lambda[0, :].copy()
-            Pp1 = Lambda[1, :].copy()
-            a = np.zeros((Lambda.shape[0], 2))
-            a[-1,:] = 1
-            y = np.zeros((Lambda.shape[1], 2)) * np.nan
-            x_squared = self.xs[col_indices]**2
-            associated_legendre_transform(self.m, lmin, a, y, x_squared,
-                                          P, Pp1, use_sse=True)
-            if np.linalg.norm(y[:, 0] - Lambda[-1, :]) > 1e-10:
-                raise Exception("Appears to have hit a numerically unstable case, should not happen")
-
-            auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
-
-            write_aligned_array(stream, x_squared)
-            write_aligned_array(stream, P)
-            write_aligned_array(stream, Pp1)
-            write_aligned_array(stream, auxdata)
-        else:
-            block = np.asfortranarray(self.get_block(row_start, row_stop, col_indices),
-                                      dtype=np.double)
-            write_array(stream, block)
+        write_aligned_array(stream, x_squared)
+        write_aligned_array(stream, P)
+        write_aligned_array(stream, Pp1)
+        write_aligned_array(stream, auxdata)
 
 def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
                             eps, num_levels, logger=null_logger):

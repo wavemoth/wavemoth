@@ -518,7 +518,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
 
   input += row_start * nvecs;
 
-  if (nk <= 2 || start == stop) {
+  if (nk <= 4 || start == stop) {
     double *A = (double*)payload;
     dgemm_ccc(input, A, buf,
               nvecs, stop - start, row_stop - row_start, 0.0);

@@ -19,7 +19,7 @@ import tables
 
 from spherew.butterfly import *
 from spherew.healpix import *
-from spherew.fastsht import *
+from spherew.lib import *
 from spherew.benchmark_utils import *
 from spherew import *
 from io import BytesIO

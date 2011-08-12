@@ -531,8 +531,8 @@ class InnerNode(object):
             format_numbytes(compressed_size * 8),
             format_numbytes(interpolative_matrices_size * 8),
             format_numbytes(residual_size * 8),
-            compressed_size / uncompressed_size,
-            residual_size / compressed_size)
+            compressed_size / uncompressed_size if uncompressed_size != 0 else -1,
+            residual_size / compressed_size if uncompressed_size != 0 else -1)
 
 
 def permutations_to_filter(alst, blst):

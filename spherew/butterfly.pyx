@@ -194,6 +194,9 @@ class IdentityNode(object):
     def get_k_max(self):
         return self.ncols
 
+    def get_nodes_at_level(self, level):
+        raise ValueError("level too high")
+
     def get_nblocks_max(self):
         return 1
 
@@ -288,7 +291,7 @@ class InterpolationBlock(object):
         return out
 
     def size(self):
-        return np.prod(self.interpolant.shape)
+        return np.prod(self.interpolant.shape) + len(self.filter)
 
 RemainderBlockInfo = namedtuple('RemainderBlockInfo',
                                 'row_start row_stop col_indices')
@@ -339,6 +342,12 @@ class InnerNode(object):
 
     def get_nblocks_max(self):
         return len(self.block_heights)
+
+    def get_nodes_at_level(self, level):
+        if level == 0:
+            return [self]
+        else:
+            return sum([child.get_nodes_at_level(level - 1) for child in self.children], [])
 
     def __repr__(self):
         return '<InnerNode %dx%d|%dx%d block_heights=%r>' % (
@@ -493,22 +502,37 @@ class InnerNode(object):
             A = np.dot(A, M)
         return A
 
-    def get_stats(self):
+    def get_stats(self, level=0, residual_size_func=int.__mul__):
+        """
+        Returns (uncompressed_size, interpolative_matrices_size, residual_size),
+        all in number of elements.
+        """
         # Todo: rename to __repr__ or something...
         if self.nrows == 0 or self.ncols == 0:
-            return "empty"
-        residual_size = sum((stop - start) * len(cols)
-                            for start, stop, cols in self.remainder_blocks)
-        size = self.size()
-        dense = self.nrows * self.ncols
-        return "%.2f -> %s (%.2f -> %s Plms), blocks=%d+%d" % (
-            size / dense,
-            format_numbytes(size * 8),
-            residual_size / size,
+            return (0, 0, 0)
+        elif level == self.get_max_depth():
+            size = residual_size_func(self.nrows, self.ncols)
+            return (size, 0, size)
+        nodes = self.get_nodes_at_level(level)
+        uncompressed_size = self.nrows * self.ncols
+        residual_size = 0
+        interpolative_matrices_size = 0
+        for node in nodes:
+            residual_size += sum([residual_size_func(stop - start, len(cols))
+                                  for start, stop, cols in node.remainder_blocks])
+            interpolative_matrices_size += node.size()
+        return (uncompressed_size, interpolative_matrices_size, residual_size)
+
+    def format_stats(self, level=0, residual_size_func=int.__mul__):
+        uncompressed_size, interpolative_matrices_size, residual_size = self.get_stats(level)
+        compressed_size = interpolative_matrices_size + residual_size
+        return "%s->%s=%s + %s (compression=%.2f, residual=%.2f)" % (
+            format_numbytes(uncompressed_size * 8),
+            format_numbytes(compressed_size * 8),
+            format_numbytes(interpolative_matrices_size * 8),
             format_numbytes(residual_size * 8),
-            len(self.remainder_blocks),
-            self.count_blocks()
-            )
+            compressed_size / uncompressed_size,
+            residual_size / compressed_size)
 
 
 def permutations_to_filter(alst, blst):

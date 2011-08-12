@@ -250,8 +250,28 @@ def test_transpose_apply_tree_generated():
     
 
 #
-# Butterfly compression
+# Butterfly compression & stats
 #
+
+def test_stats():
+    A = ndrange((100, 100), start = 1)
+    root = butterfly_compress(A, chunk_size=3)
+    # get_nodes_at_level
+    eq_(6, root.get_max_depth())
+    for l in range(6):
+        eq_(2**l, len(root.get_nodes_at_level(l)))
+    assert_raises(ValueError, root.get_nodes_at_level, 7)
+
+    # get_stats
+    # Simply check that each level of compression compresses more of the residual.
+    raw, ip, res = root.get_stats(0)
+    for l in range(1, 6):
+        a, b, c = root.get_stats(l)
+        ok_(a == raw)
+        ok_(b <= ip)
+        ok_(c >= res)
+        ip, res = b, c
+    ok_(root.get_stats(6) == (raw, 0, raw))
 
 def test_tree_to_matrices():
     S1 = InnerNode([(InterpolationBlock([0, 0, 1], [[10], [100]]),

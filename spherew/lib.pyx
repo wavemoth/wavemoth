@@ -336,7 +336,8 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     nk = (lmax - m - odd) // 2 + 1
     tree = butterfly_compress(provider, shape=(nk, provider.ncols_full_matrix),
                               chunk_size=chunk_size, eps=eps)
-    logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.get_stats()))
+    logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.format_stats(
+        tree.get_max_depth() - num_levels)))
     # Serialize the butterfly tree to the stream
     serialize_butterfly_matrix(tree, provider, num_levels=num_levels, stream=stream)
     return stream

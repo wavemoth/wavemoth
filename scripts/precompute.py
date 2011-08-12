@@ -36,24 +36,37 @@ class PrintLogger:
     def info(self, msg):
         print msg
 
+_aborted = False
+
 def compute_m(filename, m, odd, lmax, Nside, chunk_size, eps, num_levels):
-    filename = '%s-%d' % (filename, os.getpid())
-    stream = BytesIO()
-    compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, num_levels,
-                            PrintLogger())
-    # Store to HDF file for future concatenation
-    stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
-    f = tables.openFile(filename, 'a')
+    global _aborted
+    if _aborted:
+        return
     try:
-        group = f.createGroup('/m%d' % m, ['even', 'odd'][odd],
-                              createparents=True)
-        f.setNodeAttr(group, 'lmax', lmax)
-        f.setNodeAttr(group, 'm', m)
-        f.setNodeAttr(group, 'odd', odd)
-        f.setNodeAttr(group, 'Nside', Nside)
-        f.createArray(group, 'matrix_data', stream_arr)
-    finally:
-        f.close()
+        filename = '%s-%d' % (filename, os.getpid())
+        stream = BytesIO()
+        compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size, eps, num_levels,
+                                PrintLogger())
+        # Store to HDF file for future concatenation
+        stream_arr = np.frombuffer(stream.getvalue(), dtype=np.byte)
+        f = tables.openFile(filename, 'a')
+        try:
+            group = f.createGroup('/m%d' % m, ['even', 'odd'][odd],
+                                  createparents=True)
+            f.setNodeAttr(group, 'lmax', lmax)
+            f.setNodeAttr(group, 'm', m)
+            f.setNodeAttr(group, 'odd', odd)
+            f.setNodeAttr(group, 'Nside', Nside)
+            f.createArray(group, 'matrix_data', stream_arr)
+        finally:
+            f.close()
+    except KeyboardInterrupt:
+        _aborted = True
+    except:
+        import traceback
+        traceback.print_exc()
+        _aborted = True
+        raise
 
 def compute_with_workers(args):
     # Delete all files matching target-*

@@ -437,11 +437,11 @@ void bfm_destroy_plan(bfm_plan *plan) {
 struct _bfm_transpose_apply_context {
   bfm_plan *plan;
   pull_func_t pull_func;
-  push_func_t push_func;
   void *caller_ctx;
   char *matrix_data;
   char **node_heap;
   char **residual_payload_headers;
+  double *target;
   int current_root_idx;
   int add_push;
 };
@@ -483,6 +483,22 @@ static void transpose_apply_interpolation_block(
   bfm_scatter(mask, output_left, output_right, y_buf, n_left, n_right, nvecs, 1, should_add);
 }
 
+static void copy_vectors(double *input, double *target, size_t target_start, size_t target_stop,
+                         size_t nvecs, int should_add) {
+  size_t i;
+  size_t n = (target_stop - target_start) * nvecs;
+  target += target_start * nvecs;
+  if (should_add) {
+    for (i = 0; i != n; ++i) {
+      target[i] += input[i];
+    }
+  } else {
+    for (i = 0; i != n; ++i) {
+      target[i] = input[i];
+    }
+  }
+}
+
 static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
                                    size_t inode,
                                    size_t target_start,
@@ -504,20 +520,22 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
   }
 
   if (nblocks == 0) {
-    /* Leaf node, simply push buffer to output vectors */
+    /* Leaf node, simply push buffer to output vectors. */
     size_t n = read_index(&node_data);
+    size_t target_stop = target_start + n;
     if (is_root) {
-      input_block = acquire_vector_chunk(plan);
-      assert(n <= plan->k_max);
-      ctx->pull_func(input_block, 0, n, plan->nvecs, payloads[0],
+      /* Simply stream data straight through */
+      assert(!ctx->add_push); /* TODO Do something sane */
+      ctx->pull_func(ctx->target, target_start, target_stop, plan->nvecs, payloads[0],
                      payloads[1] - payloads[0], ctx->caller_ctx);
     } else {
+      /* TODO: Avoid this copy at leafs, go straight to target in the nblocks=2 case */
       input_block = input_blocks[0];
+      copy_vectors(input_block, ctx->target, target_start, target_stop, plan->nvecs,
+                   ctx->add_push);
+      release_vector_chunk(plan, input_block);
     }
-    ctx->push_func(input_block, target_start, target_start + n, plan->nvecs,
-                   ctx->add_push, ctx->caller_ctx);
-    release_vector_chunk(plan, input_block);
-    return target_start + n;
+    return target_stop;
   } else {
     bfm_index_t *block_heights = (bfm_index_t*)node_data;
     node_data += sizeof(bfm_index_t[nblocks]);
@@ -529,7 +547,7 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
            (nleft == nblocks / 2 && nright == nblocks / 2));
     bfm_index_t *left_child_block_heights = (bfm_index_t*)left_child_data;
     bfm_index_t *right_child_block_heights = (bfm_index_t*)right_child_data;
-    
+
     /* Process interpolation nodes. */
     size_t input_pos = 0; /* only used if is_root */
     double *out_left_list[nblocks / 2], *out_right_list[nblocks / 2];
@@ -575,15 +593,16 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
 int bfm_transpose_apply_d(bfm_plan *plan,
                           char *matrix_data,
                           pull_func_t pull_func,
-                          push_func_t push_func,
+                          double *target,
+                          size_t target_len,
                           void *caller_ctx) {
   bfm_transpose_apply_context ctx;
   bfm_matrix_data_info info;
   char *head = matrix_data;
   ctx.caller_ctx = caller_ctx;
   ctx.pull_func = pull_func;
-  ctx.push_func = push_func;
   ctx.matrix_data = matrix_data;
+  ctx.target = target;
   ctx.plan = plan;
   check((size_t)matrix_data % 16 == 0, "matrix_data not 128-bit aligned");
   
@@ -596,6 +615,9 @@ int bfm_transpose_apply_d(bfm_plan *plan,
      incorporates the subtraction of the first index.
   */
   head = bfm_query_matrix_data(head, &info);
+
+  check(target_len == plan->nvecs * info.ncols, "target_len does not match ncols * nvecs");
+
 
   /* Read residual matrix payload data */
   char *residual_payload_headers[info.first_level_size];

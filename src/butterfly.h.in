@@ -139,7 +139,8 @@ void bfm_destroy_plan(bfm_plan *plan);
 int bfm_transpose_apply_d(bfm_plan *plan,
                           char *matrix_data,
                           pull_func_t pull_func,
-                          push_func_t push_func,
+                          double *target,
+                          size_t target_len,
                           void *caller_ctx);
 
 typedef struct {

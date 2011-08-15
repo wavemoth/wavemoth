@@ -38,7 +38,8 @@ cdef extern from "butterfly.h":
     int bfm_transpose_apply_d(bfm_plan *plan,
                               char *matrix_data,
                               pull_func_t pull_func,
-                              push_func_t push_func,
+                              double *target,
+                              size_t target_len,
                               void *caller_ctx)
     
     ctypedef struct bfm_matrix_data_info:
@@ -63,14 +64,10 @@ cdef void pull_input_callback(double *buf, size_t start, size_t stop, size_t nve
     (<ButterflyPlan>_ctx).transpose_pull_input(buf, start, stop, nvecs,
                                                payload, payload_len)
 
-cdef void push_output_callback(double *buf, size_t start, size_t stop, size_t nvecs,
-                               int should_add, void *_ctx):
-    (<ButterflyPlan>_ctx).transpose_push_output(buf, start, stop, nvecs, should_add)
-
 cdef class ButterflyPlan:
     cdef bfm_plan *plan
     cdef size_t nvecs
-    cdef object input_array, output_array
+    cdef np.ndarray input_array, output_array
     
     def __cinit__(self, k_max, nblocks_max, nvecs):
         self.plan = bfm_create_plan(k_max, nblocks_max, nvecs)
@@ -103,7 +100,9 @@ cdef class ButterflyPlan:
             else:
                 buf = <char*>matrix_data
             ret = bfm_transpose_apply_d(self.plan, buf,
-                                        &pull_input_callback, &push_output_callback,
+                                        &pull_input_callback,
+                                        <double*>self.output_array.data,
+                                        self.output_array.shape[0] * self.output_array.shape[1],
                                         <void*>self)
             if ret != 0:
                 raise Exception("bfm_transpose_apply_d returned %d" % ret)
@@ -112,21 +111,6 @@ cdef class ButterflyPlan:
             if need_realign:
                 free(buf)
         return output_array
-
-    cdef transpose_push_output(self, double *buf, size_t start, size_t stop, size_t nvecs,
-                               int should_add):
-        cdef np.ndarray[double, ndim=2] output = self.output_array
-        cdef size_t i, j, idx = 0
-        if should_add:
-            for i in range(start, stop):
-                for j in range(nvecs):
-                    output[i, j] += buf[idx]
-                    idx += 1
-        else:
-            for i in range(start, stop):
-                for j in range(nvecs):
-                    output[i, j] = buf[idx]
-                    idx += 1
 
     cdef transpose_pull_input(self, double *buf, size_t start, size_t stop, size_t nvecs,
                               char *payload, size_t payload_len):
@@ -782,7 +766,7 @@ def serialize_butterfly_matrix(root, matrix_provider, num_levels=None, stream=No
     for r in forest:
         if r.nrows != forest[0].nrows:
             assert False
-    k_max = max([r.get_k_max() for r in forest])
+    k_max = 0 if tree_depth == 0 else max([r.get_k_max() for r in forest])
     nblocks_max = max([r.get_nblocks_max() for r in forest])
     
     write_int32(stream, forest[0].nrows)

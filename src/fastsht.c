@@ -453,7 +453,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
           q_list[2 * i_m + odd] = work;
           rec = plan->resources->P_matrices + 2 * m + odd;
           check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
-          fastsht_perform_matmul(plan, m, odd, work_a_l, work);
+          fastsht_perform_matmul(plan, m, odd, nrings_half, work_a_l, work);
         }
       }
       /* Mark m's that are skipped/beyond the end with -1. This
@@ -487,28 +487,7 @@ void fastsht_execute(fastsht_plan plan) {
 
 typedef struct {
   double *input;
-  double *output;
 } transpose_apply_ctx_t;
-
-void push_q(double *buf, size_t start, size_t stop,
-            size_t nvecs, int should_add, void *ctx) {
-  double *output = ((transpose_apply_ctx_t*)ctx)->output;
-
-  size_t i, j, idx = 0;
-  if (should_add) {
-    for (i = start; i != stop; ++i) {
-      for (j = 0; j != nvecs; ++j) {
-        output[i * nvecs + j] += buf[idx++];
-      }
-    }
-  } else {
-    for (i = start; i != stop; ++i) {
-      for (j = 0; j != nvecs; ++j) {
-        output[i * nvecs + j] = buf[idx++];
-      }
-    }
-  }
-}
 
 void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                    size_t nvecs, char *payload, size_t payload_len,
@@ -539,7 +518,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
 }
 
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
+void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,
                             double complex *work_a_l, double complex *output) {
   bfm_index_t nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
   double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
@@ -552,11 +531,12 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
     }
     ++nrows;
   }
-  transpose_apply_ctx_t ctx = { (double*)work_a_l, (double*)output };
+  transpose_apply_ctx_t ctx = { (double*)work_a_l };
   int ret = bfm_transpose_apply_d(plan->bfm_plans[omp_get_thread_num()],
                                   rec->matrix_data,
                                   pull_a_through_legendre_block,
-                                  push_q,
+                                  (double*)output,
+                                  ncols * 2 * plan->nmaps,
                                   &ctx);
   checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);
 }

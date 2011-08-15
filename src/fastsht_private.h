@@ -50,7 +50,7 @@ struct _fastsht_plan {
   bfm_plan **bfm_plans;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd,
+void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,
                             double complex *work_a_l, double complex *output);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 void fastsht_assemble_rings(fastsht_plan plan,

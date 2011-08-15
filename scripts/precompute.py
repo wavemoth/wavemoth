@@ -132,7 +132,7 @@ def main(args):
 parser = argparse.ArgumentParser(description='Precomputation')
 parser.add_argument('-c', '--chunk-size', type=int, default=64,
                     help='chunk size in number of columns')
-parser.add_argument('-m', '--memop-cost', type=float, default=10,
+parser.add_argument('-m', '--memop-cost', type=float, default=20,
                     help='cost to assign to memop vs. flop')
 parser.add_argument('-j', '--parallel', type=int, default=8,
                     help='how many processors to use for precomputation')

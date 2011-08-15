@@ -182,12 +182,25 @@ def pad128(stream):
     if m != 0:
         stream.write(b'\0' * (16 - m))
 
-class IdentityNode(object):
+class Node(object):
+    def format_stats(self, level=None, residual_size_func=int.__mul__):
+        uncompressed_size, interpolative_matrices_size, residual_size = self.get_stats(level)
+        compressed_size = interpolative_matrices_size + residual_size
+        return "%s->%s=%s + %s (compression=%.2f, residual=%.2f)" % (
+            format_numbytes(uncompressed_size * 8),
+            format_numbytes(compressed_size * 8),
+            format_numbytes(interpolative_matrices_size * 8),
+            format_numbytes(residual_size * 8),
+            compressed_size / uncompressed_size if uncompressed_size != 0 else 1,
+            residual_size / compressed_size if uncompressed_size != 0 else 1)
+
+class IdentityNode(Node):
     def __init__(self, n, remainder_blocks=None):
-        self.ncols = self.nrows = self.node_ncols = self.node_nrows = n
+        self.ncols = self.node_ncols = self.node_nrows = n
         self.block_heights = [n]
         if remainder_blocks is None:
             remainder_blocks = [RemainderBlockInfo(0, n, np.asarray([]))]
+        self.nrows = remainder_blocks[0].row_stop - remainder_blocks[0].row_start
         self.remainder_blocks = remainder_blocks
         self.children = []
 
@@ -225,8 +238,13 @@ class IdentityNode(object):
     def transpose_apply_interpolations(self, x):
         return x
 
-    def get_stats(self):
-        return repr(self)
+    def get_stats(self, level=None, residual_size_func=int.__mul__):
+        if level not in (0, None):
+            raise ValueError("level to high")
+        size = residual_size_func(self.nrows, self.ncols)
+        return (size, 0, size)
+
+    
 
 def unroll_pairs(pairs):
     result = []
@@ -296,7 +314,7 @@ class InterpolationBlock(object):
 RemainderBlockInfo = namedtuple('RemainderBlockInfo',
                                 'row_start row_stop col_indices')
 
-class InnerNode(object):
+class InnerNode(Node):
     
     def __init__(self, blocks, children, remainder_blocks=None):
         if 2**int(np.log2(len(blocks))) != len(blocks):
@@ -527,17 +545,6 @@ class InnerNode(object):
             interpolative_matrices_size += node.size()
         return (uncompressed_size, interpolative_matrices_size, residual_size)
 
-    def format_stats(self, level=None, residual_size_func=int.__mul__):
-        uncompressed_size, interpolative_matrices_size, residual_size = self.get_stats(level)
-        compressed_size = interpolative_matrices_size + residual_size
-        return "%s->%s=%s + %s (compression=%.2f, residual=%.2f)" % (
-            format_numbytes(uncompressed_size * 8),
-            format_numbytes(compressed_size * 8),
-            format_numbytes(interpolative_matrices_size * 8),
-            format_numbytes(residual_size * 8),
-            compressed_size / uncompressed_size if uncompressed_size != 0 else -1,
-            residual_size / compressed_size if uncompressed_size != 0 else -1)
-
 
 def permutations_to_filter(alst, blst):
     filter = np.zeros(len(alst) + len(blst), dtype=np.int8)
@@ -740,10 +747,9 @@ def serialize_node(stream, node):
         for T_ip, B_ip in node.blocks:
             serialize_interpolation_block(T_ip)
             serialize_interpolation_block(B_ip)
-        
     elif isinstance(node, IdentityNode):
         write_index_t(stream, 0)
-        write_index_t(stream, node.nrows)
+        write_index_t(stream, node.ncols)
     else:
         raise AssertionError()
     
@@ -760,7 +766,11 @@ def serialize_butterfly_matrix(root, matrix_provider, num_levels=None, stream=No
     if num_levels is None:
         num_levels = tree_depth
     elif num_levels == 0:
-        raise NotImplementedError() # does not work with leaf nodes at root
+        # Construct new noop tree
+        nrows, ncols = root.nrows, root.ncols
+        root = IdentityNode(ncols, remainder_blocks=[
+            RemainderBlockInfo(0, nrows, np.arange(ncols))])
+        tree_depth = num_levels = 0
 
     skip_levels = max(0, tree_depth - num_levels)
 

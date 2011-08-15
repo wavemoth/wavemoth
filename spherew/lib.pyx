@@ -348,9 +348,8 @@ class ResourceComputer:
                                   chunk_size=self.chunk_size, eps=self.eps)
         # Drop levels of compression until residual size is 70% or more
         depth = tree.get_max_depth()
-        costs = np.zeros(depth)
-        costs[0] = 1e300 # TODO: Support level 0
-        for level in range(1, depth):
+        costs = np.zeros(depth + 1)
+        for level in range(depth + 1):
             total, ip, res = tree.get_stats(level, self.residual_cost)
             costs[level] = ip + res
         best_level = costs.argmin()

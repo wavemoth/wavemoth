@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 from concurrent.futures import ProcessPoolExecutor#, ThreadPoolExecutor
 from spherew.utils import FakeExecutor
 
-Nside = 512
+Nside = 2048
 lmax = 2 * Nside
 epsilon_legendre = 1e-30
 epsilon_butterfly = 1e-10
@@ -25,15 +25,19 @@ odd = 0
 
 nodes = get_ring_thetas(Nside, positive_only=True)
 
-#m=0
+m=0
 #roots = associated_legendre_roots(lmax, m)
 #nodes = np.arccos(roots)
 
-ms = [0]#, 1000]
-Cs = [80]#range(5, 20, 2)
+
+ms = [0, 1000, 2000, 3000]#, 1000]
+Cs = [64]#range(100, 150)
 
 def residual_size_func(m, n):
     return min(3 * m + 3 * n, m * n)
+
+def residual_flop_func(m, n):
+    return m * n * (5/2 + 2) * 0.05 # Cost of flops 0.1 that of memops
 
 def doit(m, chunk_size):
     P = compute_normalized_associated_legendre(m, nodes, lmax, epsilon=epsilon_legendre)
@@ -41,17 +45,17 @@ def doit(m, chunk_size):
     x = butterfly_compress(P, chunk_size, eps=epsilon_butterfly)
 
     stats_list = []
-    for level in range(x.get_max_depth() + 1):
-        flop_stats = x.get_stats(level)
+    for level in range(x.get_max_depth(), -1, -1):
+        flop_stats = x.get_stats(level, residual_flop_func)
         mem_stats = x.get_stats(level, residual_size_func)
         stats_list.append(flop_stats + mem_stats[1:])
-        print 'm=%d,l=%d %s' % (m, level, x.format_stats(level, residual_size_func))
-    return np.asarray(stats_list)[::-1, :]
+        #print 'm=%d,l=%d %s' % (m, level, x.format_stats(level, residual_size_func))
+    return np.asarray(stats_list)
 
 results = np.zeros((len(ms), len(Cs)), dtype=object)
 
-proc = FakeExecutor()
-#proc = ProcessPoolExecutor(max_workers=4)
+#proc = FakeExecutor()
+proc = ProcessPoolExecutor(max_workers=4)
 futures = []
 subdivs = []
 for m in ms:
@@ -74,24 +78,31 @@ if 1:
         total, flopip, flopres, memip, memres = stats.T
         
         plt.plot((flopip + flopres) / total, label="lmax=%d, m=%d, C=%d" % (lmax, m, Cs[0]),
-                 color='blue')
-        plt.plot(flopres / total, linestyle='dotted', color='blue')
+                 color=c)
+#        plt.plot(flopres / total, linestyle='dotted', color='blue')
 
         plt.plot((memip + memres) / total, label="lmax=%d, m=%d, C=%d" % (lmax, m, Cs[0]),
-                 color='red')
-        plt.plot(memres / total, linestyle='dotted', color='red')
+                 color=c, linestyle='dotted')
+#        plt.plot(memres / total, linestyle='dotted', color='red')
         plt.legend()
+        print (flopip + flopres).argmin()
 
     plt.gca().set_ylim((0, 1))
     plt.gca().set_xlim((0, 10))
 else:
     # Compare chunksizes
+    level = 2
     for idx, m in enumerate(ms):
-        data = []
-        for s, _, _ in results[idx, :]:
-            data.append(s)
-        plt.plot(Cs, data, label=str(m))
+        floplist = []
+        memlist = []
+        for stats in results[idx, :]:
+            total, flopip, flopres, memip, memres  = stats.T
+            floplist.append((flopip[level] + flopres[level]) / total[level])
+            memlist.append((memip[level] + memres[level]) / total[level])
+        plt.plot(Cs, floplist, label=str(m), color='blue')
+        plt.plot(Cs, memlist, label=str(m), color='red')
+    plt.gca().set_ylim((0, 1))
 
     plt.legend(loc='upper left')
-    plt.gca().set_ylim((0, 1))
+
 

@@ -322,6 +322,9 @@ class LegendreMatrixProvider(object):
         write_aligned_array(stream, Pp1)
         write_aligned_array(stream, auxdata)
 
+def residual_flop_func(m, n):
+    return m * n * (5/2 + 2) * 0.05
+
 def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
                             eps, num_levels, logger=null_logger):
     """
@@ -336,10 +339,19 @@ def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
     nk = (lmax - m - odd) // 2 + 1
     tree = butterfly_compress(provider, shape=(nk, provider.ncols_full_matrix),
                               chunk_size=chunk_size, eps=eps)
-    logger.info('Computed m=%d of %d: %s' % (m, lmax, tree.format_stats(
-        tree.get_max_depth() - num_levels)))
+    # Drop levels of compression until residual size is 70% or more
+    depth = tree.get_max_depth()
+    costs = np.zeros(depth)
+    costs[0] = 1e300 # TODO: Support level 0
+    for level in range(1, depth):
+        total, ip, res = tree.get_stats(level, residual_flop_func)
+        costs[level] = ip + res
+    best_level = costs.argmin()
+    logger.info('Computed m=%d of %d, level=%d: %s' % (m, lmax, best_level,
+                                                       tree.format_stats(
+                                                           best_level)))
     # Serialize the butterfly tree to the stream
-    serialize_butterfly_matrix(tree, provider, num_levels=num_levels, stream=stream)
+    serialize_butterfly_matrix(tree, provider, num_levels=best_level, stream=stream)
     return stream
 
 def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,

@@ -502,18 +502,22 @@ class InnerNode(object):
             A = np.dot(A, M)
         return A
 
-    def get_stats(self, level=0, residual_size_func=int.__mul__):
+    def get_stats(self, level=None, residual_size_func=int.__mul__):
         """
         Returns (uncompressed_size, interpolative_matrices_size, residual_size),
         all in number of elements.
         """
+        depth = self.get_max_depth()
+        if level is None:
+            level = depth
+        skip_levels = depth - level
         # Todo: rename to __repr__ or something...
         if self.nrows == 0 or self.ncols == 0:
             return (0, 0, 0)
-        elif level == self.get_max_depth():
+        elif level == 0:
             size = residual_size_func(self.nrows, self.ncols)
             return (size, 0, size)
-        nodes = self.get_nodes_at_level(level)
+        nodes = self.get_nodes_at_level(skip_levels)
         uncompressed_size = self.nrows * self.ncols
         residual_size = 0
         interpolative_matrices_size = 0
@@ -523,7 +527,7 @@ class InnerNode(object):
             interpolative_matrices_size += node.size()
         return (uncompressed_size, interpolative_matrices_size, residual_size)
 
-    def format_stats(self, level=0, residual_size_func=int.__mul__):
+    def format_stats(self, level=None, residual_size_func=int.__mul__):
         uncompressed_size, interpolative_matrices_size, residual_size = self.get_stats(level)
         compressed_size = interpolative_matrices_size + residual_size
         return "%s->%s=%s + %s (compression=%.2f, residual=%.2f)" % (

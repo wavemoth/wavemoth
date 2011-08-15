@@ -122,15 +122,23 @@ def serialize_from_hdf_files(args, target):
     for x in infilenames:
         os.unlink(x)
 
+def main(args):
+    comp = ResourceComputer(args.Nside, args.chunk_size, args.tolerance,
+                                  args.memop_cost, PrintLogger())
+    with file(args.target, 'w') as outfile:
+        comp.compute(outfile, max_workers=args.parallel)
+        
+
 parser = argparse.ArgumentParser(description='Precomputation')
 parser.add_argument('-c', '--chunk-size', type=int, default=64,
                     help='chunk size in number of columns')
+parser.add_argument('-m', '--memop-cost', type=float, default=10,
+                    help='cost to assign to memop vs. flop')
 parser.add_argument('-j', '--parallel', type=int, default=8,
                     help='how many processors to use for precomputation')
 parser.add_argument('--stride', type=int, default=1,
                     help='Skip m values. Results will be incorrect, '
                     'but useful for benchmarks.')
-parser.add_argument('-m', type=int, default=None, help='Evaluate for a single m')
 parser.add_argument('-e', '--tolerance', type=float, default=1e-10,
                     help='tolerance')
 parser.add_argument('-l', '--num-levels', type=int, default=None,
@@ -141,5 +149,6 @@ args = parser.parse_args()
 
 args.lmax = 2 * args.Nside
 
-compute_with_workers(args)
-serialize_from_hdf_files(args, args.target)
+main(args)
+#compute_with_workers(args)
+#serialize_from_hdf_files(args, args.target)

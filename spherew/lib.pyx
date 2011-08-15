@@ -1,3 +1,4 @@
+from __future__ import division
 cimport numpy as np
 
 import os
@@ -325,73 +326,76 @@ class LegendreMatrixProvider(object):
 def residual_flop_func(m, n):
     return m * n * (5/2 + 2) * 0.05
 
-def compute_resources_for_m(stream, m, odd, lmax, Nside, chunk_size,
-                            eps, num_levels, logger=null_logger):
-    """
-    Writes the parts of the precomputed data that corresponds to
-    the m given to stream. Present only to allow easy distribution
-    of computing between processes. See compute_resources.
-    """
-    # TODO: Computes Legendre matrix twice, for even and odd case!
 
-    # Compute & compress matrix
-    provider = LegendreMatrixProvider(m, odd, Nside)
-    nk = (lmax - m - odd) // 2 + 1
-    tree = butterfly_compress(provider, shape=(nk, provider.ncols_full_matrix),
-                              chunk_size=chunk_size, eps=eps)
-    # Drop levels of compression until residual size is 70% or more
-    depth = tree.get_max_depth()
-    costs = np.zeros(depth)
-    costs[0] = 1e300 # TODO: Support level 0
-    for level in range(1, depth):
-        total, ip, res = tree.get_stats(level, residual_flop_func)
-        costs[level] = ip + res
-    best_level = costs.argmin()
-    logger.info('Computed m=%d of %d, level=%d: %s' % (m, lmax, best_level,
-                                                       tree.format_stats(
-                                                           best_level)))
-    # Serialize the butterfly tree to the stream
-    serialize_butterfly_matrix(tree, provider, num_levels=best_level, stream=stream)
-    return stream
+class ResourceComputer:
+    def __init__(self, Nside, chunk_size, eps, memop_cost, logger=null_logger):
+        self.Nside, self.chunk_size, self.eps, self.memop_cost, self.logger = (
+            Nside, chunk_size, eps, memop_cost, logger)
+        self.lmax = self.mmax = 2 * Nside
 
-def compute_resources(stream, lmax, mmax, Nside, chunk_size=64, eps=1e-13,
-                      num_levels=None, max_workers=1,
-                      logger=null_logger, compute_matrix_func=compute_resources_for_m):
-    if max_workers == 1:
-        proc = FakeExecutor()
-    else:
-        # This keeps it all in memory, which speeds up unit testing, but is
-        # useless for large resolutions. TODO: Refactor precomputation into OO classes.
-        proc = ProcessPoolExecutor(max_workers=max_workers)
+    def residual_cost(self, m, n):
+        return m * n * (5. / 2. + 1) / self.memop_cost
 
-    write_int64(stream, lmax)
-    write_int64(stream, mmax)
-    write_int64(stream, Nside)
-    header_pos = stream.tell()
-    for i in range(4 * (mmax + 1)):
-        write_int64(stream, 0)
-        
-    futures = []
-    header_slot_offsets = []
-    for m in range(0, mmax + 1):
-        for odd in [0, 1]:
-            substream = BytesIO()
-            fut = proc.submit(compute_matrix_func, substream, m, odd, lmax, Nside,
-                              chunk_size, eps, num_levels, logger)
-            futures.append(fut)
-            header_slot_offsets.append(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
+    def compute_matrix(self, stream, m, odd):
+        """
+        Writes the parts of the precomputed data that corresponds to
+        the m given to stream.
+        """
+        # Compute & compress matrix
+        provider = LegendreMatrixProvider(m, odd, self.Nside)
+        nk = (self.lmax - m - odd) // 2 + 1
+        tree = butterfly_compress(provider, shape=(nk, provider.ncols_full_matrix),
+                                  chunk_size=self.chunk_size, eps=self.eps)
+        # Drop levels of compression until residual size is 70% or more
+        depth = tree.get_max_depth()
+        costs = np.zeros(depth)
+        costs[0] = 1e300 # TODO: Support level 0
+        for level in range(1, depth):
+            total, ip, res = tree.get_stats(level, self.residual_cost)
+            costs[level] = ip + res
+        best_level = costs.argmin()
+        self.logger.info('Computed m=%d of %d, level=%d: %s' % (m, self.lmax, best_level,
+                                                                tree.format_stats(
+                                                                    best_level)))
+        # Serialize the butterfly tree to the stream
+        serialize_butterfly_matrix(tree, provider, num_levels=best_level, stream=stream)
+        return stream
 
-    for fut, slot in zip(futures, header_slot_offsets):
-        pad128(stream)
-        start_pos = stream.tell()
-        stream.write(fut.result().getvalue())
-        end_pos = stream.tell()
-        stream.seek(slot)
-        write_int64(stream, start_pos)
-        write_int64(stream, end_pos - start_pos)
-        stream.seek(end_pos)
+    def submit_job(self, func, substream, m, odd):
+        return self.proc.submit(func, substream, m, odd)
 
+    def init_scheduler(self, max_workers):
+        if max_workers == 1:
+            self.proc = FakeExecutor()
+        else:
+            # This keeps it all in memory, which speeds up unit testing, but
+            # requires lots of memory. Subclasses can override this.
+            self.proc = ProcessPoolExecutor(max_workers=max_workers)
 
-        
-        
-    
+    def compute(self, stream, max_workers=1):
+        self.init_scheduler(max_workers)
+        write_int64(stream, self.lmax)
+        write_int64(stream, self.mmax)
+        write_int64(stream, self.Nside)
+        header_pos = stream.tell()
+        for i in range(4 * (self.mmax + 1)):
+            write_int64(stream, 0)
+
+        futures = []
+        header_slot_offsets = []
+        for m in range(0, self.mmax + 1):
+            for odd in [0, 1]:
+                substream = BytesIO()
+                fut = self.proc.submit(self.compute_matrix, substream, m, odd)
+                futures.append(fut)
+                header_slot_offsets.append(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
+
+        for fut, slot in zip(futures, header_slot_offsets):
+            pad128(stream)
+            start_pos = stream.tell()
+            stream.write(fut.result().getvalue())
+            end_pos = stream.tell()
+            stream.seek(slot)
+            write_int64(stream, start_pos)
+            write_int64(stream, end_pos - start_pos)
+            stream.seek(end_pos)

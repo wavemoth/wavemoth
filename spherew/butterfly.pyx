@@ -428,8 +428,8 @@ class InnerNode(Node):
 
     def transpose_apply_interpolations(self, x):
         L, R = self.children
-        z_left = np.empty((L.nrows, x.shape[1]))
-        z_right = np.empty((R.nrows, x.shape[1]))
+        z_left = np.empty((L.node_nrows, x.shape[1]))
+        z_right = np.empty((R.node_nrows, x.shape[1]))
         i_left = i_right = i_x = 0
         for lw, rw, (T_ip, B_ip) in zip(L.block_heights, R.block_heights, self.blocks):
             assert T_ip.shape[1] == B_ip.shape[1] == lw + rw

@@ -263,15 +263,18 @@ def test_stats():
     assert_raises(ValueError, root.get_nodes_at_level, 7)
 
     # get_stats
+    
     # Simply check that each level of compression compresses more of the residual.
-    raw, ip, res = root.get_stats(0)
-    for l in range(1, 6):
-        a, b, c = root.get_stats(l)
-        ok_(a == raw)
-        ok_(b <= ip)
-        ok_(c >= res)
-        ip, res = b, c
-    ok_(root.get_stats(6) == (raw, 0, raw))
+    raw = 100 * 100
+    ok_(root.get_stats(0) == (raw, 0, raw))
+    prev_full, prev_ip, prev_res = root.get_stats(0)
+    for l in range(6 + 1):
+        full, ip, res = root.get_stats(l)
+        ok_(full == prev_full)
+        ok_(ip >= prev_ip)
+        ok_(res <= prev_res)
+        prev_ip = ip
+        prev_res = res
 
 def test_tree_to_matrices():
     S1 = InnerNode([(InterpolationBlock([0, 0, 1], [[10], [100]]),

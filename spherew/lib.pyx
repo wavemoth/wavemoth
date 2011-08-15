@@ -326,6 +326,10 @@ class LegendreMatrixProvider(object):
 def residual_flop_func(m, n):
     return m * n * (5/2 + 2) * 0.05
 
+def _compute_matrix(resource_computer, m, odd):
+    stream = BytesIO()
+    resource_computer.compute_matrix(stream, m, odd)
+    return stream.getvalue()
 
 class ResourceComputer:
     def __init__(self, Nside, lmax, mmax, chunk_size, eps, memop_cost, logger=null_logger):
@@ -360,19 +364,16 @@ class ResourceComputer:
         serialize_butterfly_matrix(tree, provider, num_levels=best_level, stream=stream)
         return stream
 
-    def submit_job(self, func, substream, m, odd):
-        return self.proc.submit(func, substream, m, odd)
-
     def init_scheduler(self, max_workers):
         if max_workers == 1:
-            self.proc = FakeExecutor()
+            return FakeExecutor()
         else:
             # This keeps it all in memory, which speeds up unit testing, but
             # requires lots of memory. Subclasses can override this.
-            self.proc = ProcessPoolExecutor(max_workers=max_workers)
+            return ProcessPoolExecutor(max_workers=max_workers)
 
     def compute(self, stream, max_workers=1):
-        self.init_scheduler(max_workers)
+        proc = self.init_scheduler(max_workers)
         write_int64(stream, self.lmax)
         write_int64(stream, self.mmax)
         write_int64(stream, self.Nside)
@@ -384,15 +385,16 @@ class ResourceComputer:
         header_slot_offsets = []
         for m in range(0, self.mmax + 1):
             for odd in [0, 1]:
-                substream = BytesIO()
-                fut = self.proc.submit(self.compute_matrix, substream, m, odd)
+                fut = proc.submit(_compute_matrix, self, m, odd)
                 futures.append(fut)
                 header_slot_offsets.append(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
 
         for fut, slot in zip(futures, header_slot_offsets):
             pad128(stream)
             start_pos = stream.tell()
-            stream.write(fut.result().getvalue())
+            value = fut.result()
+            assert isinstance(value, bytes)
+            stream.write(value)
             end_pos = stream.tell()
             stream.seek(slot)
             write_int64(stream, start_pos)

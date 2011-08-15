@@ -508,6 +508,7 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
     size_t n = read_index(&node_data);
     if (is_root) {
       input_block = acquire_vector_chunk(plan);
+      assert(n <= plan->k_max);
       ctx->pull_func(input_block, 0, n, plan->nvecs, payloads[0],
                      payloads[1] - payloads[0], ctx->caller_ctx);
     } else {

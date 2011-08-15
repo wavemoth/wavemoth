@@ -309,6 +309,9 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     plan->resources = fastsht_fetch_resource(Nside);
   }
 
+  check(mmax == plan->resources->mmax, "Incompatible mmax");
+  check(lmax == plan->resources->lmax, "Incompatible lmax");
+
   nrings = 4 * Nside - 1;
   
   plan->nthreads = nthreads;
@@ -319,7 +322,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->nmaps = nmaps;
 
   size_t k_max = 0, nblocks_max = 0;
-  for (int m = 0; m != mmax; ++m) {
+  for (int m = 0; m != mmax + 1; ++m) {
     for (int odd = 0; odd != 2; ++odd) {
       bfm_matrix_data_info info;
       bfm_query_matrix_data((plan->resources->P_matrices + 2 * m + odd)->matrix_data,

@@ -34,6 +34,8 @@ def compute_normalized_associated_legendre(int m, theta,
     cdef np.ndarray[double, mode='c'] theta_ = np.ascontiguousarray(theta, dtype=np.double)
     cdef np.ndarray[double, ndim=2] out_
     cdef int firstl
+    if lmax < m:
+        raise ValueError("lmax < m")
     if out is None:
         out = np.empty((theta_.shape[0], lmax - m + 1), np.double)
     out_ = out

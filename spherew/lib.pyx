@@ -250,7 +250,7 @@ class LegendreMatrixProvider(object):
             return np.zeros((row_stop - row_start, len(col_indices)))
 
     def serialize_block_payload(self, stream, row_start, row_stop, col_indices):
-        if len(col_indices) == 0:
+        if len(col_indices) == 0 or row_start == row_stop:
             # Zero case
             pad128(stream)
             write_int64(stream, 0)
@@ -328,10 +328,10 @@ def residual_flop_func(m, n):
 
 
 class ResourceComputer:
-    def __init__(self, Nside, chunk_size, eps, memop_cost, logger=null_logger):
-        self.Nside, self.chunk_size, self.eps, self.memop_cost, self.logger = (
-            Nside, chunk_size, eps, memop_cost, logger)
-        self.lmax = self.mmax = 2 * Nside
+    def __init__(self, Nside, lmax, mmax, chunk_size, eps, memop_cost, logger=null_logger):
+        self.Nside, self.lmax, self.mmax, self.chunk_size, self.eps, self.memop_cost, self.logger = (
+            Nside, lmax, mmax, chunk_size, eps, memop_cost, logger)
+        assert lmax == mmax, 'Other cases not tested yet'
 
     def residual_cost(self, m, n):
         return m * n * (5. / 2. + 1) / self.memop_cost

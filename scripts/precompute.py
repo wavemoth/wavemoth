@@ -123,8 +123,9 @@ def serialize_from_hdf_files(args, target):
         os.unlink(x)
 
 def main(args):
-    comp = ResourceComputer(args.Nside, args.chunk_size, args.tolerance,
-                                  args.memop_cost, PrintLogger())
+    lmax = mmax = 2 * args.Nside
+    comp = ResourceComputer(args.Nside, lmax, mmax, args.chunk_size, args.tolerance,
+                            args.memop_cost, PrintLogger())
     with file(args.target, 'w') as outfile:
         comp.compute(outfile, max_workers=args.parallel)
         

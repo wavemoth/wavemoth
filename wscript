@@ -23,6 +23,7 @@ def options(opt):
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
     opt.add_option('--no-openmp', action='store_true')
+    opt.add_option('--butterfly-only', action='store_true')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -57,10 +58,12 @@ def configure(conf):
     conf.check_tool('inplace', tooldir='tools')
 
     # Libraries
-    conf.check_libpsht()
-    conf.check_fftw3()
-    conf.check_google_perftools()
-    conf.check_blas()
+    if not conf.options.butterfly_only:
+        conf.check_libpsht()
+        conf.check_fftw3()
+        conf.check_google_perftools()
+        conf.check_blas()
+    conf.env.BUTTERFLY_ONLY = conf.options.butterfly_only
 
     conf.env.LIB_RT = ['rt']
     conf.env.LIB_MKL = ['mkl_rt']
@@ -84,12 +87,18 @@ def build(bld):
     bld(target='src/butterfly.h',
         source=['src/butterfly.h.in'],
         rule=run_tempita)
-    
-    bld(target='fastsht',
-        source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
-        includes=['src'],
-        use='BLAS FFTW3 OPENMP',
-        features='c cshlib')
+
+    if bld.env.BUTTERFLY_ONLY:
+        bld(target='fastsht',
+            source=['src/butterfly.c.in'],
+            includes=['src'],
+            features='c cshlib')
+    else:
+        bld(target='fastsht',
+            source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
+            includes=['src'],
+            use='BLAS FFTW3 OPENMP',
+            features='c cshlib')
 
     bld.add_manual_dependency(
         bld.path.find_resource('src/butterfly.c.in'),
@@ -112,12 +121,6 @@ def build(bld):
         use='fcshlib NUMPY',
         features='fc c pyext cshlib')
 
-    bld(source=(['spherew/matvec.pyx', 'src/matvec.c']),
-        includes=['src'],
-        target='matvec',
-        use='NUMPY',
-        features='c pyext cshlib')
-
     bld(source=(['spherew/butterfly.pyx']),
         includes=['src'],
         target='butterfly',
@@ -129,6 +132,10 @@ def build(bld):
         target='butterflylib',
         use='NUMPY fcshlib fastsht',
         features='c pyext cshlib')
+
+    # NOTE: BUTTERFLY_ONLY RETURNS HERE
+    if bld.env.BUTTERFLY_ONLY:
+        return
 
     bld(source=(['spherew/lib.pyx']),
         includes=['src'],
@@ -158,12 +165,6 @@ def build(bld):
     bld.add_manual_dependency(
         bld.path.find_resource('spherew/blas.pyx'),
         bld.path.find_resource('src/blas.h'))
-
-    ## bld(source=(['spherew/fmm.pyx', 'src/fmm1d.c']),
-    ##     target='fmm',
-    ##     includes=['src'],
-    ##     use='NUMPY MKL',
-    ##     features='c pyext cshlib')
 
     #
     # Standalone C programs

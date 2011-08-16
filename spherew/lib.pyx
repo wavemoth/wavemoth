@@ -361,60 +361,78 @@ class LegendreMatrixProvider(object):
         lmin = self.row_to_l(row_start)
         lmax = self.row_to_l(row_stop - 1)
         thetas = self.thetas[col_indices]
+        x_squared = self.xs[col_indices]**2
         Lambda = compute_normalized_associated_legendre(self.m, thetas, lmax,
                                                         epsilon=0).T[lmin - self.m::2, :]
-        # Then, remove rows on top until we find a row containing an
-        # element larger than 1e-30
-        i = 0
-        while i < Lambda.shape[0] and np.all(np.abs(Lambda[i, :]) < 1e-30):
-            i += 1
-            lmin += 2
-        row_start += i
-        Lambda = Lambda[i:, :]
 
-        if row_stop - row_start <= 4:
-            # The size of the auxiliary and initialization data is the same
-            # as just saving the matrix, so we fall back to matrix multiplication.
-            block = np.asfortranarray(Lambda, dtype=np.double)
-            pad128(stream)
-            write_int64(stream, row_start)
-            write_int64(stream, row_stop)
-            write_array(stream, block)
-            return
+        strips = stripify(Lambda, include_above=1e-30, exclude_below=1e-250,
+                          jump_treshold=10, row_divisor=2, col_divisor=6)
+        # Adjust row_start in order to avoid saving unecesarry aux_data
+        min_rstart = 2**63
+        for rstart, rstop, cstart, cstop in strips:
+            min_rstart = min(rstart, min_rstart)
+        row_start += min_rstart
+        lmin += 2 * min_rstart
+        Labmda = Lambda[min_rstart:, :]
+        strips = [(rstart - min_rstart, rstop - min_rstart, cstart, cstop)
+                  for rstart, rstop, cstart, cstop in strips]
 
-        # Now, we just hope that no other elements on the same row are hopelessly
-        # small. This appears to be true. If this assumption is violated at some
-        # point, we must break up into smaller Legendre transforms, potentially
-        # with extra permutations.
-        if np.any(np.abs(Lambda) < 1e-150):
-            raise NotImplementedError("TODO: Break up legendre transforms into smaller blocks."
-                                      "NOTE!: Please make a note of parameters used to trigger this "
-                                      "case!!!")
-        # Use the Legendre-transform implementation to compute the last row
-        # of Lambda from the first two, to proove things are numerically
-        # stable for these starting values.
-        P = Lambda[0, :].copy()
-        Pp1 = Lambda[1, :].copy()
-        a = np.zeros((Lambda.shape[0], 2))
-        a[-1,:] = 1
-        y = np.zeros((Lambda.shape[1], 2)) * np.nan
-        x_squared = self.xs[col_indices]**2
-        associated_legendre_transform(self.m, lmin, a, y, x_squared,
-                                      P, Pp1, use_sse=True)
-        y = y[:, 0]
-        err = np.linalg.norm(y - Lambda[-1, :]) / np.linalg.norm(y)
-        if err > 1e-8:
-            raise Exception("Appears to have hit a numerically unstable case, should not happen")
-
-        auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
-
+        # Save data shared for all strips
+        assert row_stop >= row_start
         pad128(stream)
         write_int64(stream, row_start)
         write_int64(stream, row_stop)
-        write_aligned_array(stream, x_squared)
-        write_aligned_array(stream, P)
-        write_aligned_array(stream, Pp1)
+        if row_stop - row_start <= 4:
+            # Early return -- use dgemm (since auxdata etc. is not defined if
+            # we don't have enough rows, this was simpler).
+            write_aligned_array(stream, Lambda.copy('F'))
+            return
+            
+        write_int64(stream, len(strips))
+        auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
+        assert auxdata.shape[0] == 3 * (row_stop - row_start - 2)
         write_aligned_array(stream, auxdata)
+
+        first = True
+        for rstart, rstop, cstart, cstop in strips:
+            assert rstop == Lambda.shape[0]
+            if first:
+                assert cstart == 0
+                first = False
+            else:
+                assert cstart == prev_cstop
+            prev_cstop = cstop
+
+            write_int64(stream, rstart)
+            write_int64(stream, cstop)
+            
+            if (rstop - rstart <= 4):
+                # Use dgemm for this single chunk
+                write_aligned_array(stream, Lambda[rstart:rstop, cstart:cstop].copy('F'))
+            else:
+                # Check:
+                # Use the Legendre-transform implementation to compute the last row
+                # of Lambda from the first two, to proove things are numerically
+                # stable for these starting values.
+                L0 = Lambda[rstart, cstart:cstop].copy()
+                L2 = Lambda[rstart + 1, cstart:cstop].copy()
+
+                write_aligned_array(stream, x_squared[cstart:cstop])
+                write_aligned_array(stream, L0)
+                write_aligned_array(stream, L2)
+
+                a = np.zeros((rstop - rstart, 2))
+                a[-1,:] = 1
+                y = np.zeros((cstop - cstart, 2)) * np.nan
+                associated_legendre_transform(self.m, lmin, a, y, x_squared[cstart:cstop],
+                                              L0, L2, use_sse=True)
+                y = y[:, 0]
+                err = np.linalg.norm(y - Lambda[-1, cstart:cstop]) / np.linalg.norm(y)
+                if err > 1e-8:
+                    raise Exception("Appears to have hit a numerically unstable case, "
+                                    "should not happen")
+        assert cstop == Lambda.shape[1]
+
 
 def residual_flop_func(m, n):
     return m * n * (5/2 + 2) * 0.05

@@ -497,23 +497,43 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
   size_t row_start = read_int64(&payload);
   size_t row_stop = read_int64(&payload);
   size_t nk = row_stop - row_start;
-
   input += row_start * nvecs;
-
+  
   if (nk <= 4 || start == stop) {
-    double *A = (double*)payload;
+    double *A = read_aligned_array_d(&payload, (stop - start) * nk);
     dgemm_ccc(input, A, buf,
-              nvecs, stop - start, row_stop - row_start, 0.0);
+              nvecs, stop - start, nk, 0.0);
   } else {
     size_t nx = stop - start;
-    double *x_squared = read_aligned_array_d(&payload, nx);
-    double *P0 = read_aligned_array_d(&payload, nx);
-    double *P1 = read_aligned_array_d(&payload, nx);
-    skip128(&payload);
-    double *auxdata = (double*)payload;
-    
-    fastsht_associated_legendre_transform_sse(nx, nk, nvecs, input, buf, x_squared, auxdata,
-                                              P0, P1);
+    size_t nstrips = read_int64(&payload);
+    double *auxdata = read_aligned_array_d(&payload, 3 * (nk - 2));
+    size_t rstart, cstart, cstop;
+    cstart = 0;
+    for (size_t i = 0; i != nstrips; ++i) {
+      rstart = read_int64(&payload);
+      cstop = read_int64(&payload);
+      size_t nx_strip = cstop - cstart, nk_strip = nk - rstart;
+      if (nk - rstart <= 4) {
+        double *A = read_aligned_array_d(&payload, nk_strip * nx_strip);
+        dgemm_ccc(input + rstart * nvecs,
+                  A,
+                  buf + cstart * nvecs,
+                  nvecs,
+                  nx_strip,
+                  nk_strip, 0.0);
+      } else {
+        double *x_squared = read_aligned_array_d(&payload, nx_strip);
+        double *P0 = read_aligned_array_d(&payload, nx_strip);
+        double *P1 = read_aligned_array_d(&payload, nx_strip);
+        fastsht_associated_legendre_transform_sse(nx_strip, nk_strip, nvecs,
+                                                  input + rstart * nvecs,
+                                                  buf + cstart * nvecs,
+                                                  x_squared,
+                                                  auxdata + 3 * rstart,
+                                                  P0, P1);
+      }
+      cstart = cstop;
+    }
   }
 }
 

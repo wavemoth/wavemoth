@@ -171,7 +171,7 @@ def test_accuracy_against_psht():
         input = np.zeros(((lmax + 1) * (lmax + 2) // 2, nmaps), dtype=np.complex128)
         sht_output = np.zeros((12 * Nside**2, nmaps))
         psht_output = np.zeros((12 * Nside**2, nmaps), order='F')
-        matrix_data_filename = make_matrix_data(Nside, lmax, chunk_size=5, eps=eps,
+        matrix_data_filename = make_matrix_data(Nside, lmax, chunk_size=32, eps=eps,
                                                 memop_cost=memop_cost)
         sht_plan = sht_plan = ShtPlan(Nside, lmax, lmax, input, sht_output, 'mmajor',
                                       matrix_data_filename=matrix_data_filename)

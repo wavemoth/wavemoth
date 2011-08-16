@@ -248,6 +248,9 @@ def test_stripify():
     yield assert_raises, ValueError, stripify, A
     yield eq_, [(0, 2, 0, 1), (1, 2, 1, 2), (0, 2, 2, 3)], stripify(A, row_divisor=1,
                                                                     col_divisor=1)
+    A += 1
+    A[:, 2] = 0
+    yield eq_, [(0, 2, 0, 2), (2, 2, 2, 3)], stripify(A)
     
 def test_stripify_legendre():
     def test(Nside, m):

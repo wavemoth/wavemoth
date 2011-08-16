@@ -250,7 +250,8 @@ def stripify(A, include_above=1e-30, exclude_below=1e-80,
     the bottom is included in all strips).
 
     Coordinates will be divisible by row_divisor and col_divisor, except
-    at the matrix boundaries.
+    at the matrix boundaries. col_divisor is not honored if it means
+    violating exclude_below.
     
     Returns
     -------
@@ -293,22 +294,20 @@ def stripify(A, include_above=1e-30, exclude_below=1e-80,
         new_strip_needed = (a > min_b or b < max_a)
         new_strip_wanted = ((b - min_b) > jump_treshold)
         opportunity = (col > 0 and col % col_divisor == 0) or col == M.shape[1]
-        if opportunity and (new_strip_needed or new_strip_wanted):
+        if (opportunity and new_strip_wanted) or new_strip_needed:
             # Emit strip
-            if min_b < M.shape[0]:
+            if min_b < M.shape[0]: # If not zero-height strip
                 # Ensure that row start is divisible by row_divisor
                 min_b -= min_b % row_divisor
-            # Check that function is smooth enough to allow this to happen --
-            # if row_divisor == col_divisor == 1, this is guaranteed.
-            coords = (min_b, M.shape[0], start_col, col)
-            r1, r2, c1, c2 = coords
-            T = M[:r1, c1:c2]
-            B = M[r1:r2:, c1:c2]
-            if np.any(T >= include_above) or np.any(B < exclude_below):
-                raise ValueError("Funtion too rapidly changing to be able to "
-                                 "satisfy row_divisor/col_divisor constraints")
-            strips.append(coords)
-
+                # Check that function is smooth enough to make the
+                # resulting strip satisfy the constraints -- if
+                # row_divisor == col_divisor == 1, this is guaranteed.
+                T = M[:min_b, start_col:col]
+                B = M[min_b:, start_col:col]
+                if np.any(T >= include_above) or np.any(B < exclude_below):
+                    raise ValueError("Funtion too rapidly changing to be able to "
+                                     "satisfy row_divisor/col_divisor constraints")
+            strips.append((min_b, M.shape[0], start_col, col))
             start_col = col
             max_a, min_b = a, b
         max_a = max(a, max_a)
@@ -410,22 +409,22 @@ class LegendreMatrixProvider(object):
                 # Use dgemm for this single chunk
                 write_aligned_array(stream, Lambda[rstart:rstop, cstart:cstop].copy('F'))
             else:
-                # Check:
-                # Use the Legendre-transform implementation to compute the last row
-                # of Lambda from the first two, to proove things are numerically
-                # stable for these starting values.
                 L0 = Lambda[rstart, cstart:cstop].copy()
                 L2 = Lambda[rstart + 1, cstart:cstop].copy()
-
                 write_aligned_array(stream, x_squared[cstart:cstop])
                 write_aligned_array(stream, L0)
                 write_aligned_array(stream, L2)
 
+                # Check:
+                # Use the Legendre-transform implementation to compute the last row
+                # of Lambda from the first two, to proove things are numerically
+                # stable for these starting values.
                 a = np.zeros((rstop - rstart, 2))
                 a[-1,:] = 1
                 y = np.zeros((cstop - cstart, 2)) * np.nan
-                associated_legendre_transform(self.m, lmin, a, y, x_squared[cstart:cstop],
-                                              L0, L2, use_sse=True)
+                associated_legendre_transform(self.m, lmin + 2 * rstart, a, y,
+                                              x_squared[cstart:cstop],
+                                              L0, L2, use_sse=False)
                 y = y[:, 0]
                 err = np.linalg.norm(y - Lambda[-1, cstart:cstop]) / np.linalg.norm(y)
                 if err > 1e-8:

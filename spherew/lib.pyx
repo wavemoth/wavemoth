@@ -326,9 +326,24 @@ class LegendreMatrixProvider(object):
 def residual_flop_func(m, n):
     return m * n * (5/2 + 2) * 0.05
 
-def _compute_matrix(resource_computer, m, odd):
+def _compute_matrix(resource_computer, m, odd, termination_filename):
     stream = BytesIO()
-    resource_computer.compute_matrix(stream, m, odd)
+    if os.path.exists(termination_filename):
+        return
+    try:
+        resource_computer.compute_matrix(stream, m, odd)
+    except KeyboardInterrupt:
+        with file(termination_filename, 'w') as f:
+            f.write(os.getpid())
+        return
+    except:
+        # Print unpickled traceback so that we can see what really
+        # went wrong...
+        import traceback
+        traceback.print_exc()
+        with file(termination_filename, 'w') as f:
+            f.write(os.getpid())
+        raise
     return stream.getvalue()
 
 class ResourceComputer:
@@ -381,22 +396,35 @@ class ResourceComputer:
         for i in range(4 * (self.mmax + 1)):
             write_int64(stream, 0)
 
-        futures = []
-        header_slot_offsets = []
-        for m in range(0, self.mmax + 1):
-            for odd in [0, 1]:
-                fut = proc.submit(_compute_matrix, self, m, odd)
-                futures.append(fut)
-                header_slot_offsets.append(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
+        import tempfile
+        fd, termination_filename = tempfile.mkstemp()
+        os.close(fd)
+        os.unlink(termination_filename)
+        try:
+            futures = []
+            header_slot_offsets = []
+            for m in range(0, self.mmax + 1):
+                for odd in [0, 1]:
+                    fut = proc.submit(_compute_matrix, self, m, odd, termination_filename)
+                    futures.append(fut)
+                    header_slot_offsets.append(header_pos + (4 * m + 2 * odd) * sizeof(int64_t))
 
-        for fut, slot in zip(futures, header_slot_offsets):
-            pad128(stream)
-            start_pos = stream.tell()
-            value = fut.result()
-            assert isinstance(value, bytes)
-            stream.write(value)
-            end_pos = stream.tell()
-            stream.seek(slot)
-            write_int64(stream, start_pos)
-            write_int64(stream, end_pos - start_pos)
-            stream.seek(end_pos)
+            for fut, slot in zip(futures, header_slot_offsets):
+                pad128(stream)
+                start_pos = stream.tell()
+                value = fut.result()
+                if value is None:
+                    # termination, continue until we get to the exception future
+                    proc.shutdown()
+                    continue
+                assert isinstance(value, bytes)
+                stream.write(value)
+                end_pos = stream.tell()
+                stream.seek(slot)
+                write_int64(stream, start_pos)
+                write_int64(stream, end_pos - start_pos)
+                stream.seek(end_pos)
+        finally:
+            if os.path.exists(termination_filename):
+                os.unlink(termination_filename)
+        

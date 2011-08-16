@@ -222,6 +222,99 @@ def associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk):
     fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
     return out
 
+def first_true(x):
+    """ Given a 1D array of booleans x, return the first index that
+        is True, or if all is False, the length of the array.
+    """
+    nz = x.nonzero()[0]
+    if nz.shape[0] == 0:
+        return x.shape[0]
+    else:
+        return nz[0]
+
+def stripify(A, include_above=1e-30, exclude_below=1e-80,
+             jump_treshold=10, row_divisor=2, col_divisor=6):
+    """
+    Partitions the elements of a matrix intro strips. Strips are made
+    so that elements smaller than exclude_below are excluded and
+    elements larger than include_above are included.
+
+    In addition, a dumb greedy algorithm is made to try to make the
+    number of elements as small as possible, without creating too many
+    strips. Concretely, when more than `jump_treshold` rows can be
+    dropped, a new strip is created, but only so that the number of
+    columns in the resulting strip is a multiple of divisor.
+
+    Assumption made: Each column is increasing "fast enough" in magnitude
+    (i.e. can start on zero on top but don't decrease towards zero again,
+    the bottom is included in all strips).
+
+    Coordinates will be divisible by row_divisor and col_divisor, except
+    at the matrix boundaries.
+    
+    Returns
+    -------
+
+    List of tuples (row_start, row_stop, col_start, col_stop) describing
+    each stripe.
+    """
+    # Assumption: Each column is increasing in magnitude.
+    include_above = np.log2(include_above)
+    exclude_below = np.log2(exclude_below)
+
+    M = A.copy('F')
+    mask = (M == 0)
+    M[mask] = 1
+    M = np.log2(np.abs(M))
+    M[mask] = exclude_below - 1
+
+    # First: For each column, find the index where it is first above
+    # exclude_below (=a), and then where it it is first above
+    # include_above (=b)
+    col_starts = []
+    for col in range(M.shape[1]):
+        a = first_true(M[:, col] >= exclude_below)
+        b = first_true(M[:, col] >= include_above)
+        if np.any(M[a:, col] < exclude_below):
+            raise ValueError("Magnitude of column %d not increasing regularly "
+                             "enough in magnitude" % col)
+        col_starts.append((a, b))
+
+    # Then, take a greedy approach in creating as wide strips as
+    # possible. This is not optimal for all inputs; TODO: use dynamic
+    # programming + permutations to minimize a cost function
+    inf = M.shape[0] + 1
+    max_a = -1
+    min_b = inf
+    start_col = 0
+    strips = []
+    col_starts.append((inf, inf)) # sentinel
+    for col, (a, b) in enumerate(col_starts):
+        new_strip_needed = (a > min_b or b < max_a)
+        new_strip_wanted = ((b - min_b) > jump_treshold)
+        opportunity = (col > 0 and col % col_divisor == 0) or col == M.shape[1]
+        if opportunity and (new_strip_needed or new_strip_wanted):
+            # Emit strip
+            if min_b < M.shape[0]:
+                # Ensure that row start is divisible by row_divisor
+                min_b -= min_b % row_divisor
+            # Check that function is smooth enough to allow this to happen --
+            # if row_divisor == col_divisor == 1, this is guaranteed.
+            coords = (min_b, M.shape[0], start_col, col)
+            r1, r2, c1, c2 = coords
+            T = M[:r1, c1:c2]
+            B = M[r1:r2:, c1:c2]
+            if np.any(T >= include_above) or np.any(B < exclude_below):
+                raise ValueError("Funtion too rapidly changing to be able to "
+                                 "satisfy row_divisor/col_divisor constraints")
+            strips.append(coords)
+
+            start_col = col
+            max_a, min_b = a, b
+        max_a = max(a, max_a)
+        min_b = min(b, min_b)
+    return strips
+
 class NullLogger(object):
     def info(self, msg):
         pass

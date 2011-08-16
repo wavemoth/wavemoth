@@ -73,6 +73,8 @@ def configure(conf):
     conf.env.CFLAGS_PROFILEUSE = ['-fprofile-use']
     conf.env.LINKFLAGS_PROFILEUSE = ['-fprofile-use']
 
+    conf.env.CFLAGS_C99 = ['-std=gnu99']
+
     if not conf.options.no_openmp:
         conf.env.CFLAGS_OPENMP = ['-fopenmp']
         conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
@@ -92,12 +94,13 @@ def build(bld):
         bld(target='fastsht',
             source=['src/butterfly.c.in'],
             includes=['src'],
+            use='C99',
             features='c cshlib')
     else:
         bld(target='fastsht',
             source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
             includes=['src'],
-            use='BLAS FFTW3 OPENMP',
+            use='C99 BLAS FFTW3 OPENMP',
             features='c cshlib')
 
     bld.add_manual_dependency(
@@ -173,13 +176,13 @@ def build(bld):
     bld(source=['bench/cpubench.c'],
         includes=['src'],
         target='cpubench',
-        use='BLAS OPENMP',
+        use='C99 BLAS OPENMP',
         features='cprogram c')
 
     bld(source=['bench/shbench.c'],
         includes=['src'],
         target='shbench',
-        use='RT PSHT OPENMP fastsht',
+        use='C99 RT PSHT OPENMP fastsht',
         features='cprogram c')
 
     if bld.env.HAS_PERFTOOLS:
@@ -187,7 +190,7 @@ def build(bld):
             includes=['src'],
             install_path='bin',
             target='shbench-prof',
-            use='RT PSHT OPENMP PERFTOOLS fastsht',
+            use='C99 RT PSHT OPENMP PERFTOOLS fastsht',
             features='cprogram c')
 
 from waflib.Configure import conf

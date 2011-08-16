@@ -342,7 +342,7 @@ def _compute_matrix(resource_computer, m, odd, termination_filename):
         import traceback
         traceback.print_exc()
         with file(termination_filename, 'w') as f:
-            f.write(os.getpid())
+            f.write(str(os.getpid()))
         raise
     return stream.getvalue()
 

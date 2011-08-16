@@ -39,8 +39,6 @@ def configure(conf):
     conf.add_os_flags('CFLAGS')
     conf.add_os_flags('LINKFLAGS')
 
-    if not conf.env.CFLAGS:
-        raise RuntimeError("Set CFLAGS while developing")
     conf.load('compiler_c')
     conf.load('compiler_fc')
     conf.check_fortran()

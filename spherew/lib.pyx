@@ -373,7 +373,7 @@ class LegendreMatrixProvider(object):
             min_rstart = min(rstart, min_rstart)
         row_start += min_rstart
         lmin += 2 * min_rstart
-        Labmda = Lambda[min_rstart:, :]
+        Lambda = Lambda[min_rstart:, :]
         strips = [(rstart - min_rstart, rstop - min_rstart, cstart, cstop)
                   for rstart, rstop, cstart, cstop in strips]
 

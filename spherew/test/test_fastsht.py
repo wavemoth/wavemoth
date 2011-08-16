@@ -256,12 +256,15 @@ def test_stripify_legendre():
     def test(Nside, m):
         lmax = 3 * Nside
         nodes = get_ring_thetas(Nside, positive_only=True)
-        Lambda = compute_normalized_associated_legendre(m, nodes, lmax).T
+        Lambda = compute_normalized_associated_legendre(m, nodes, lmax,
+                                                        epsilon=1e-30).T
         mask = np.zeros(Lambda.shape, dtype=np.bool)
         strips = stripify(Lambda, include_above=1e-10, exclude_below=1e-50)
         for rstart, rstop, cstart, cstop in strips:
-            assert cstart % 6 == 0
-            assert cstop == Lambda.shape[1] or cstop % 6 == 0
+            assert (cstart % 6 == 0 or Lambda[0, cstart] == 0)
+            assert (cstop == Lambda.shape[1] or
+                    cstop % 6 == 0 or
+                    Lambda[0, cstop] == 0)
             mask[rstart:rstop, cstart:cstop] = True
         assert np.all(mask[np.abs(Lambda) >= 1e-10])
         if 0:
@@ -270,8 +273,8 @@ def test_stripify_legendre():
             plt.show()
         assert not np.any(mask[np.abs(Lambda) < 1e-50])
     yield test, 32, 40
-    yield test, 512, 1400
-            
+    yield test, 256, 270
+ 
 
     
     

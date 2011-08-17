@@ -252,7 +252,7 @@ def format_numbytes(x):
 class InterpolationBlock(object):
     def __init__(self, filter, interpolant):
         self.filter = np.ascontiguousarray(filter, dtype=np.int8)
-        self.interpolant = np.ascontiguousarray(interpolant, dtype=np.double)
+        self.interpolant = np.asfortranarray(interpolant, dtype=np.double)
         n = self.filter.shape[0]
         k = n - np.sum(self.filter)
         self.shape = (self.interpolant.shape[0], n)
@@ -723,7 +723,7 @@ def serialize_node(stream, node):
     def serialize_interpolation_block(block):
         write_array(stream, block.filter)
         pad128(stream)
-        write_array(stream, block.interpolant)
+        write_array(stream, np.asfortranarray(block.interpolant))
 
     if isinstance(node, InnerNode):
         write_index_t(stream, len(node.block_heights))

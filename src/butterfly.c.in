@@ -479,7 +479,7 @@ static void transpose_apply_interpolation_block(
   read_interpolation_block(head, &mask, &interpolant, n, k);
 
   bfm_scatter(mask, output_left, output_right, input, n_left, n_right, nvecs, 0, should_add);
-  dgemm_crc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
+  dgemm_ccc(input, interpolant, y_buf, nvecs, n - k, k, 0.0);
   bfm_scatter(mask, output_left, output_right, y_buf, n_left, n_right, nvecs, 1, should_add);
 }
 

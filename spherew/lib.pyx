@@ -240,7 +240,7 @@ def first_true(x):
         return nz[0]
 
 def stripify(A, include_above=1e-30, exclude_below=1e-80,
-             jump_treshold=10, row_divisor=2, col_divisor=6):
+             jump_treshold=10, col_divisor=6):
     """
     Partitions the elements of a matrix intro strips. Strips are made
     so that elements smaller than exclude_below are excluded and
@@ -256,9 +256,8 @@ def stripify(A, include_above=1e-30, exclude_below=1e-80,
     (i.e. can start on zero on top but don't decrease towards zero again,
     the bottom is included in all strips).
 
-    Coordinates will be divisible by row_divisor and col_divisor, except
-    at the matrix boundaries. col_divisor is not honored if it means
-    violating exclude_below.
+    Column coordinates will be divisible by col_divisor on best-effort,
+    although the other constraints comes first.
     
     Returns
     -------
@@ -299,21 +298,9 @@ def stripify(A, include_above=1e-30, exclude_below=1e-80,
     col_starts.append((inf, inf)) # sentinel
     for col, (a, b) in enumerate(col_starts):
         new_strip_needed = (a > min_b or b < max_a)
-        new_strip_wanted = ((b - min_b) > jump_treshold)
-        opportunity = (col > 0 and col % col_divisor == 0) or col == M.shape[1]
-        if (opportunity and new_strip_wanted) or new_strip_needed:
+        new_strip_wanted = col > 0 and (b - min_b) > jump_treshold
+        if new_strip_needed or (new_strip_wanted and col % col_divisor == 0):
             # Emit strip
-            if min_b < M.shape[0]: # If not zero-height strip
-                # Ensure that row start is divisible by row_divisor
-                min_b -= min_b % row_divisor
-                # Check that function is smooth enough to make the
-                # resulting strip satisfy the constraints -- if
-                # row_divisor == col_divisor == 1, this is guaranteed.
-                T = M[:min_b, start_col:col]
-                B = M[min_b:, start_col:col]
-                if np.any(T >= include_above) or np.any(B < exclude_below):
-                    raise ValueError("Funtion too rapidly changing to be able to "
-                                     "satisfy row_divisor/col_divisor constraints")
             strips.append((min_b, M.shape[0], start_col, col))
             start_col = col
             max_a, min_b = a, b
@@ -369,10 +356,9 @@ class LegendreMatrixProvider(object):
         thetas = self.thetas[col_indices]
         x_squared = self.xs[col_indices]**2
         Lambda = compute_normalized_associated_legendre(self.m, thetas, lmax,
-                                                        epsilon=0).T[lmin - self.m::2, :]
-
+                                                        epsilon=1e-300).T[lmin - self.m::2, :]
         strips = stripify(Lambda, include_above=1e-30, exclude_below=1e-250,
-                          jump_treshold=10, row_divisor=2, col_divisor=6)
+                          jump_treshold=10, col_divisor=6)
         # Adjust row_start in order to avoid saving unecesarry aux_data
         min_rstart = 2**63
         for rstart, rstop, cstart, cstop in strips:
@@ -431,10 +417,11 @@ class LegendreMatrixProvider(object):
                 y = np.zeros((cstop - cstart, 2)) * np.nan
                 associated_legendre_transform(self.m, lmin + 2 * rstart, a, y,
                                               x_squared[cstart:cstop],
-                                              L0, L2, use_sse=False)
+                                              L0, L2, use_sse=True)
                 y = y[:, 0]
                 err = np.linalg.norm(y - Lambda[-1, cstart:cstop]) / np.linalg.norm(y)
-                if err > 1e-8:
+                if err > 1e-11:
+                    print err
                     raise Exception("Appears to have hit a numerically unstable case, "
                                     "should not happen")
         assert cstop == Lambda.shape[1]

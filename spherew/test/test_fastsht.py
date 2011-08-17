@@ -249,9 +249,7 @@ def test_stripify():
     A = np.ones((2, 3))
     yield eq_, [(0, 2, 0, 3)], stripify(A)
     A[0, 1] = 0
-    yield assert_raises, ValueError, stripify, A
-    yield eq_, [(0, 2, 0, 1), (1, 2, 1, 2), (0, 2, 2, 3)], stripify(A, row_divisor=1,
-                                                                    col_divisor=1)
+    yield eq_, [(0, 2, 0, 1), (1, 2, 1, 2), (0, 2, 2, 3)], stripify(A)
     A += 1
     A[:, 2] = 0
     yield eq_, [(0, 2, 0, 2), (2, 2, 2, 3)], stripify(A)
@@ -261,23 +259,20 @@ def test_stripify_legendre():
         lmax = 3 * Nside
         nodes = get_ring_thetas(Nside, positive_only=True)
         Lambda = compute_normalized_associated_legendre(m, nodes, lmax,
-                                                        epsilon=1e-30).T
+                                                        epsilon=1e-300).T
         mask = np.zeros(Lambda.shape, dtype=np.bool)
-        strips = stripify(Lambda, include_above=1e-10, exclude_below=1e-50)
+        strips = stripify(Lambda, include_above=1e-20, exclude_below=1e-50)
         for rstart, rstop, cstart, cstop in strips:
             assert (cstart % 6 == 0 or Lambda[0, cstart] == 0)
             assert (cstop == Lambda.shape[1] or
                     cstop % 6 == 0 or
                     Lambda[0, cstop] == 0)
             mask[rstart:rstop, cstart:cstop] = True
-        assert np.all(mask[np.abs(Lambda) >= 1e-10])
-        if 0:
-            as_matrix(np.abs(Lambda) < 1e-50).plot()
-            as_matrix(mask).plot()
-            plt.show()
+        assert np.all(mask[np.abs(Lambda) >= 1e-20])
         assert not np.any(mask[np.abs(Lambda) < 1e-50])
     yield test, 32, 40
     yield test, 256, 270
+    yield test, 256, 271
  
 
     

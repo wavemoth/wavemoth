@@ -16,6 +16,9 @@ from .healpix import get_ring_thetas
 
 np.import_array()
 
+def assert_aligned(np.ndarray x):
+    assert <size_t>x.data % 16 == 0
+
 cdef extern from "complex.h":
     pass
 
@@ -179,10 +182,10 @@ def associated_legendre_transform(int m, int lmin,
                                   np.ndarray[double, ndim=1, mode='c'] x_squared,
                                   np.ndarray[double, ndim=1, mode='c'] P,
                                   np.ndarray[double, ndim=1, mode='c'] Pp1,
-                                  int repeat=1, use_sse=False):
+                                  int repeat=1, use_sse=False,
+                                  np.ndarray[double, ndim=1, mode='c'] auxdata=None):
     cdef size_t nx, nk, nvecs
     cdef Py_ssize_t i, k
-    
     nx = x_squared.shape[0]
     if not nx == P.shape[0] == Pp1.shape[0]:
         raise ValueError("nonconforming arrays")
@@ -191,10 +194,10 @@ def associated_legendre_transform(int m, int lmin,
     if not nvecs == y.shape[1]:
         raise ValueError("nonconforming arrays")
 
-    # Pack the auxiliary data here, just to keep testcases and benchmarks
-    # from having to change when internals change.
-    cdef np.ndarray[double, mode='c'] auxdata = (
-        associated_legendre_transform_auxdata(m, lmin, nk))
+    if auxdata is None:
+        auxdata = associated_legendre_transform_auxdata(m, lmin, nk)
+    elif auxdata.shape[0] != 3 * (nk - 2):
+        raise ValueError("auxdata.shape[0] != 3 * (nk - 2)")
 
     if use_sse:
         for i in range(repeat):
@@ -218,9 +221,13 @@ def associated_legendre_transform(int m, int lmin,
                 <double*>Pp1.data)
 
 def associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk):
-    cdef np.ndarray[double, mode='c'] out = np.empty(3 * (nk - 2))
-    fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
-    return out
+    cdef np.ndarray[double, mode='c'] out
+    if nk < 3:
+        return np.zeros(0)
+    else:
+        out = np.empty(3 * (nk - 2))
+        fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
+        return out
 
 def first_true(x):
     """ Given a 1D array of booleans x, return the first index that

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdint.h>
 
 #include "legendre_transform.h"
 
@@ -56,6 +57,8 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
      loop over k.
     
   */
+
+  auxdata -= 6; /* auxdata not passed for k=0, k=1 */
 
   /* Process strips (xchunksize={{xchunksize}}) */
   for (i = ix_start; i != ix_stop; i += {{xchunksize}}) {
@@ -168,9 +171,7 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
 
     {{load_a}}
     {{if single}}
-      ((double*)Ppp_ki)[0] = P[i];
-      //Ppp_ki[0] = _mm_load_pd(P + i);
-      Ppp_ki[0] = _mm_unpacklo_pd(Ppp_ki[0], Ppp_ki[0]);
+      Ppp_ki[0] = (m128d){ P[i], P[i] };
       y_ij[0] = _mm_mul_pd(Ppp_ki[0], a_kj);
     {{else}}
       for (s = 0; s != {{nregs}}; ++s) {
@@ -184,9 +185,7 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
     {{load_a}}
 
     {{if single}}
-      ((double*)Pp_ki)[0] = Pp1[i];
-      //      Pp_ki[0] = _mm_load_pd(Pp1 + i);
-      Pp_ki[0] = _mm_unpacklo_pd(Pp_ki[0], Pp_ki[0]);
+      Pp_ki[0] = (m128d){ Pp1[i], Pp1[i] };
       y_ij[0] = MULADD(y_ij[0], Pp_ki[0], a_kj);
     {{else}}
       for (s = 0; s != {{nregs}}; ++s) {
@@ -198,7 +197,17 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
     ++k;
 
     m128d aux1, aux2, aux3, alpha, beta, gamma;
-    while (k < (nk - nk % 2)) {
+    size_t loop_stop = nk - nk % 2;
+    if (nk > 2 && (intptr_t)auxdata % 16 != 0) {
+      /* auxdata not 128-bit aligned; load alpha[k] into upper part of
+         aux2 and then jump to second loop section; changing loop stop
+         accordingly. The nk > 2 check protects against doing the jump
+         if there's 0 iterations. */
+      aux2 = (m128d){ 0.0, auxdata[3 * k] };
+      if (nk % 2 == 0) loop_stop--;
+      goto SECOND_ITERATION;
+    }
+    while (k < loop_stop) {
       /* The recurrence relation we compute is, for each x_i,
 
          P_{k} = (x^2 + [-d_{k-1}]) * [1/c_{k-1}] P_{k-1} + [-c_{k-2}/c_{k-1}] P_{k-2}
@@ -226,18 +235,18 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
          worse). Profile-guided optimization made things worse as
          well.
        */
-
       /* Unpack alpha, beta, gamma from aux1 and aux2, and do a loop step. */
-      aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
-      aux2 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 2);
+      aux1 = _mm_load_pd(auxdata + 3 * k);
+      aux2 = _mm_load_pd(auxdata + 3 * k + 2);
       alpha = _mm_unpacklo_pd(aux1, aux1);
       beta = _mm_unpackhi_pd(aux1, aux1);
       gamma = _mm_unpacklo_pd(aux2, aux2);
       {{loop_body(xchunksize)}}
-
-      /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
-      aux3 = _mm_load_pd(auxdata + 6 * (k - 2) / 2 + 4);
       ++k;
+
+    SECOND_ITERATION:
+      /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
+      aux3 = _mm_load_pd(auxdata + 3 * (k - 1) + 4);
       alpha = _mm_unpackhi_pd(aux2, aux2);
       beta = _mm_unpacklo_pd(aux3, aux3);
       gamma = _mm_unpackhi_pd(aux3, aux3);
@@ -246,15 +255,10 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
     }
     if (k != nk) {
       /* Loop peel for the single odd k. */
-      aux1 = _mm_load_pd(auxdata + 6 * (k - 2) / 2);
+      aux1 = _mm_load_pd(auxdata + 3 * k);
       alpha = _mm_unpacklo_pd(aux1, aux1);
       beta = _mm_unpackhi_pd(aux1, aux1);
-      union {
-        double x[2];
-        m128d v;
-      } tmp;
-      tmp.x[0] = tmp.x[1] = auxdata[6 * (k - 2) / 2 + 2];
-      gamma = tmp.v;
+      gamma = (m128d){ auxdata[3 * k + 2], auxdata[3 * k + 2] };
       {{loop_body(xchunksize)}}
       ++k;
     }
@@ -276,6 +280,11 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
 }
 {{endfor}}
 
+/*
+Alignment requirements:
+
+auxdata need only be 64-bit aligned, the other arrays should be 128-bit aligned
+*/
 void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
                                                size_t nvecs,
                                                double *a,
@@ -289,10 +298,8 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
   assert(nvecs == 2);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
-  assert((size_t)auxdata % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
-
   size_t i, n;
   i = 0;
   {{for xchunksize in [6, 2, 1]}}

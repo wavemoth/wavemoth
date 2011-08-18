@@ -18,7 +18,7 @@ from concurrent.futures import ProcessPoolExecutor#, ThreadPoolExecutor
 from spherew.utils import FakeExecutor
 
 Nside = 2048
-lmax = 2 * Nside
+lmax = 3 * Nside
 epsilon_legendre = 1e-30
 epsilon_butterfly = 1e-10
 odd = 0
@@ -30,7 +30,7 @@ m=0
 #nodes = np.arccos(roots)
 
 
-ms = [0, 1000, 2000, 3000]#, 1000]
+ms = [0]#, 1000, 2000, 3000]#, 1000]
 Cs = [64]#range(100, 150)
 
 def residual_size_func(m, n):
@@ -45,11 +45,11 @@ def doit(m, chunk_size):
     x = butterfly_compress(P, chunk_size, eps=epsilon_butterfly)
 
     stats_list = []
-    for level in range(x.get_max_depth(), -1, -1):
+    for level in range(x.get_max_depth()):
         flop_stats = x.get_stats(level, residual_flop_func)
         mem_stats = x.get_stats(level, residual_size_func)
         stats_list.append(flop_stats + mem_stats[1:])
-        #print 'm=%d,l=%d %s' % (m, level, x.format_stats(level, residual_size_func))
+        print 'm=%d,l=%d %s' % (m, level, x.format_stats(level, residual_size_func))
     return np.asarray(stats_list)
 
 results = np.zeros((len(ms), len(Cs)), dtype=object)
@@ -68,7 +68,7 @@ for i in range(len(ms)):
         results[i, j] = next(it).result()
                 
 
-plt.figure()
+plt.clf()
 colors = ['blue', 'green', 'red', 'yellow', 'black']
 
 if 1:
@@ -89,7 +89,8 @@ if 1:
 
     plt.gca().set_ylim((0, 1))
     plt.gca().set_xlim((0, 10))
-else:
+
+if 0:
     # Compare chunksizes
     level = 2
     for idx, m in enumerate(ms):

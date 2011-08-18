@@ -296,11 +296,12 @@ int main(int argc, char *argv[]) {
 
   /* Resource configuration */
   resource_path = getenv("SHTRESOURCES");
-  check(resource_path != NULL, "Please define SHTRESOURCES");
-  fastsht_configure(resource_path);
   if (sht_resourcefile != NULL) {
+    fastsht_configure("");
     fastsht_query_resourcefile(sht_resourcefile, &Nside, &lmax);
   } else {
+    check(resource_path != NULL, "Please define SHTRESOURCES or use -r switch");
+    fastsht_configure(resource_path);
     lmax = 2 * Nside;
   }
 

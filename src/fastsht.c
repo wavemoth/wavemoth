@@ -530,7 +530,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                                   buf + cstart * nvecs,
                                                   x_squared,
                                                   auxdata + 3 * rstart,
-                                                  P0, P1);
+                                                  P0, P1, NULL);
       }
       cstart = cstop;
     }

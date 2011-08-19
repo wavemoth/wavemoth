@@ -7,7 +7,16 @@
 #include <math.h>
 #include <stdint.h>
 
+#include "fastsht_error.h"
 #include "legendre_transform.h"
+
+#ifndef INLINE
+# if __STDC_VERSION__ >= 199901L
+#  define INLINE inline
+# else
+#  define INLINE
+# endif
+#endif
 
 typedef __m128d m128d;
 typedef __m128 m128;
@@ -15,6 +24,10 @@ typedef __m128 m128;
 static void _printreg(char *msg, m128d r) {
   double *pd = (double*)&r;
   printf("%s = [%f %f]\n", msg, pd[0], pd[1]);
+}
+
+static INLINE size_t imin(size_t a, size_t b) {
+  return (a < b) ? a : b;
 }
 
 #define printreg(x) _printreg(#x, x)
@@ -136,12 +149,12 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
     {
       m128d w[{{nregs}}];
       for (s = 0; s != {{nregs}}; ++s) {
-          {{if single}}
-            ((double*)&w[s])[0] = x_squared[i + 2 * s];
-            w[s] = _mm_unpacklo_pd(w[s], w[s]);
-          {{else}}
-            w[s] = _mm_load_pd(x_squared + i + 2 * s);
-          {{endif}}
+        {{if single}}
+          ((double*)&w[s])[0] = x_squared[i + 2 * s];
+          w[s] = _mm_unpacklo_pd(w[s], w[s]);
+        {{else}}
+          w[s] = _mm_load_pd(x_squared + i + 2 * s);
+        {{endif}}
         w[s] = _mm_add_pd(w[s], alpha);
         w[s] = _mm_mul_pd(w[s], beta);
         w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
@@ -280,6 +293,210 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
 }
 {{endfor}}
 
+
+{{for xchunksize in [1, 2, 4]}}
+{{py:
+single = xchunksize == 1
+nregs = 1 if single else xchunksize // 2
+}}
+#define X_CHUNK_SIZE {{xchunksize}}
+#define K_CHUNK_SIZE LEGENDRE_TRANSFORM_WORK_SIZE / (X_CHUNK_SIZE * sizeof(double))
+#define NREGS X_CHUNK_SIZE / 2
+#define NJ 4
+
+static void legendre_matmul_chunk{{xchunksize}}(size_t k_start, size_t k_stop, size_t nvecs,
+                                                double *a, double *y_acc, double *P_block) {
+  size_t i, j, s, k, j_chunk_start;
+  double *Pptr;
+
+  /* Accumulator for vec j, x-strip i is y_ji[i * NREGS + j] */
+  m128d y_ji[NJ * NREGS];
+
+  assert(NJ % 2 == 0);
+  assert(nvecs % NJ == 0); /* TODO ! */
+  for (j_chunk_start = 0; j_chunk_start != nvecs; j_chunk_start += NJ) {
+    /* Load the accumulators from y_acc. While we accumulate we store
+       the accumulators in a convenient transposed order (also across calls
+       to this function). */
+    for (s = 0; s != NJ * NREGS; ++s) {
+      y_ji[s] = _mm_load_pd(y_acc + 2 * s);
+    }
+
+    Pptr = P_block;
+    for (k = k_start; k != k_stop; ++k) {
+      m128d a_ji[NJ];
+      m128d Pval;
+      /* Load and shuffle a */
+      for (s = 0; s != NJ / 2; ++s) {
+        a_ji[2 * s] = _mm_load_pd(a + k * nvecs + j_chunk_start + 2 * s);
+        a_ji[2 * s + 1] = _mm_unpackhi_pd(a_ji[2 * s], a_ji[2 * s]);
+        a_ji[2 * s] = _mm_unpacklo_pd(a_ji[2 * s], a_ji[2 * s]);
+      }
+      printf("==\n");
+      /* Muladds */
+      for (i = 0; i != X_CHUNK_SIZE; i += 2) {
+        Pval = _mm_load_pd(Pptr);
+        Pptr += 2;
+        for (j = 0; j != NJ; ++j) {
+          y_ji[i * NREGS + j] = MULADD(y_ji[i * NREGS + j], Pval, a_ji[j]);
+        }
+      }
+    }
+
+    /* Store accumulators for the next iteration or the transpose */
+    for (s = 0; s != NJ * NREGS; ++s) {
+      _mm_store_pd(y_acc + 2 * s, y_ji[s]);
+    }
+  }
+
+}
+
+static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_stop,
+                                                   size_t nk,
+                                                   size_t nvecs,
+                                                   double *a,
+                                                   double *y,
+                                                   double *x_squared, 
+                                                   double *auxdata,
+                                                   double *P0, double *P1,
+                                                   char *work) {
+  size_t i, k_chunk_start, k_chunk_stop, s, k;
+  double *P_block = (double *)work;
+  double *P_block_last_two_rows = P_block
+    + (LEGENDRE_TRANSFORM_WORK_SIZE / sizeof(double))
+    - 2 * X_CHUNK_SIZE;
+
+  auxdata -= 6; /* auxdata not passed for k=0, k=1 */
+
+  assert((ix_stop - ix_start) % X_CHUNK_SIZE == 0);
+  assert(K_CHUNK_SIZE >= 2);
+  /* Loop over x-strips */
+  for (i = ix_start; i != ix_stop; i += X_CHUNK_SIZE) {
+    double *y_chunk = y + i * nvecs;
+
+    /* Load x-values -- by keeping a few values on the stack, the x_squared page
+       can mostly be forgotten about. */
+    m128d x_squared_i[NREGS];
+    for (s = 0; s != NREGS; ++s) {
+      x_squared_i[s] = _mm_load_pd(x_squared + i + 2 * s);
+    }
+    /* Deal with P0 and P1. We copy into contiguous buffer, zero y, and call matmul.
+       We use the last two rows of P_block as our buffer so that the values are
+       ready as initialization values to the strip processing below. */
+    double *P = P_block_last_two_rows;
+    for (s = 0; s != NREGS; ++s) {
+      _mm_store_pd(P, _mm_load_pd(P0 + i + 2 * s));
+      P += 2;
+    }
+    for (s = 0; s != NREGS; ++s) {
+      _mm_store_pd(P, _mm_load_pd(P1 + i + 2 * s));
+      P += 2;
+    }
+    for (s = 0; s != NREGS * nvecs; ++s) {
+      _mm_store_pd(y_chunk + 2 * s, _mm_setzero_pd());
+    }
+    legendre_matmul_chunk{{xchunksize}}(0, 2, nvecs, a,
+                                        y_chunk, P_block_last_two_rows);
+
+    /* Loop over chunks in K, so that we stay within LEGENDRE_TRANSFORM_WORK_SIZE and
+       don't spill P_block out of P1. */
+    for (k_chunk_start = 2; k_chunk_start < nk; k_chunk_start += K_CHUNK_SIZE) {
+      k_chunk_stop = imin(nk, k_chunk_start + K_CHUNK_SIZE);
+
+      /****
+       * Phase 1: Generate P_lm
+       *****/
+      m128d P_ki[NREGS], Pp_ki[NREGS], Ppp_ki[NREGS];
+
+      /* Load the last two rows of the previous block. */
+      P = P_block_last_two_rows;
+      for (s = 0; s != NREGS; ++s) {
+        Ppp_ki[s] = _mm_load_pd(P);
+        P += 2;
+      }
+      for (s = 0; s != NREGS; ++s) {
+        Pp_ki[s] = _mm_load_pd(P);
+        P += 2;
+      }
+
+      P = P_block;
+      assert((intptr_t)auxdata % 2 == 0); /* TODO! */
+      assert((k_chunk_stop - k_chunk_start) % 2 == 0); /* TODO! */
+      for (k = k_chunk_start; k != k_chunk_stop; ++k) {
+        /* Use three-term recurrence formula */
+        m128d w[NREGS];
+        m128d alpha, beta, gamma, aux1, aux2, aux3;
+
+        {{def loop_body}}
+        for (s = 0; s != NREGS; ++s) {
+          w[s] = x_squared_i[s];
+          w[s] = _mm_add_pd(w[s], alpha);
+          w[s] = _mm_mul_pd(w[s], beta);
+          w[s] = _mm_mul_pd(w[s], Pp_ki[s]);
+        
+          P_ki[s] = _mm_mul_pd(Ppp_ki[s], gamma);
+          P_ki[s] = _mm_add_pd(P_ki[s], w[s]);
+      
+          Ppp_ki[s] = Pp_ki[s];
+          Pp_ki[s] = P_ki[s];
+          _mm_store_pd(P, P_ki[s]);
+          P += 2;
+        }
+        {{enddef}}
+        
+        /* Unpack alpha, beta, gamma from aux1 and aux2, and do a loop step. */
+        aux1 = _mm_load_pd(auxdata + 3 * k);
+        aux2 = _mm_load_pd(auxdata + 3 * k + 2);
+
+        alpha = _mm_unpacklo_pd(aux1, aux1);
+        beta = _mm_unpackhi_pd(aux1, aux1);
+        gamma = _mm_unpacklo_pd(aux2, aux2);
+        {{loop_body}}
+        ++k;
+
+        /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
+        aux3 = _mm_load_pd(auxdata + 3 * (k - 1) + 4);
+        alpha = _mm_unpackhi_pd(aux2, aux2);
+        beta = _mm_unpacklo_pd(aux3, aux3);
+        gamma = _mm_unpackhi_pd(aux3, aux3);
+
+        {{loop_body}}
+
+        printf("k=%d\n",k);
+        printreg(P_ki[0]);
+      }
+
+      /****
+       * Phase 2: Matrix multiplication
+       *****/
+      legendre_matmul_chunk{{xchunksize}}(k_chunk_start, k_chunk_stop, nvecs, a,
+                                          y_chunk, P_block);
+    }
+
+    /* After the entire strip is processed, we transpose y */
+    /*  i * NREGS + j
+    for (s = 0; s != NJ * NREGS; ++s) {
+      _mm_store_pd(y_acc + 2 * s, y_ji[s]);
+    }
+    */
+    /*    assert(NREGS == 2 && NJ == 4);
+    for (j = 0; j != nvecs; j += NJ) {
+      m128d y_t[NREGS * NJ];
+      for (s = 0; s != NREGS * NJ; ++s) {
+        y_t[s] = _mm_load_pd(y_chunk + j * X_CHUNK_SIZE + 2 * s);
+      }
+      yval[0] = 
+      
+      }*/
+    /* TODO! */
+  }
+}
+#undef X_CHUNK_SIZE
+#undef K_CHUNK_SIZE
+#undef NREGS
+#undef NJ
+{{endfor}}
+
 /*
 Alignment requirements:
 
@@ -291,25 +508,37 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
                                                double *y,
                                                double *x_squared, 
                                                double *auxdata,
-                                               double *P, double *Pp1) {
+                                               double *P, double *Pp1,
+                                               char *work) {
   /* Function body */
 
   assert(nk >= 2);
-  assert(nvecs == 2);
   assert((size_t)a % 16 == 0);
   assert((size_t)y % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
   size_t i, n;
   i = 0;
-  {{for xchunksize in [6, 2, 1]}}
+
+{{def chunkdispatch(nvecs, xchunksizes)}}
+  {{for xchunksize in xchunksizes}}
   n = nx - nx % {{xchunksize}};
   if (i != n) {
-    legendre_transform_chunk{{xchunksize}}_nvec2(i, n, nk, a, y,
-                                                 x_squared, auxdata, P, Pp1);
+    legendre_transform_chunk{{xchunksize}}{{'_nvec%d' % nvecs if nvecs is not None else ''}}
+    (i, n, nk, {{'nvecs, ' if nvecs is None else ''}}a, y, x_squared, auxdata, P, Pp1
+    {{', work' if nvecs is None else ''}});
   }
   i = n;
   {{endfor}}
+{{enddef}}
+
+  if (nvecs == 2) {
+    {{chunkdispatch(2, [6, 2, 1])}}
+  } else if (nvecs % 2 == 0) {
+    {{chunkdispatch(None, [4, 2, 1])}}
+  } else {
+    check(0, "nvecs not divisble by 2");
+  }
 }
 
 void fastsht_associated_legendre_transform(size_t nx, size_t nk,

@@ -200,47 +200,6 @@ def test_accuracy_against_psht():
     yield test, 1e-11, 1e-10 # Full compression
 
 
-
-#
-# Brute-force Legendre transforms
-#
-
-def test_legendre_transform():
-    nvecs = 2
-    Nside = 2048
-    ixmin = 340
-    m = 10
-    lmin = m + 200
-
-    def test(nx, nk, auxalign):
-        lstop = lmin + 2 * nk
-        ixmax = ixmin + nx
-        ls = np.arange(lmin, lstop, 2)
-        nodes = get_ring_thetas(Nside, positive_only=True)[ixmin:ixmax]
-        P = compute_normalized_associated_legendre(m, nodes, lstop, epsilon=1e-30)
-        P = (P.T)[(lmin - m):(lstop - m):2, :].copy('C')
-        x_squared = np.cos(nodes)**2
-        a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs + 1)[None, :].astype(np.double)
-        y0 = np.dot(a.T, P).T
-        auxdata = np.zeros(max(3 * (nk - 2), 0) + auxalign)
-        assert_aligned(auxdata)
-        auxdata[auxalign:] = associated_legendre_transform_auxdata(m, lmin, nk)
-        for use_sse in [False, True]:
-                y = np.zeros((x_squared.shape[0], a.shape[1]))
-                associated_legendre_transform(m, lmin, a, y, x_squared,
-                                              P[0, :].copy('C'), P[1, :].copy('C'),
-                                              use_sse=use_sse, auxdata=auxdata[auxalign:])
-                for j in range(nvecs):
-                    assert_almost_equal(y0[:, j], y[:, j])
-                #plt.plot(y0[:, 1])
-                #plt.plot(y[:, 1])
-                #plt.show()
-
-    for nx in [2, 3, 4, 6, 7, 10, 11]:
-        for nk in [2, 3, 4, 6, 7, 10, 11]:
-            for auxalign in [0, 1]:
-                yield test, nx, nk, auxalign
-
 #
 # Stripify
 #

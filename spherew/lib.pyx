@@ -82,12 +82,13 @@ cdef extern from "legendre_transform.h":
                                                    double *P, double *Pp1,
                                                    char *work)
     
+    size_t fastsht_associated_legendre_transform_sse_query_work(size_t nvecs)
+    
     void fastsht_associated_legendre_transform_auxdata(
         size_t m, size_t lmin, size_t nk,
         double *auxdata)
 
     cdef size_t LEGENDRE_TRANSFORM_WORK_SIZE
-
 
 _configured = False
 
@@ -208,13 +209,15 @@ def associated_legendre_transform(int m, int lmin,
 
     cdef char *work = NULL
     cdef np.ndarray work_array
+
+    cdef size_t work_size
+
     if nvecs % 2 != 0:
         raise ValueError("nvecs not divisible by 2")
-    if nvecs > 2 and use_sse:
-        work_array = np.ones(LEGENDRE_TRANSFORM_WORK_SIZE, dtype=np.int8) * -42
-        work = work_array.data
-
     if use_sse:
+        work_size = fastsht_associated_legendre_transform_sse_query_work(nvecs);
+        work_array = np.ones(work_size, dtype=np.int8) * np.nan
+        work = work_array.data
         for i in range(repeat):
             fastsht_associated_legendre_transform_sse(
                 nx, nk, nvecs,

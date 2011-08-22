@@ -33,4 +33,6 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
                                                double *P, double *Pp1,
                                                char *work);
 
+size_t fastsht_associated_legendre_transform_sse_query_work(size_t nvecs);
+
 #endif

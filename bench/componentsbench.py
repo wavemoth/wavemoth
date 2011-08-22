@@ -27,6 +27,7 @@ def post_projection_scatter():
 
 def legendre_transform(nvecs):
     nx = 512
+    nx -= nx % 6
     nk = 512
     x_squared = np.zeros(nx)
     a = np.zeros((nk, nvecs))
@@ -41,11 +42,11 @@ def legendre_transform(nvecs):
     if nvecs == 2:
         benchmark(legendre_transform_normal, 1)
             
-    J = 30
+    J = 1000
     def legendre_transform_sse(repeat):
         associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
                                       repeat=repeat, use_sse=True)
-    dt = benchmark(legendre_transform_sse, J, profile=True, duration=10)
+    dt = benchmark(legendre_transform_sse, J, profile=False, duration=7)
     
     flops = nx * nk * (5 + 2 * nvecs)
     print 'GFLOP/sec:', flops / 1e9 / dt

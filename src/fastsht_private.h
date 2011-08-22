@@ -36,6 +36,11 @@ typedef struct {
   int has_equator;
 } fastsht_grid_info;
 
+typedef struct {
+  bfm_plan *bfm;
+  char *legendre_transform_work;
+} fastsht_plan_threadlocal;
+
 struct _fastsht_plan {
   int type;
   int lmax, mmax;
@@ -45,9 +50,10 @@ struct _fastsht_plan {
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
+  fastsht_plan_threadlocal *threadlocal;
+
   int did_allocate_resources;
   int Nside;
-  bfm_plan **bfm_plans;
 };
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,

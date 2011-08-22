@@ -62,8 +62,7 @@ def make_plan(nmaps, Nside=Nside, lmax=None, **kw):
 
     return plan
 
-def test_basic():
-    nmaps = 1
+def assert_basic(nmaps):
     plan = make_plan(nmaps)
 
     plan.input[0, :] = 10
@@ -82,6 +81,10 @@ def test_basic():
     #print np.linalg.norm(y2 - plan.output) / np.linalg.norm(y2)
     for i in range(nmaps):
         assert_almost_equal(y2[:, i], output[:, i])
+
+def test_basic():
+    yield assert_basic, 2
+    yield assert_basic, 6
 
 def do_deterministic(nthreads):
     def hash_array(x):
@@ -167,7 +170,7 @@ def test_accuracy_against_psht():
     lmax = Nside
     nmaps = 1
 
-    def test(eps, memop_cost):
+    def test(nmaps, eps, memop_cost):
         input = np.zeros(((lmax + 1) * (lmax + 2) // 2, nmaps), dtype=np.complex128)
         sht_output = np.zeros((12 * Nside**2, nmaps))
         psht_output = np.zeros((12 * Nside**2, nmaps), order='F')
@@ -179,25 +182,27 @@ def test_accuracy_against_psht():
         errors = []
         # A few pure modes
         for idx in range(100) + range(input.shape[0] - 100, input.shape[0]):
-            input[idx] = 1 + 2j
+            input[idx, :] = 1 + 2j * np.arange(1, nmaps + 1)
             psht_plan.alm2map(input, psht_output)
             sht_plan.execute()
-            input[idx] = 0
+            input[idx, :] = 0
             errors.append(norm(sht_output - psht_output) / norm(psht_output))
 
         # Some random maps
         for i in range(30):
-            input[...] = np.random.normal(size=input.shape)
+            input[...] = np.random.normal(size=input.shape) + 1j * np.random.normal(size=input.shape)
             psht_plan.alm2map(input, psht_output)
             sht_plan.execute()
             errors.append(norm(sht_output - psht_output) / norm(psht_output))
 
         ok_(max(errors) < 10 * eps)
 
-    yield test, 1e-7, 1
-    yield test, 1e-11, 1
-    yield test, 1e-11, 1e10 # No compression
-    yield test, 1e-11, 1e-10 # Full compression
+    yield test, 1, 1e-7, 1
+    yield test, 1, 1e-11, 1
+    yield test, 1, 1e-11, 1e10 # No compression
+    yield test, 1, 1e-11, 1e-10 # Full compression
+
+    yield test, 3, 1e-11, 1e-10
 
 
 #

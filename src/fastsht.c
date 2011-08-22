@@ -332,9 +332,12 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     }
   }
 
-  plan->bfm_plans = malloc(sizeof(void*) * nthreads);
+  size_t legendre_work_size = fastsht_associated_legendre_transform_sse_query_work(2 * nmaps);
+  plan->threadlocal = malloc(sizeof(fastsht_plan_threadlocal[nthreads]));
   for (i = 0; i != nthreads; ++i) {
-    plan->bfm_plans[i] = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+    plan->threadlocal[i].bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+    plan->threadlocal[i].legendre_transform_work = 
+      (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
   }
 
   plan->Nside = Nside;
@@ -365,9 +368,12 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   fastsht_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
   for (int i = 0; i != plan->nthreads; ++i) {
-    bfm_destroy_plan(plan->bfm_plans[i]);
+    bfm_destroy_plan(plan->threadlocal[i].bfm);
+    if (plan->threadlocal[i].legendre_transform_work != NULL) {
+      free(plan->threadlocal[i].legendre_transform_work);
+    }
   }
-  free(plan->bfm_plans);
+  free(plan->threadlocal);
   free(plan->fft_plans);
   free(plan);
 }
@@ -487,12 +493,14 @@ void fastsht_execute(fastsht_plan plan) {
 
 typedef struct {
   double *input;
+  char *work;
 } transpose_apply_ctx_t;
 
 void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                    size_t nvecs, char *payload, size_t payload_len,
-                                   void *ctx) {
-  double *input = ((transpose_apply_ctx_t*)ctx)->input;
+                                   void *ctx_) {
+  transpose_apply_ctx_t *ctx = ctx_;
+  double *input = ctx->input;
   skip128(&payload);
   size_t row_start = read_int64(&payload);
   size_t row_stop = read_int64(&payload);
@@ -529,7 +537,8 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                                   buf + cstart * nvecs,
                                                   x_squared,
                                                   auxdata + 3 * rstart,
-                                                  P0, P1, NULL);
+                                                  P0, P1,
+                                                  ctx->work);
       }
       cstart = cstop;
     }
@@ -550,8 +559,9 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t nc
     }
     ++nrows;
   }
-  transpose_apply_ctx_t ctx = { (double*)work_a_l };
-  int ret = bfm_transpose_apply_d(plan->bfm_plans[omp_get_thread_num()],
+  transpose_apply_ctx_t ctx = { (double*)work_a_l,
+                                plan->threadlocal[omp_get_thread_num()].legendre_transform_work };
+  int ret = bfm_transpose_apply_d(plan->threadlocal[omp_get_thread_num()].bfm,
                                   rec->matrix_data,
                                   pull_a_through_legendre_block,
                                   (double*)output,

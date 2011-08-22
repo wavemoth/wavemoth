@@ -180,6 +180,9 @@ def _get_healpix_phi0s(Nside):
     
 
 
+
+_LEGENDRE_TRANSFORM_WORK_SIZE = LEGENDRE_TRANSFORM_WORK_SIZE # for test use
+
 def associated_legendre_transform(int m, int lmin,
                                   np.ndarray[double, ndim=2, mode='c'] a,
                                   np.ndarray[double, ndim=2, mode='c'] y,

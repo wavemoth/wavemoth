@@ -25,29 +25,30 @@ def post_projection_scatter():
     with benchmark('post_projection_scatter', J, profile=True):
         X = scatter(mask, target1, target2, a, add=True, not_mask=True, repeat=J)
 
-def legendre_transform():
-    nvecs = 2
-    nx = 2 * 2048 * 10
-    nx -= nx % 6
-    nl = 2 * 2048 // 2
+def legendre_transform(nvecs):
+    nx = 512
+    nk = 512
     x_squared = np.zeros(nx)
-    a = np.zeros((nl, nvecs))
+    a = np.zeros((nk, nvecs))
     y = np.zeros((nx, nvecs))
     p0 = np.zeros(nx)
     p1 = np.zeros(nx)
 
-    associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
-                                  repeat=1)
-    J = 1
-    with benchmark('lt', J):
+    def legendre_transform_normal(repeat):
         associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
-                                      repeat=J)
-    J = 40
-    with benchmark('lt_sse', J, profile=True):
+                                      repeat=repeat)
+
+    if nvecs == 2:
+        benchmark(legendre_transform_normal, 1)
+            
+    J = 30
+    def legendre_transform_sse(repeat):
         associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
-                                      repeat=J, use_sse=True)
-    flops = nx * nl * 7
-    print 'Number of GFLOPS performed', flops / 1e9
+                                      repeat=repeat, use_sse=True)
+    dt = benchmark(legendre_transform_sse, J, profile=True, duration=10)
+    
+    flops = nx * nk * (5 + 2 * nvecs)
+    print 'GFLOP/sec:', flops / 1e9 / dt
 
 def legendre_precompute():
     nvecs = 2
@@ -76,6 +77,8 @@ def legendre_precompute():
 if sys.argv[1] == 'pps':
     post_projection_scatter()
 elif sys.argv[1] == 'lt':
-    legendre_transform()
+    legendre_transform(2)
+elif sys.argv[1] == 'ltmulti':
+    legendre_transform(12)
 elif sys.argv[1] == 'lp':
     legendre_precompute()

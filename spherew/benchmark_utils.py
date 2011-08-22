@@ -1,5 +1,6 @@
 from time import clock
 from contextlib import contextmanager
+import os
 
 __all__ = ['ftime', 'benchmark']
 
@@ -17,14 +18,26 @@ def ftime(t):
         units = "s"
     return "%.1f %s" % (t, units)
 
-@contextmanager
-def benchmark(name, divisor, profile=False):
+def benchmark(func, repeat, name=None, profile=False, duration=1.0,
+              burnin=True):
+    if name is None:
+        name = func.__name__
     if profile:
         import yep
-        yep.start("profiles/%s.prof" % name)
-    t0 = clock()
-    yield
-    t1 = clock()
-    print '%s, %d iterations: %s per iteration' % (name, divisor, ftime((t1 - t0) / divisor))
+        yep.start("profiles/%s%d.prof" % (name, os.getpid()))
+    times = []
+    elapsed = 0
+    n = 0
+    if burnin:
+        func(1)
+    while elapsed < duration:
+        t0 = clock()
+        func(repeat)
+        t1 = clock()
+        elapsed += t1 - t0
+        times.append(t1 - t0)
+        n += 1
+    print '%s, %d x %d: %s' % (name, n, repeat, ftime(min(times) / repeat))
     if profile:
         yep.stop()
+    return min(times) / repeat

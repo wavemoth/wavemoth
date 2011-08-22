@@ -34,15 +34,19 @@ def assert_transforms(nvecs, nx, nk, auxalign, drop_normal=False):
     auxdata = np.zeros(max(3 * (nk - 2), 0) + auxalign)
     assert_aligned(auxdata)
     auxdata[auxalign:] = associated_legendre_transform_auxdata(m, lmin, nk)
-    print a
     for use_sse in ([True] if drop_normal else [False, True]):
         y = np.zeros((x_squared.shape[0], a.shape[1]))
         associated_legendre_transform(m, lmin, a, y, x_squared,
                                       P[0, :].copy('C'), P[1, :].copy('C'),
                                       use_sse=use_sse, auxdata=auxdata[auxalign:])
-        print ' '.join(['%.5f' % x for x in sorted(y0.ravel())])
-        print
-        print ' '.join(['%.5f' % x for x in sorted(y.ravel())])
+
+        #print y0
+        #print '---'
+        #print y
+        
+        #print ' '.join(['%.5f' % x for x in sorted(y0.ravel())])
+        #print
+        #print ' '.join(['%.5f' % x for x in sorted(y.ravel())])
 
         for j in range(nvecs):
             assert_almost_equal(y0[:, j], y[:, j])
@@ -54,4 +58,16 @@ def test_nvec2():
                 yield assert_transforms, 2, nx, nk, auxalign
 
 def test_multivec():
-    yield assert_transforms, 4, 4, 6, 0, True
+    from spherew.lib import _LEGENDRE_TRANSFORM_WORK_SIZE
+    nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE / (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
+
+    yield assert_transforms, 10, 4, 4, 0, True
+
+    return
+    for nx in [2, 3, 4, 6, 7, 10, 11]:
+        for nk in [2, 3, 4, 6, 7, 10, 11, nk_block - 2, nk_block, nk_block + 2]:
+            nk *= 2 # todo
+            nx *= 2 # todo
+            for nvecs in [4, 8, 12]: # TODO
+                yield assert_transforms, nvecs, nx, nk, 0, True
+    

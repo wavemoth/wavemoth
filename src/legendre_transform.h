@@ -10,7 +10,7 @@ seperately. Uses a three-term recurrence relation that only involves
 even or odd l's.
 */
 
-#define LEGENDRE_TRANSFORM_WORK_SIZE 4096
+#define LEGENDRE_TRANSFORM_WORK_SIZE (1024 * 4)
 
 
 void fastsht_associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,

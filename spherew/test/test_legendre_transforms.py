@@ -54,7 +54,7 @@ def assert_transforms(nvecs, nx, nk, auxalign, drop_normal=False):
             assert_almost_equal(y0[:, j], y[:, j])
 
 def test_nvec2():
-    for nx in [2, 3, 4, 6, 7, 10, 11]:
+    for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
         for nk in [2, 3, 4, 6, 7, 10, 11]:
             for auxalign in [0, 1]:
                 yield assert_transforms, 2, nx, nk, auxalign
@@ -62,14 +62,16 @@ def test_nvec2():
 def test_multivec():
     from spherew.lib import _LEGENDRE_TRANSFORM_WORK_SIZE
     nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE / (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
-    
-    #yield assert_transforms, 6, 4, 68, 0, True
-    #return
 
-    for nx in [2, 3, 4, 6, 7, 10, 11]:
+    yield assert_transforms, 6, 4, 6, 0, True
+    yield assert_transforms, 6, 5, 6, 0, True
+    yield assert_transforms, 6, 1, 68, 0, True
+#    return
+    
+
+    for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
         for nk in [2, 3, 4, 6, 7, 10, 11, nk_block - 2, nk_block, nk_block + 2]:
             nk *= 2 # todo
-            nx *= 2 # todo
             for nvecs in [6, 12, 18]: # TODO
                 yield assert_transforms, nvecs, nx, nk, 0, True
     

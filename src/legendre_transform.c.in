@@ -43,6 +43,14 @@ static INLINE size_t imin(size_t a, size_t b) {
 
 #define MULADD(z, a, b) _mm_add_pd(z, _mm_mul_pd(a, b))
 
+static INLINE m128d load_single(double *x) {
+  return (m128d){ x[0], 0.0 };
+}
+
+static INLINE m128d load_single_dup(double *x) {
+  return (m128d){ x[0], x[0] };
+}
+
 
 {{for xchunksize in [1, 2, 6]}}
 {{py:
@@ -350,16 +358,16 @@ single = xchunksize == 1
 nregs = 1 if single else xchunksize // 2
 }}
 #define X_CHUNK_SIZE {{xchunksize}}
-#define NREGS X_CHUNK_SIZE / 2
+#define NREGS {{nregs}}
 static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
                                                 double *A, double *y_acc, double *P_block) {
   size_t i, s, k, j_chunk_start;
   double *pP, *pA;
 
-  /* Accumulator for vec j, x-strip i is y_ji[i * NREGS + j]. Each y_ji
+  /* Accumulator for vec j, x-strip i is y_ji[i * (NJ / 2) + j]. Each y_ji
      contains two j-values; y_ij = [ y_{j,i}   y_{j+1, i} ]. */
   m128d y_ji[(NJ / 2) * X_CHUNK_SIZE];
-
+  
   assert(NJ % 2 == 0);
   assert(nvecs % NJ == 0); /* TODO ! */
   for (j_chunk_start = 0; j_chunk_start != nvecs; j_chunk_start += NJ) {
@@ -410,9 +418,7 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
                                                    char *work) {
   size_t i, k_chunk_start, k_chunk_stop, s, k;
   double *P_block = (double *)work;
-  double *P_block_last_two_rows = P_block
-    + (LEGENDRE_TRANSFORM_WORK_SIZE / sizeof(double))
-    - 2 * 2 * X_CHUNK_SIZE;
+  double *P_block_last_two_rows = P_block + 2 * (K_CHUNK_SIZE - 2) * X_CHUNK_SIZE;
   double *A_chunk;
   auxdata -= 6; /* auxdata not passed for k=0, k=1 */
 
@@ -429,36 +435,39 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
        so one more store, but can keep x_squared unpaged for longer.
        Could play around with this. */
     m128d x_squared_i[NREGS];
+    {{if single}}
+    x_squared_i[0] = load_single_dup(x_squared + i);
+    {{else}}
     for (s = 0; s != NREGS; ++s) {
       x_squared_i[s] = _mm_load_pd(x_squared + i + 2 * s);
     }
+    {{endif}}
 
     /* Initialize Y to zero. */
     for (s = 0; s != X_CHUNK_SIZE * nvecs / 2; ++s) {
       _mm_store_pd(Y_chunk + 2 * s, _mm_setzero_pd());
     }
 
-    /* Deal with P0 and P1. Simply copy to the start of P_block and jump to 
-       middle of loop. */
+    /* Deal with P0 and P1. Simply copy to the end of P_block and
+       do a matmul. */
     double *pP = P_block_last_two_rows;
+    {{for arr in ['P0', 'P1']}}
     for (s = 0; s != NREGS; ++s) {
       m128d lo, hi;
-      Ppp_ki[s] = _mm_load_pd(P0 + i + 2 * s);
-      hi = _mm_unpackhi_pd(Ppp_ki[s], Ppp_ki[s]);
-      lo = _mm_unpacklo_pd(Ppp_ki[s], Ppp_ki[s]);
+      {{if single}}
+      lo = load_single_dup({{arr}} + i + 2 * s);
+      _mm_store_pd(pP, lo);
+      pP += 2;
+      {{else}}
+      lo = _mm_load_pd({{arr}} + i + 2 * s);
+      hi = _mm_unpackhi_pd(lo, lo);
+      lo = _mm_unpacklo_pd(lo, lo);
       _mm_store_pd(pP, lo);
       _mm_store_pd(pP + 2, hi);
       pP += 4;
+      {{endif}}
     }
-    for (s = 0; s != NREGS; ++s) {
-      m128d lo, hi;
-      Pp_ki[s] = _mm_load_pd(P1 + i + 2 * s);
-      hi = _mm_unpackhi_pd(Pp_ki[s], Pp_ki[s]);
-      lo = _mm_unpacklo_pd(Pp_ki[s], Pp_ki[s]);
-      _mm_store_pd(pP, lo);
-      _mm_store_pd(pP + 2, hi);
-      pP += 4;
-    }
+    {{endfor}}
 
     legendre_matmul_chunk{{xchunksize}}(2, nvecs,
                                         A, Y_chunk,
@@ -466,14 +475,7 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
 
 
     /* Loop over chunks in K, so that we stay within LEGENDRE_TRANSFORM_WORK_SIZE and
-       don't spill P_block out of L1 cache. Since the first two rows are already
-       computed in the first iteration, we start the thing with a goto statement... */
-    /*    k_chunk_start = 0;
-    A_chunk = A;
-    pP = P_block;
-    k = 2;
-    k_chunk_stop = imin(nk, k_chunk_start + K_CHUNK_SIZE);*/
-
+       don't spill P_block out of L1 cache. */
     for (k_chunk_start = 2; k_chunk_start < nk; k_chunk_start += K_CHUNK_SIZE) {
       k_chunk_stop = imin(nk, k_chunk_start + K_CHUNK_SIZE);
       /****
@@ -483,20 +485,20 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
 
       /* Load the last two rows of the previous block into registers. */
       pP = P_block_last_two_rows;
+      {{if single}}
+      Ppp_ki[0] = _mm_load_pd(pP);
+      Pp_ki[0] = _mm_load_pd(pP + 2);
+      {{else}}
+      {{for regarr in ['Ppp_ki', 'Pp_ki']}}
       for (s = 0; s != NREGS; ++s) {
         m128d lo, hi;
         lo = _mm_load_pd(pP);
         hi = _mm_load_pd(pP + 2);
         pP += 4;
-        Ppp_ki[s] = _mm_unpacklo_pd(lo, hi);
+        {{regarr}}[s] = _mm_unpacklo_pd(lo, hi);
       }
-      for (s = 0; s != NREGS; ++s) {
-        m128d lo, hi;
-        lo = _mm_load_pd(pP);
-        hi = _mm_load_pd(pP + 2);
-        pP += 4;
-        Pp_ki[s] = _mm_unpacklo_pd(lo, hi);
-      }
+      {{endfor}}
+      {{endif}}
 
       pP = P_block;
       assert((intptr_t)auxdata % 2 == 0); /* TODO! */
@@ -519,11 +521,16 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
           Ppp_ki[s] = Pp_ki[s];
           Pp_ki[s] = P_ki[s];
 
+          {{if single}}
+          _mm_store_pd(pP, P_ki[s]);
+          pP += 2;
+          {{else}}
           lo = _mm_unpacklo_pd(P_ki[s], P_ki[s]);
           hi = _mm_unpackhi_pd(P_ki[s], P_ki[s]);
           _mm_store_pd(pP, lo);
           _mm_store_pd(pP + 2, hi);
           pP += 4;
+          {{endif}}
         }
         {{enddef}}
         

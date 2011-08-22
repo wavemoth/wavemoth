@@ -65,13 +65,13 @@ def test_multivec():
 
     yield assert_transforms, 6, 4, 6, 0, True
     yield assert_transforms, 6, 5, 6, 0, True
-    yield assert_transforms, 6, 1, 68, 0, True
-#    return
-    
+    yield assert_transforms, 6, 1, 68, 1, True
+    yield assert_transforms, 6, 1, 69, 1, True
+    yield assert_transforms, 6, 1, 3, 1, True
 
     for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
         for nk in [2, 3, 4, 6, 7, 10, 11, nk_block - 2, nk_block, nk_block + 2]:
-            nk *= 2 # todo
             for nvecs in [6, 12, 18]: # TODO
-                yield assert_transforms, nvecs, nx, nk, 0, True
+                for auxalign in [0, 1]:
+                    yield assert_transforms, nvecs, nx, nk, auxalign, True
     

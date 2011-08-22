@@ -500,13 +500,23 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
       {{endfor}}
       {{endif}}
 
+      m128d aux1, aux2, aux3, lo, hi, alpha, beta, gamma, w[NREGS];
+      size_t loop_len = (k_chunk_stop - k_chunk_start);
+      size_t loop_stop = k_chunk_start + loop_len - loop_len % 2;
+
       pP = P_block;
-      assert((intptr_t)auxdata % 2 == 0); /* TODO! */
-      assert((k_chunk_stop - k_chunk_start) % 2 == 0); /* TODO! */
-      for (k = k_chunk_start; k != k_chunk_stop; ++k) {
+      k = k_chunk_start;
+
+      if (loop_len > 0 && (intptr_t)auxdata % 16 != 0) {
+        /* auxdata not 128-bit aligned; load alpha[k] into upper part of
+           aux2 and then jump to second loop section; changing loop stop
+           accordingly. */
+        aux2 = (m128d){ 0.0, auxdata[3 * k] };
+        if (nk % 2 == 0) loop_stop--;
+        goto SECOND_ITERATION;
+      }
+      while (k < loop_stop) {
         /* Use three-term recurrence formula */
-        m128d w[NREGS];
-        m128d alpha, beta, gamma, aux1, aux2, aux3, lo, hi;
 
         {{def loop_body}}
         for (s = 0; s != NREGS; ++s) {
@@ -544,6 +554,7 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
         {{loop_body}}
         ++k;
 
+      SECOND_ITERATION:
         /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
         aux3 = _mm_load_pd(auxdata + 3 * (k - 1) + 4);
         alpha = _mm_unpackhi_pd(aux2, aux2);
@@ -551,6 +562,16 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
         gamma = _mm_unpackhi_pd(aux3, aux3);
 
         {{loop_body}}
+        ++k;
+      }
+      if (k != k_chunk_stop) {
+        /* Loop peel for the single odd k. */
+        aux1 = _mm_load_pd(auxdata + 3 * k);
+        alpha = _mm_unpacklo_pd(aux1, aux1);
+        beta = _mm_unpackhi_pd(aux1, aux1);
+        gamma = (m128d){ auxdata[3 * k + 2], auxdata[3 * k + 2] };
+        {{loop_body}}
+        ++k;
       }
 
       /****

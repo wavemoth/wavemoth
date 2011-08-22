@@ -63,15 +63,16 @@ def test_multivec():
     from spherew.lib import _LEGENDRE_TRANSFORM_WORK_SIZE
     nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE / (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
 
-    yield assert_transforms, 6, 4, 6, 0, True
-    yield assert_transforms, 6, 5, 6, 0, True
-    yield assert_transforms, 6, 1, 68, 1, True
-    yield assert_transforms, 6, 1, 69, 1, True
-    yield assert_transforms, 6, 1, 3, 1, True
+    yield assert_transforms, 2, 4, 6, 0, True
+    yield assert_transforms, 2, 5, 6, 0, True
+    yield assert_transforms, 2, 1, 68, 1, True
+    yield assert_transforms, 2, 1, 69, 1, True
+    yield assert_transforms, 2, 1, 2, 1, True # CRASHES
+    return
 
     for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
         for nk in [2, 3, 4, 6, 7, 10, 11, nk_block - 2, nk_block, nk_block + 2]:
-            for nvecs in [6, 12, 18]: # TODO
+            for nvecs in [2, 4, 6, 10, 12, 22]: # TODO
                 for auxalign in [0, 1]:
                     yield assert_transforms, nvecs, nx, nk, auxalign, True
     

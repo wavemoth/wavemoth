@@ -372,11 +372,16 @@ static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
      contains two j-values; y_ij = [ y_{j,i}   y_{j+1, i} ]. */
   m128d y_ji[(NJ / 2) * X_CHUNK_SIZE];
   
-  assert(NJ % 2 == 0);
-  assert(nvecs % NJ == 0); /* TODO ! */
-  for (j_chunk_start = 0; j_chunk_start != nvecs; j_chunk_start += NJ) {
+  /* Repeat body two times -- one for NJ, and one taking 2 J's at the time,
+     so that any nvecs divisible by 2 is handled.
+     
+     NOTE that we always use NJ when indexing y_ji, since we can and
+     to make things easier on the compiler.
+   */
+  {{def loop(jchunk)}}
+  for (; j_chunk_start < nvecs; j_chunk_start += {{jchunk}}) {
     /* Initialize accumulators to 0 */
-    for (s = 0; s != (NJ / 2) * X_CHUNK_SIZE; ++s) {
+    for (s = 0; s != ({{jchunk}} / 2) * X_CHUNK_SIZE; ++s) {
       y_ji[s] = _mm_setzero_pd();
     }
 
@@ -386,7 +391,7 @@ static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
       m128d a_ji[NJ / 2];
       m128d Pval;
       /* Load a */
-      for (s = 0; s != NJ / 2; ++s) {
+      for (s = 0; s != {{jchunk}} / 2; ++s) {
         a_ji[s] = _mm_load_pd(pA);
         pA += 2;
       }
@@ -394,7 +399,7 @@ static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
       for (i = 0; i != X_CHUNK_SIZE; ++i) {
         Pval = _mm_load_pd(pP);
         pP += 2;
-        for (s = 0; s != NJ / 2; ++s) {
+        for (s = 0; s != {{jchunk}} / 2; ++s) {
           y_ji[i * (NJ / 2) + s] = MULADD(y_ji[i * (NJ / 2) + s], Pval, a_ji[s]);
         }
       }
@@ -402,13 +407,20 @@ static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
 
     /* Accumulate in vector */
     for (i = 0; i != X_CHUNK_SIZE; ++i) {
-      for (s = 0; s != NJ / 2; ++s) {
+      for (s = 0; s != {{jchunk}} / 2; ++s) {
         m128d acc = _mm_load_pd(y_acc + i * nvecs + j_chunk_start + 2 * s);
         acc = _mm_add_pd(acc, y_ji[i * (NJ / 2) + s]);
         _mm_store_pd(y_acc + i * nvecs + j_chunk_start + 2 * s, acc);
       }
     }
   }
+  {{enddef}}
+
+  j_chunk_start = 0;
+  {{loop('NJ')}}
+  {{loop(2)}}
+  
+  
 }
 
 static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_stop,
@@ -622,6 +634,7 @@ void fastsht_associated_legendre_transform_sse(size_t nx, size_t nk,
   assert((size_t)y % 16 == 0);
   assert((size_t)P % 16 == 0);
   assert((size_t)Pp1 % 16 == 0);
+  assert(nvecs % 2 == 0);
   size_t i, n;
   i = 0;
 

@@ -504,7 +504,6 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
     dgemm_ccc(input, A, buf,
               nvecs, stop - start, nk, 0.0);
   } else {
-    size_t nx = stop - start;
     size_t nstrips = read_int64(&payload);
     double *auxdata = read_aligned_array_d(&payload, 3 * (nk - 2));
     size_t rstart, cstart, cstop;

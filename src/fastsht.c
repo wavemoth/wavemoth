@@ -332,7 +332,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     }
   }
 
-  size_t legendre_work_size = fastsht_associated_legendre_transform_sse_query_work(2 * nmaps);
+  size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);
   plan->threadlocal = malloc(sizeof(fastsht_plan_threadlocal[nthreads]));
   for (i = 0; i != nthreads; ++i) {
     plan->threadlocal[i].bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
@@ -389,7 +389,7 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
   return N * 2; /* count mul and add seperately */
 }
 
-void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride) {
+void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride) {
   int lmax = plan->lmax, nmaps = plan->nmaps, nrings_half = plan->grid->mid_ring + 1;
   double complex **q_list;
   int *ms;
@@ -485,7 +485,7 @@ void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int ms
 }
 
 void fastsht_execute(fastsht_plan plan) {
-  fastsht_legendre_transform(plan, 0, plan->mmax + 1, 1);
+  fastsht_perform_legendre_transforms(plan, 0, plan->mmax + 1, 1);
   /* Backward FFTs from plan->work to plan->output */
   fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
 }
@@ -532,13 +532,13 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
         double *x_squared = read_aligned_array_d(&payload, nx_strip);
         double *P0 = read_aligned_array_d(&payload, nx_strip);
         double *P1 = read_aligned_array_d(&payload, nx_strip);
-        fastsht_associated_legendre_transform_sse(nx_strip, nk_strip, nvecs,
-                                                  input + rstart * nvecs,
-                                                  buf + cstart * nvecs,
-                                                  x_squared,
-                                                  auxdata + 3 * rstart,
-                                                  P0, P1,
-                                                  ctx->work);
+        fastsht_legendre_transform_sse(nx_strip, nk_strip, nvecs,
+                                       input + rstart * nvecs,
+                                       buf + cstart * nvecs,
+                                       x_squared,
+                                       auxdata + 3 * rstart,
+                                       P0, P1,
+                                       ctx->work);
       }
       cstart = cstop;
     }

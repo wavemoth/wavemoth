@@ -13,26 +13,26 @@ even or odd l's.
 #define LEGENDRE_TRANSFORM_WORK_SIZE (1024 * 4)
 
 
-void fastsht_associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
-                                                   double *auxdata);
+void fastsht_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
+                                        double *auxdata);
 
-void fastsht_associated_legendre_transform(size_t nx, size_t nl,
-                                           size_t nvecs,
-                                           double *a_l,
-                                           double *y,
-                                           double *x_squared, 
-                                           double *auxdata,
-                                           double *P, double *Pp1);
+void fastsht_legendre_transform(size_t nx, size_t nl,
+                                size_t nvecs,
+                                double *a_l,
+                                double *y,
+                                double *x_squared, 
+                                double *auxdata,
+                                double *P, double *Pp1);
 
-void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
-                                               size_t nvecs,
-                                               double *a_l,
-                                               double *y,
-                                               double *x_squared, 
-                                               double *auxdata,
-                                               double *P, double *Pp1,
-                                               char *work);
+void fastsht_legendre_transform_sse(size_t nx, size_t nl,
+                                    size_t nvecs,
+                                    double *a_l,
+                                    double *y,
+                                    double *x_squared, 
+                                    double *auxdata,
+                                    double *P, double *Pp1,
+                                    char *work);
 
-size_t fastsht_associated_legendre_transform_sse_query_work(size_t nvecs);
+size_t fastsht_legendre_transform_sse_query_work(size_t nvecs);
 
 #endif

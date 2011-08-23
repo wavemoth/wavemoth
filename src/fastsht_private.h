@@ -66,7 +66,7 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
                                        int ms_len, int *ms,
                                        double complex **q_list);
 
-void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride);
+void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride);
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end);
 

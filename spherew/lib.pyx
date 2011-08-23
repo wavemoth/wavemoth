@@ -49,7 +49,7 @@ cdef extern from "fastsht.h":
     void fastsht_execute(fastsht_plan plan)
     void fastsht_configure(char *resource_dir)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
-    void fastsht_legendre_transform(fastsht_plan plan, int mstart, int mstop, int mstride)
+    void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride)
     void fastsht_assemble_rings(fastsht_plan plan,
                                 int ms_len, int *ms,
                                 double complex **q_list)
@@ -66,25 +66,25 @@ cdef extern from "fastsht_private.h":
     void fastsht_free_grid_info(fastsht_grid_info *info)
 
 cdef extern from "legendre_transform.h":
-    void fastsht_associated_legendre_transform(size_t nx, size_t nl,
-                                               size_t nvecs,
-                                               double *a_l,
-                                               double *y,
-                                               double *x_squared, 
-                                               double *c_and_cinv_and_d,
-                                               double *P, double *Pp1)
-    void fastsht_associated_legendre_transform_sse(size_t nx, size_t nl,
-                                                   size_t nvecs,
-                                                   double *a_l,
-                                                   double *y,
-                                                   double *x_squared, 
-                                                   double *c_and_cinv_and_d,
-                                                   double *P, double *Pp1,
-                                                   char *work)
+    void fastsht_legendre_transform(size_t nx, size_t nl,
+                                    size_t nvecs,
+                                    double *a_l,
+                                    double *y,
+                                    double *x_squared, 
+                                    double *c_and_cinv_and_d,
+                                    double *P, double *Pp1)
+    void fastsht_legendre_transform_sse(size_t nx, size_t nl,
+                                        size_t nvecs,
+                                        double *a_l,
+                                        double *y,
+                                        double *x_squared, 
+                                        double *c_and_cinv_and_d,
+                                        double *P, double *Pp1,
+                                        char *work)
     
-    size_t fastsht_associated_legendre_transform_sse_query_work(size_t nvecs)
+    size_t fastsht_legendre_transform_sse_query_work(size_t nvecs)
     
-    void fastsht_associated_legendre_transform_auxdata(
+    void fastsht_legendre_transform_auxdata(
         size_t m, size_t lmin, size_t nk,
         double *auxdata)
 
@@ -145,7 +145,7 @@ cdef class ShtPlan:
     def perform_legendre_transform(self, mstart, mstop, mstride, int repeat=1):
         cdef int k
         for k in range(repeat):
-            fastsht_legendre_transform(self.plan, mstart, mstop, mstride)
+            fastsht_perform_legendre_transforms(self.plan, mstart, mstop, mstride)
 
     def assemble_rings(self, int m,
                        np.ndarray[double complex, ndim=2, mode='c'] q_even,
@@ -184,14 +184,14 @@ def _get_healpix_phi0s(Nside):
 
 _LEGENDRE_TRANSFORM_WORK_SIZE = LEGENDRE_TRANSFORM_WORK_SIZE # for test use
 
-def associated_legendre_transform(int m, int lmin,
-                                  np.ndarray[double, ndim=2, mode='c'] a,
-                                  np.ndarray[double, ndim=2, mode='c'] y,
-                                  np.ndarray[double, ndim=1, mode='c'] x_squared,
-                                  np.ndarray[double, ndim=1, mode='c'] P,
-                                  np.ndarray[double, ndim=1, mode='c'] Pp1,
-                                  int repeat=1, use_sse=False,
-                                  np.ndarray[double, ndim=1, mode='c'] auxdata=None):
+def legendre_transform(int m, int lmin,
+                       np.ndarray[double, ndim=2, mode='c'] a,
+                       np.ndarray[double, ndim=2, mode='c'] y,
+                       np.ndarray[double, ndim=1, mode='c'] x_squared,
+                       np.ndarray[double, ndim=1, mode='c'] P,
+                       np.ndarray[double, ndim=1, mode='c'] Pp1,
+                       int repeat=1, use_sse=False,
+                       np.ndarray[double, ndim=1, mode='c'] auxdata=None):
     cdef size_t nx, nk, nvecs
     cdef Py_ssize_t i, k
     nx = x_squared.shape[0]
@@ -203,7 +203,7 @@ def associated_legendre_transform(int m, int lmin,
         raise ValueError("nonconforming arrays")
 
     if auxdata is None:
-        auxdata = associated_legendre_transform_auxdata(m, lmin, nk)
+        auxdata = legendre_transform_auxdata(m, lmin, nk)
     elif auxdata.shape[0] != 3 * (nk - 2):
         raise ValueError("auxdata.shape[0] != 3 * (nk - 2)")
 
@@ -215,11 +215,11 @@ def associated_legendre_transform(int m, int lmin,
     if nvecs % 2 != 0:
         raise ValueError("nvecs not divisible by 2")
     if use_sse:
-        work_size = fastsht_associated_legendre_transform_sse_query_work(nvecs);
+        work_size = fastsht_legendre_transform_sse_query_work(nvecs);
         work_array = np.ones(work_size, dtype=np.int8) * np.nan
         work = work_array.data
         for i in range(repeat):
-            fastsht_associated_legendre_transform_sse(
+            fastsht_legendre_transform_sse(
                 nx, nk, nvecs,
                 <double*>a.data,
                 <double*>y.data,
@@ -230,7 +230,7 @@ def associated_legendre_transform(int m, int lmin,
                 work)
     else:
         for i in range(repeat):
-            fastsht_associated_legendre_transform(
+            fastsht_legendre_transform(
                 nx, nk, nvecs,
                 <double*>a.data,
                 <double*>y.data,
@@ -239,13 +239,13 @@ def associated_legendre_transform(int m, int lmin,
                 <double*>P.data,
                 <double*>Pp1.data)
 
-def associated_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk):
+def legendre_transform_auxdata(size_t m, size_t lmin, size_t nk):
     cdef np.ndarray[double, mode='c'] out
     if nk < 3:
         return np.zeros(0)
     else:
         out = np.empty(3 * (nk - 2))
-        fastsht_associated_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
+        fastsht_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
         return out
 
 def first_true(x):
@@ -400,7 +400,7 @@ class LegendreMatrixProvider(object):
             return
             
         write_int64(stream, len(strips))
-        auxdata = associated_legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
+        auxdata = legendre_transform_auxdata(self.m, lmin, row_stop - row_start)
         assert auxdata.shape[0] == 3 * (row_stop - row_start - 2)
         write_aligned_array(stream, auxdata)
 
@@ -434,9 +434,9 @@ class LegendreMatrixProvider(object):
                 a = np.zeros((rstop - rstart, 2))
                 a[-1,:] = 1
                 y = np.zeros((cstop - cstart, 2)) * np.nan
-                associated_legendre_transform(self.m, lmin + 2 * rstart, a, y,
-                                              x_squared[cstart:cstop],
-                                              L0, L2, use_sse=True)
+                legendre_transform(self.m, lmin + 2 * rstart, a, y,
+                                   x_squared[cstart:cstop],
+                                   L0, L2, use_sse=True)
                 y = y[:, 0]
                 err = np.linalg.norm(y - Lambda[-1, cstart:cstop]) / np.linalg.norm(y)
                 if err > 1e-9:

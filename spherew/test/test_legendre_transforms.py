@@ -34,12 +34,12 @@ def assert_transforms(nvecs, nx, nk, auxalign, drop_normal=False):
     y0 = np.dot(a.T, P).T
     auxdata = np.zeros(max(3 * (nk - 2), 0) + auxalign)
     assert_aligned(auxdata)
-    auxdata[auxalign:] = associated_legendre_transform_auxdata(m, lmin, nk)
+    auxdata[auxalign:] = legendre_transform_auxdata(m, lmin, nk)
     for use_sse in ([True] if drop_normal else [False, True]):
         y = np.zeros((x_squared.shape[0], a.shape[1]))
-        associated_legendre_transform(m, lmin, a, y, x_squared,
-                                      P[0, :].copy('C'), P[1, :].copy('C'),
-                                      use_sse=use_sse, auxdata=auxdata[auxalign:])
+        legendre_transform(m, lmin, a, y, x_squared,
+                           P[0, :].copy('C'), P[1, :].copy('C'),
+                           use_sse=use_sse, auxdata=auxdata[auxalign:])
 
         #print
         #print np.round(y0, 2).T

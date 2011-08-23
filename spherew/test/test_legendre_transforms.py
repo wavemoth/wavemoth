@@ -41,10 +41,10 @@ def assert_transforms(nvecs, nx, nk, auxalign, drop_normal=False):
                                       P[0, :].copy('C'), P[1, :].copy('C'),
                                       use_sse=use_sse, auxdata=auxdata[auxalign:])
 
-#        print
-#        print y0
-#        print '---'
-#        print y
+        #print
+        #print np.round(y0, 2).T
+        #print '---'
+        #print np.round(y, 2).T
         
         #print ' '.join(['%.5f' % x for x in sorted(y0.ravel())])
         #print
@@ -63,12 +63,13 @@ def test_multivec():
     from spherew.lib import _LEGENDRE_TRANSFORM_WORK_SIZE
     nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE / (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
 
-    yield assert_transforms, 2, 4, 6, 0, True
-    yield assert_transforms, 2, 5, 6, 0, True
-    yield assert_transforms, 2, 1, 68, 1, True
-    yield assert_transforms, 2, 1, 69, 1, True
-    yield assert_transforms, 2, 1, 2, 1, True # CRASHES
-    return
+#    yield assert_transforms, 2, 4, 6, 0, True
+#    yield assert_transforms, 2, 5, 6, 0, True
+#    yield assert_transforms, 2, 1, 68, 1, True
+#    yield assert_transforms, 2, 1, 69, 1, True
+#    yield assert_transforms, 4, 1, 2, 0, True # CRASHES
+#    yield assert_transforms, 12, 4, 4, 0, True
+#    return
 
     for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
         for nk in [2, 3, 4, 6, 7, 10, 11, nk_block - 2, nk_block, nk_block + 2]:

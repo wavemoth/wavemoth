@@ -21,6 +21,11 @@
 typedef __m128d m128d;
 typedef __m128 m128;
 
+
+/* Useful for valgrind stack traces
+#define _mm_load_pd(x) (m128d){(x)[0], (x)[1]}
+*/
+
 static INLINE size_t imin(size_t a, size_t b) {
   return (a < b) ? a : b;
 }
@@ -40,7 +45,7 @@ static void print_array(char *msg, double* arr, size_t len) {
 
 static void _printreg(char *msg, m128d r) {
   double *pd = (double*)&r;
-  printf("%s = [%f %f]\n", msg, pd[0], pd[1]);
+  printf("%s = [%.2f %.2f]\n", msg, pd[0], pd[1]);
 }
 
 #define printreg(x) _printreg(#x, x)
@@ -326,7 +331,7 @@ xchunksize_manyvec_list = [4, 2, 1]
 #define NJ 6
 
 static void pack_A(double *A, double *buf, size_t nvecs, size_t nk) {
-  size_t k, j_start, k_start, k_stop, s;
+  size_t k, j_start, j_stop, k_start, k_stop, s;
   double *pbuf, *A_chunk;
 
   /* Can we always process 2 chunks per K_CHUNK? Does it matter? */
@@ -336,14 +341,23 @@ static void pack_A(double *A, double *buf, size_t nvecs, size_t nk) {
   for (k_start = 0; k_start < nk; k_start += K_CHUNK_SIZE) {
     k_stop = imin(nk, k_start + K_CHUNK_SIZE);
     pbuf = buf;
-    /* First transpose into temporary buffer buf */
-    for (j_start = 0; j_start < nvecs; j_start += NJ) {
+    /* First transpose into temporary buffer buf. Start with all chunks of size NJ */
+    j_stop = nvecs - nvecs % NJ;
+    for (j_start = 0; j_start < j_stop; j_start += NJ) {
       for (k = k_start; k != k_stop; ++k) {
         for (s = 0; s != NJ / 2; ++s) {
           m128d a = _mm_load_pd(A + k * nvecs + j_start + 2 * s);
           _mm_store_pd(pbuf, a);
           pbuf += 2;
         }
+      }
+    }
+    /* Process a last chunk of size nvecs - j_start not divisible by NJ */
+    for (k = k_start; k != k_stop; ++k) {
+      for (s = 0; s != (nvecs - j_start) / 2; ++s) {
+        m128d a = _mm_load_pd(A + k * nvecs + j_start + 2 * s);
+        _mm_store_pd(pbuf, a);
+        pbuf += 2;
       }
     }
     /* Copy back */
@@ -365,7 +379,7 @@ nregs = 1 if single else xchunksize // 2
 #define NREGS {{nregs}}
 static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
                                                 double *A, double *y_acc, double *P_block) {
-  size_t i, s, k, j_chunk_start;
+  size_t i, s, k, j_start, j_stop;
   double *pP, *pA;
 
   /* Accumulator for vec j, x-strip i is y_ji[i * (NJ / 2) + j]. Each y_ji
@@ -379,14 +393,14 @@ static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
      to make things easier on the compiler.
    */
   {{def loop(jchunk)}}
-  for (; j_chunk_start < nvecs; j_chunk_start += {{jchunk}}) {
+  for (; j_start < j_stop; j_start += {{jchunk}}) {
     /* Initialize accumulators to 0 */
-    for (s = 0; s != ({{jchunk}} / 2) * X_CHUNK_SIZE; ++s) {
+    for (s = 0; s != (NJ / 2) * X_CHUNK_SIZE; ++s) {
       y_ji[s] = _mm_setzero_pd();
     }
 
     pP = P_block;
-    pA = A + j_chunk_start * nk;
+    pA = A + j_start * nk;
     for (k = 0; k != nk; ++k) {
       m128d a_ji[NJ / 2];
       m128d Pval;
@@ -408,16 +422,20 @@ static void legendre_matmul_chunk{{xchunksize}}(size_t nk, size_t nvecs,
     /* Accumulate in vector */
     for (i = 0; i != X_CHUNK_SIZE; ++i) {
       for (s = 0; s != {{jchunk}} / 2; ++s) {
-        m128d acc = _mm_load_pd(y_acc + i * nvecs + j_chunk_start + 2 * s);
+        m128d acc = _mm_load_pd(y_acc + i * nvecs + j_start + 2 * s);
         acc = _mm_add_pd(acc, y_ji[i * (NJ / 2) + s]);
-        _mm_store_pd(y_acc + i * nvecs + j_chunk_start + 2 * s, acc);
+        _mm_store_pd(y_acc + i * nvecs + j_start + 2 * s, acc);
       }
     }
   }
   {{enddef}}
 
-  j_chunk_start = 0;
+  j_start = 0;
+  j_stop = nvecs - nvecs % NJ;
   {{loop('NJ')}}
+  j_stop = nvecs - nvecs % 4;
+  {{loop(4)}}
+  j_stop = nvecs;
   {{loop(2)}}
   
   

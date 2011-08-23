@@ -85,6 +85,7 @@ def assert_basic(nmaps):
 def test_basic():
     yield assert_basic, 2
     yield assert_basic, 6
+    yield assert_basic, 8
 
 def do_deterministic(nthreads):
     def hash_array(x):

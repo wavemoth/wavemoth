@@ -1,17 +1,20 @@
 cdef extern from "omp.h":
-    extern void omp_set_num_threads(int) nogil
-    extern int omp_get_num_threads() nogil
-    extern int omp_get_max_threads() nogil
-    extern int omp_get_thread_num() nogil
-    extern int omp_get_num_procs() nogil
+    void omp_set_num_threads(int) nogil
+    int omp_get_num_threads() nogil
+    int omp_get_max_threads() nogil
+    int omp_get_thread_num() nogil
+    int omp_get_num_procs() nogil
 
-    extern int omp_in_parallel() nogil
+    int omp_in_parallel() nogil
 
-    extern void omp_set_dynamic(int) nogil
-    extern int omp_get_dynamic() nogil
+    void omp_set_dynamic(int) nogil
+    int omp_get_dynamic() nogil
 
-    extern void omp_set_nested(int) nogil
-    extern int omp_get_nested() nogil
+    void omp_set_nested(int) nogil
+    int omp_get_nested() nogil
+
+    double omp_get_wtime() nogil
+    
 
 import contextlib
 
@@ -26,3 +29,6 @@ def get_max_threads():
 
 def set_num_threads(int nthreads):
     omp_set_num_threads(nthreads)
+
+def get_wtime():
+    return omp_get_wtime()

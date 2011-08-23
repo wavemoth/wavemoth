@@ -1,4 +1,4 @@
-from time import clock
+from ._openmp import get_wtime
 from contextlib import contextmanager
 import os
 
@@ -31,9 +31,9 @@ def benchmark(func, repeat, name=None, profile=False, duration=1.0,
     if burnin:
         func(1)
     while elapsed < duration:
-        t0 = clock()
+        t0 = get_wtime()
         func(repeat)
-        t1 = clock()
+        t1 = get_wtime()
         elapsed += t1 - t0
         times.append(t1 - t0)
         n += 1

@@ -319,13 +319,13 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
 
 
 {{py:
-xchunksize_manyvec_list = [4, 2, 1]
+xchunksize_manyvec_list = [6, 2, 1]
 }}
 
 /* A is repacked so as to match the max xchunksize. */
 #define MAX_X_CHUNK_SIZE {{max(xchunksize_manyvec_list)}}
 #define K_CHUNK_SIZE LEGENDRE_TRANSFORM_WORK_SIZE / (MAX_X_CHUNK_SIZE * sizeof(double) * 2)
-#define NJ 6
+#define NJ 4
 
 static void pack_A(double *A, double *buf, size_t nvecs, size_t nk) {
   size_t k, j_start, j_stop, k_start, k_stop, s;

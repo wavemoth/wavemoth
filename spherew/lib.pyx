@@ -439,7 +439,7 @@ class LegendreMatrixProvider(object):
                                               L0, L2, use_sse=True)
                 y = y[:, 0]
                 err = np.linalg.norm(y - Lambda[-1, cstart:cstop]) / np.linalg.norm(y)
-                if err > 1e-11:
+                if err > 1e-10:
                     print err
                     raise Exception("Appears to have hit a numerically unstable case, "
                                     "should not happen")

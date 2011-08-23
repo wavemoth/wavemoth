@@ -94,6 +94,13 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
      The output 'y' sits in 6 SSE accumulation registers (12 values
      at the time) and is transposed and stored only after each
      loop over k.
+
+     NOTE: We use unaligned loads for auxdata. This proved to be
+     *much* faster than complicating the loop structure (probably
+     since the more complicated loop prevented pipelining). Since the
+     difference is insignificant now, and will become even more
+     insignificant, we do not create another specialization for
+     unaligned auxdata.
     
   */
 
@@ -237,15 +244,6 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
 
     m128d aux1, aux2, aux3, alpha, beta, gamma;
     size_t loop_stop = nk - nk % 2;
-    if (nk > 2 && (intptr_t)auxdata % 16 != 0) {
-      /* auxdata not 128-bit aligned; load alpha[k] into upper part of
-         aux2 and then jump to second loop section; changing loop stop
-         accordingly. The nk > 2 check protects against doing the jump
-         if there's 0 iterations. */
-      aux2 = (m128d){ 0.0, auxdata[3 * k] };
-      if (nk % 2 == 0) loop_stop--;
-      goto SECOND_ITERATION;
-    }
     while (k < loop_stop) {
       /* The recurrence relation we compute is, for each x_i,
 
@@ -275,17 +273,16 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
          well.
        */
       /* Unpack alpha, beta, gamma from aux1 and aux2, and do a loop step. */
-      aux1 = _mm_load_pd(auxdata + 3 * k);
-      aux2 = _mm_load_pd(auxdata + 3 * k + 2);
+      aux1 = _mm_loadu_pd(auxdata + 3 * k);
+      aux2 = _mm_loadu_pd(auxdata + 3 * k + 2);
       alpha = _mm_unpacklo_pd(aux1, aux1);
       beta = _mm_unpackhi_pd(aux1, aux1);
       gamma = _mm_unpacklo_pd(aux2, aux2);
       {{loop_body(xchunksize)}}
       ++k;
 
-    SECOND_ITERATION:
       /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
-      aux3 = _mm_load_pd(auxdata + 3 * (k - 1) + 4);
+      aux3 = _mm_loadu_pd(auxdata + 3 * (k - 1) + 4);
       alpha = _mm_unpackhi_pd(aux2, aux2);
       beta = _mm_unpacklo_pd(aux3, aux3);
       gamma = _mm_unpackhi_pd(aux3, aux3);
@@ -294,7 +291,7 @@ static void legendre_transform_chunk{{xchunksize}}_nvec2(size_t ix_start,
     }
     if (k != nk) {
       /* Loop peel for the single odd k. */
-      aux1 = _mm_load_pd(auxdata + 3 * k);
+      aux1 = _mm_loadu_pd(auxdata + 3 * k);
       alpha = _mm_unpacklo_pd(aux1, aux1);
       beta = _mm_unpackhi_pd(aux1, aux1);
       gamma = (m128d){ auxdata[3 * k + 2], auxdata[3 * k + 2] };
@@ -541,14 +538,6 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
       pP = P_block;
       k = k_chunk_start;
 
-      if (loop_len > 0 && (intptr_t)auxdata % 16 != 0) {
-        /* auxdata not 128-bit aligned; load alpha[k] into upper part of
-           aux2 and then jump to second loop section; changing loop stop
-           accordingly. */
-        aux2 = (m128d){ 0.0, auxdata[3 * k] };
-        if (nk % 2 == 0) loop_stop--;
-        goto SECOND_ITERATION;
-      }
       while (k < loop_stop) {
         /* Use three-term recurrence formula */
 
@@ -579,8 +568,8 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
         {{enddef}}
         
         /* Unpack alpha, beta, gamma from aux1 and aux2, and do a loop step. */
-        aux1 = _mm_load_pd(auxdata + 3 * k);
-        aux2 = _mm_load_pd(auxdata + 3 * k + 2);
+        aux1 = _mm_loadu_pd(auxdata + 3 * k);
+        aux2 = _mm_loadu_pd(auxdata + 3 * k + 2);
 
         alpha = _mm_unpacklo_pd(aux1, aux1);
         beta = _mm_unpackhi_pd(aux1, aux1);
@@ -588,9 +577,8 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
         {{loop_body}}
         ++k;
 
-      SECOND_ITERATION:
         /* Unpack alpha, beta, gamma from aux2 and aux3, and do a loop step. */
-        aux3 = _mm_load_pd(auxdata + 3 * (k - 1) + 4);
+        aux3 = _mm_loadu_pd(auxdata + 3 * (k - 1) + 4);
         alpha = _mm_unpackhi_pd(aux2, aux2);
         beta = _mm_unpacklo_pd(aux3, aux3);
         gamma = _mm_unpackhi_pd(aux3, aux3);
@@ -600,7 +588,7 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
       }
       if (k != k_chunk_stop) {
         /* Loop peel for the single odd k. */
-        aux1 = _mm_load_pd(auxdata + 3 * k);
+        aux1 = _mm_loadu_pd(auxdata + 3 * k);
         alpha = _mm_unpacklo_pd(aux1, aux1);
         beta = _mm_unpackhi_pd(aux1, aux1);
         gamma = (m128d){ auxdata[3 * k + 2], auxdata[3 * k + 2] };

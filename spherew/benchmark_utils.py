@@ -24,7 +24,7 @@ def benchmark(func, repeat, name=None, profile=False, duration=1.0,
         name = func.__name__
     if profile:
         import yep
-        yep.start("profiles/%s%d.prof" % (name, os.getpid()))
+        yep.start("profiles/%s.prof" % name)
     times = []
     elapsed = 0
     n = 0

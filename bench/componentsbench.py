@@ -46,7 +46,8 @@ def legendre_transform(nvecs):
     def legendre_transform_sse(repeat):
         associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
                                       repeat=repeat, use_sse=True)
-    dt = benchmark(legendre_transform_sse, J, profile=False, duration=7)
+    dt = benchmark(legendre_transform_sse, J, profile=False, duration=20)
+    print 'Time per vector', ftime(dt / nvecs)
     
     flops = nx * nk * (5 + 2 * nvecs)
     print 'GFLOP/sec:', flops / 1e9 / dt

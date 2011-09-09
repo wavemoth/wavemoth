@@ -123,8 +123,7 @@ def serialize_from_hdf_files(args, target):
         os.unlink(x)
 
 def main(args):
-    lmax = mmax = 2 * args.Nside
-    comp = ResourceComputer(args.Nside, lmax, mmax, args.chunk_size, args.tolerance,
+    comp = ResourceComputer(args.Nside, args.lmax, args.lmax, args.chunk_size, args.tolerance,
                             args.memop_cost, PrintLogger())
     with file(args.target, 'w') as outfile:
         comp.compute(outfile, max_workers=args.parallel)
@@ -144,11 +143,13 @@ parser.add_argument('-e', '--tolerance', type=float, default=1e-10,
                     help='tolerance')
 parser.add_argument('-l', '--num-levels', type=int, default=None,
                     help='Number of levels of compression')
+parser.add_argument('-L', '--lmax', type=int, help='lmax parameter', default=None)
 parser.add_argument('Nside', type=int, help='Nside parameter')
 parser.add_argument('target', help='target datafile')
 args = parser.parse_args()
 
-args.lmax = 2 * args.Nside
+if args.lmax is None:
+    args.lmax = 2 * args.Nside
 
 main(args)
 #compute_with_workers(args)

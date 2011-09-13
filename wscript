@@ -183,6 +183,12 @@ def build(bld):
         use='C99 RT PSHT OPENMP fastsht',
         features='cprogram c')
 
+    bld(source=['bench/fftbench.c'],
+        includes=['src'],
+        target='fftbench',
+        use='C99 RT FFTW3 OPENMP',
+        features='cprogram c')
+
     if bld.env.HAS_PERFTOOLS:
         bld(source=(['bench/shbench.c']),
             includes=['src'],

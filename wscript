@@ -76,6 +76,8 @@ def configure(conf):
     if not conf.options.no_openmp:
         conf.env.CFLAGS_OPENMP = ['-fopenmp']
         conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
+
+    conf.env.LIB_NUMA = ['pthread', 'numa']
     
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
@@ -175,6 +177,12 @@ def build(bld):
         includes=['src'],
         target='cpubench',
         use='C99 BLAS OPENMP',
+        features='cprogram c')
+
+    bld(source=['bench/numabench.c'],
+        includes=['src', 'bench'],
+        target='numabench',
+        use='C99 NUMA',
         features='cprogram c')
 
     bld(source=['bench/shbench.c'],

@@ -64,6 +64,7 @@ def configure(conf):
     conf.env.BUTTERFLY_ONLY = conf.options.butterfly_only
 
     conf.env.LIB_RT = ['rt']
+    conf.env.LIB_MATH = ['m']
     conf.env.LIB_MKL = ['mkl_rt']
 
     conf.env.CFLAGS_PROFILEGEN = ['-fprofile-generate']
@@ -182,7 +183,7 @@ def build(bld):
     bld(source=['bench/numabench.c'],
         includes=['src', 'bench'],
         target='numabench',
-        use='C99 NUMA',
+        use='C99 RT MATH NUMA',
         features='cprogram c')
 
     bld(source=['bench/shbench.c'],

@@ -101,7 +101,7 @@ def build(bld):
         bld(target='fastsht',
             source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
             includes=['src'],
-            use='C99 BLAS FFTW3 OPENMP',
+            use='C99 BLAS FFTW3 OPENMP NUMA',
             features='c cshlib')
 
     bld.add_manual_dependency(
@@ -189,7 +189,7 @@ def build(bld):
     bld(source=['bench/shbench.c'],
         includes=['src'],
         target='shbench',
-        use='C99 RT PSHT OPENMP fastsht',
+        use='C99 RT PSHT OPENMP NUMA fastsht',
         features='cprogram c')
 
     if bld.env.HAS_PERFTOOLS:

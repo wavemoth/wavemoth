@@ -1,12 +1,39 @@
 #undef NDEBUG
-#include "complex.h"
+
+#define _GNU_SOURCE
+
+/* libc */
+#include <complex.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <malloc.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+
+/* OS, Numa, pthreads, OpenMP */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+
+#include <numa.h>
+#include <numaif.h>
+
+#include <pthread.h>
+#include <sched.h>
+
+#include <sys/times.h>
+#include <time.h>
+
+#include <omp.h>
+
+/* FFTW3 */
 #include <fftw3.h>
+
+/* Wavemoth */
 
 #include "fastsht_private.h"
 #include "fastsht_error.h"
@@ -15,18 +42,6 @@
 #include "butterfly_utils.h"
 #include "legendre_transform.h"
 
-/* For memory mapping */
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#include <fcntl.h>
-
-/* Wall timer */
-#include <sys/times.h>
-#include <time.h>
-
-#include "omp.h"
 
 /*
 Every time resource format changes, we increase this, so that
@@ -69,18 +84,17 @@ Precomputed data is stored as:
 #define MAX_NSIDE_LEVEL 15
 
 /*
-The precomputed data, per m. For now we only support a single Nside
-at the time, this will definitely change.
-*/
-typedef struct {
-  char *matrix_data;
-  size_t matrix_len;
-} m_resource_t;
+The precomputed data, per m. Index to data/len is even=1, odd=1*/
+struct _m_resource_t {
+  char *data[2];
+  size_t len[2];
+  size_t m;
+};
 
 struct _precomputation_t {
   char *mmapped_buffer;
   size_t mmap_len;
-  m_resource_t *P_matrices;  /* 2D array [ms, odd ? 1 : 0] */
+  m_resource_t *matrices;  /* indexed by m */
   int lmax, mmax;
   int refcount;
 }; /* typedef in fastsht_private.h */
@@ -141,6 +155,52 @@ int fastsht_query_resourcefile(char *filename, int *out_Nside, int *out_lmax) {
   return 0;
 }
 
+/*
+#define PAGESIZE 4096
+#define WEAK __attribute__((weak))
+#define __NR_move_pages 279
+#define MPOL_MF_STRICT  (1<<0)
+#define MPOL_MF_MOVE	(1<<1) 
+#define MPOL_MF_MOVE_ALL (1<<2)
+long WEAK move_pages(int pid, unsigned long count,
+	void **pages, const int *nodes, int *status, int flags) {
+  return syscall(__NR_move_pages, pid, count, pages, nodes, status, flags);
+}
+
+
+static void migrate_pages_numa(void *start, size_t len, int node) {
+  start -= (size_t)start % PAGESIZE;
+  len += (size_t)start % PAGESIZE;
+  if (len % PAGESIZE > 0) {
+    len += PAGESIZE - (len % PAGESIZE);
+  }
+  size_t pagecount = len / PAGESIZE;
+  void *pages[1024];
+  int nodes[1024];
+  int status[1024];
+  for (size_t i = 0; i < pagecount; i += 1024) {
+    size_t stop = imin(1024, pagecount - i);
+    for (size_t j = 0; j != stop; j++) {
+      pages[j] = start + (i * 1024 + j) * PAGESIZE;
+      nodes[j] = node;
+      status[j] = 0;
+    }
+    int ret = move_pages(getpid(), stop, pages, nodes, status, MPOL_MF_MOVE);
+    for (size_t j = 0; j != stop; j++) {
+      if (status[j] < 0) {
+	printf("status: %d of %d %d %d %d %d %d %d %d\n", status[j],
+	EACCES, EINVAL, ENODEV, ENOENT, EPERM, ENOMEM, E2BIG, ESRCH 
+	       );
+	//-1= EPERM
+      }
+    }
+    printf("%d\n", ret);
+  }
+  }*/
+
+//int fastsht_copy_resources(precomputation_t *data
+
+
 int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nside) {
   int fd;
   struct stat fileinfo;
@@ -168,10 +228,10 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
   lmax = read_int64(&head);
   mmax = read_int64(&head);
   *out_Nside = Nside = read_int64(&head);
-  data->P_matrices = malloc(sizeof(m_resource_t[2 * (mmax + 1)]));
+  data->matrices = malloc(sizeof(m_resource_t[mmax + 1]));
+  if (data->matrices == NULL) goto ERROR;
   data->lmax = lmax;
   data->mmax = mmax;
-  if (data->P_matrices == NULL) goto ERROR;
   offsets = (int64_t*)head;
   /* Assign pointers to compressed matrices. This doesn't actually load it
      into memory, just set out pointers into virtual memory presently on
@@ -179,16 +239,16 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
   for (m = 0; m != mmax + 1; ++m) {
     n = (mmax - m) / 2;
     for (odd = 0; odd != 2; ++odd) {
-      rec = data->P_matrices + 2 * m + odd;
+      rec = &data->matrices[m];
       head = data->mmapped_buffer + offsets[4 * m + 2 * odd];
       if (head == data->mmapped_buffer) {
         /* For debugging/benchmarking, sometimes matrices are missing.
            In those cases the offset is registered as 0. */
-        rec->matrix_data = NULL;
+        rec->data[odd] = NULL;
         continue;
       }
-      rec->matrix_data = head;
-      rec->matrix_len = offsets[4 * m + 2 * odd + 1];
+      rec->data[odd] = head;
+      rec->len[odd] = offsets[4 * m + 2 * odd + 1];
     }
   }
   retcode = 0;
@@ -202,49 +262,6 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
   }
  FINALLY:
   return retcode;
-}
-
-volatile char _fastsht_dummy; /* Export symbol to avoid optimizing out. */
-
-static void fastsht_swap_in_resources(precomputation_t *resources, int m_start, int m_stop) {
-  int m, odd;
-  m_resource_t *rec;
-  char acc = 0;
-  char *ptr, *stop;
-  size_t size = 0;
-  /* Read a byte every 1024 bytes from all the matrix data in the given range
-     of m's, to force loading all pages from disk. */
-  for (m = m_start; m < m_stop; ++m) {
-    for (odd = 0; odd != 1; ++odd) {
-      rec = resources->P_matrices + 2 * m + odd;
-      if (rec->matrix_data == NULL) continue;
-      stop = rec->matrix_data + rec->matrix_len;
-      size += rec->matrix_len;
-      for (ptr = rec->matrix_data; ptr < stop; ptr += 1) {
-        //        printf("%ld %ld\n", (size_t)ptr, (size_t)stop);
-        acc += *ptr;
-      }
-    }
-  }
-  fprintf(stderr, "Swapped in %d MB\n", (int)(size / 1024 / 1024));
-  _fastsht_dummy = acc;
-}
-
-static void fastsht_swap_out_resources(precomputation_t *resources, int m_start, int m_stop) {
-  int m, odd;
-  m_resource_t *rec;
-  size_t size = 0;
-  /* Use madvise to tell OS to drop pages; they'll be reread from disk
-     when needed. */
-  for (m = m_start; m < m_stop; ++m) {
-    for (odd = 0; odd != 1; ++odd) {
-      rec = resources->P_matrices + 2 * m + odd;
-      if (rec->matrix_data == NULL) continue;
-      size += rec->matrix_len;
-      madvise(rec->matrix_data, rec->matrix_len, MADV_DONTNEED);
-    }
-  }
-  fprintf(stderr, "Swapped out %d MB\n", (int)(size / 1024 / 1024));
 }
 
 precomputation_t* fastsht_fetch_resource(int Nside) {
@@ -270,13 +287,79 @@ precomputation_t* fastsht_fetch_resource(int Nside) {
 }
 
 void fastsht_release_resource(precomputation_t *data) {
+  return;
   --data->refcount;
   if (data->refcount == 0) {
     munmap(data->mmapped_buffer, data->mmap_len);
     data->mmapped_buffer = NULL;
-    free(data->P_matrices);
+    free(data->matrices);
   }
 }
+
+static nodemask_t nodemask_or(nodemask_t a, nodemask_t b) {
+  int n = numa_max_node() + 1;
+  nodemask_t r;
+  for (int i = 0; i != n; ++i) {
+    if (nodemask_isset(&a, i) && nodemask_isset(&b, i)) {
+      nodemask_set(&r, i);
+    } else {
+      nodemask_clr(&r, i);
+    }
+  }
+  return r;
+}
+
+typedef void (*thread_main_func_t)(fastsht_plan, int, void*);
+
+typedef struct {
+  void *ctx;
+  thread_main_func_t func;
+  fastsht_plan plan;
+  int ithread;
+} thread_ctx_t;
+
+static void *thread_main_adaptor(void *ctx_) {
+  thread_ctx_t *ctx = ctx_;
+
+  /* Ensure that the thread only allocates memory locally. */
+  int node = ctx->plan->threadlocal[ctx->ithread].node;
+  nodemask_t mask;
+  nodemask_zero(&mask);
+  nodemask_set(&mask, node);
+  numa_set_membind(&mask);
+
+  ctx->func(ctx->plan, ctx->ithread, ctx->ctx);
+  return NULL;
+}
+
+static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, void *ctx) {
+  /* Spawn pthreads on the CPUs designated in the plan, and wait for them
+     to finish. Each thread will only allocate memory locally.*/
+  int n = plan->nthreads;
+  thread_ctx_t adaptor_ctx[n];
+  pthread_t threads[n];
+  for (int ithread = 0; ithread != n; ++ithread) {
+    cpu_set_t cpu_set;
+    pthread_attr_t attr;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(plan->threadlocal[ithread].cpu, &cpu_set);
+
+    adaptor_ctx[ithread].ctx = ctx;
+    adaptor_ctx[ithread].plan = plan;
+    adaptor_ctx[ithread].func = func;
+    adaptor_ctx[ithread].ithread = ithread;
+
+    pthread_attr_init(&attr);
+    pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu_set);
+    pthread_create(&threads[ithread], &attr, thread_main_adaptor, &adaptor_ctx[ithread]);
+    pthread_attr_destroy(&attr);
+  }
+  for (int ithread = 0; ithread != n; ++ithread) {
+    pthread_join(threads[ithread], NULL);
+  }
+}
+
+static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx); /* forward decl */
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads, double *input, double *output,
@@ -291,10 +374,62 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   fftw_r2r_kind kind_list[nmaps];
   int i;
 
+  /* Simple attribute assignment */
+  nrings = 4 * Nside - 1;
+  plan->nthreads = nthreads;
+  plan->type = PLANTYPE_HEALPIX;
+  plan->input = input;
+  plan->output = output;
+  plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
+  plan->nmaps = nmaps;
+
+  /* Figure out how threads should be distributed. We query NUMA for
+     the nodes we can run on (intersection of cpubind and membind),
+     and then fill up node-by-node until we
+     hit nthreads. */
+
+  plan->threadlocal = malloc(sizeof(fastsht_plan_threadlocal[nthreads]));
+
   if (nthreads == 0) {
-    nthreads = omp_get_max_threads();
+    return NULL; /* TODO */
+  }
+  nodemask_t nodemask = nodemask_or(numa_get_run_node_mask(),
+				    numa_get_membind());
+  int ithread = 0;
+  int numnodes = numa_max_node() + 1;
+  for (int node = 0; node != numnodes; ++node) {
+    if (ithread == nthreads) break;
+    if (nodemask_isset(&nodemask, node)) {
+      unsigned long cpumask[64];
+      int r = numa_node_to_cpus(node, cpumask, sizeof(cpumask));
+      check(r >= 0, "numa_node_to_cpus failed");
+      for (int cpu = 0; cpu < sizeof(long) * 8; ++cpu) {
+	if (ithread == nthreads) break;
+	/* TODO: >64 CPUs*/
+	if ((cpumask[0] >> cpu) & 1) {
+	  plan->threadlocal[ithread].cpu = cpu;
+	  plan->threadlocal[ithread].node = node;
+	  ithread++;
+	}
+      }
+    }
   }
 
+  /* Figure out how work should be distributed. TODO: Do this properly */
+  for (int ithread = 0; ithread != nthreads; ++ithread) {
+    fastsht_plan_threadlocal *td = &plan->threadlocal[ithread];
+    td->nm = 10;
+    td->nrings = 10;
+    td->m_resources = malloc(sizeof(m_resource_t[10]));
+    td->rings = malloc(sizeof(size_t[10]));
+    for (int i = 0; i != 10; ++i) {
+      td->m_resources[i].m = 10 * ithread + i;
+      /* The rest of ms[i] is filled in during thread initialization */
+      td->rings[i] = 10 * ithread + i;
+    }
+  }
+
+  /* Load map of resources globally... */
   if (resource_filename != NULL) {
     /* Used in debugging/benchmarking */
     plan->resources = malloc(sizeof(precomputation_t));
@@ -308,39 +443,53 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     plan->did_allocate_resources = 0;
     plan->resources = fastsht_fetch_resource(Nside);
   }
-
   check(mmax == plan->resources->mmax, "Incompatible mmax");
   check(lmax == plan->resources->lmax, "Incompatible lmax");
 
-  nrings = 4 * Nside - 1;
-  
-  plan->nthreads = nthreads;
-  plan->type = PLANTYPE_HEALPIX;
-  plan->input = input;
-  plan->output = output;
-  plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
-  plan->nmaps = nmaps;
+  /* Spawn threads to do thread-local intialization:
+     Copy over precomputed data, initialize butterfly & FFT plans */
+  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, NULL);
+  return plan;
+}
 
+static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx) {
+  fastsht_plan_threadlocal *localplan = &plan->threadlocal[ithread];
+  size_t nm = localplan->nm;
+  int nmaps = plan->nmaps;
+  int node = localplan->node;
+
+  /* Copy matrix data into threadlocal buffers */
+  for (size_t im = 0; im != nm; ++im) {
+    m_resource_t *localres = &localplan->m_resources[im];
+    int m = localres->m;
+    m_resource_t *fileres = &plan->resources->matrices[m];
+    for (int odd = 0; odd != 2; ++odd) {
+      localres->data[odd] = memalign(4096, fileres->len[odd]);
+      checkf(localres->data[odd] != NULL, "No memory allocated of size %d on node %d",
+	     fileres->len[odd], node);
+      localres->len[odd] = fileres->len[odd];
+      memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
+    }
+  }
+
+  /* Make Butterfly plans. Need to inspect precomputed data to figure
+     out buffer sizes. */
   size_t k_max = 0, nblocks_max = 0;
-  for (int m = 0; m != mmax + 1; ++m) {
+  for (size_t im = 0; im != nm; ++im) {
     for (int odd = 0; odd != 2; ++odd) {
       bfm_matrix_data_info info;
-      bfm_query_matrix_data((plan->resources->P_matrices + 2 * m + odd)->matrix_data,
-                            &info);
+      bfm_query_matrix_data(localplan->m_resources[im].data[odd], &info);
       k_max = zmax(k_max, info.k_max);
       nblocks_max = zmax(nblocks_max, info.nblocks_max);
     }
   }
 
   size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);
-  plan->threadlocal = malloc(sizeof(fastsht_plan_threadlocal[nthreads]));
-  for (i = 0; i != nthreads; ++i) {
-    plan->threadlocal[i].bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
-    plan->threadlocal[i].legendre_transform_work = 
-      (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
-  }
-
-  plan->Nside = Nside;
+  localplan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+  localplan->legendre_transform_work = 
+    (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
+  /* Make FFT plans */
+  /*  plan->Nside = Nside;
   plan->lmax = lmax;
   plan->mmax = mmax;
   plan->fft_plans = (fftw_plan*)malloc(nrings * sizeof(fftw_plan));
@@ -355,12 +504,15 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                                 output + nmaps * start, n_ring_list, nmaps, 1,
                                                 output + nmaps * start, n_ring_list, nmaps, 1,
                                                 kind_list, flags);
-  }
-  return (fastsht_plan)plan;
+						}*/
+
+
 }
+
 
 void fastsht_destroy_plan(fastsht_plan plan) {
   int iring;
+  /*
   for (iring = 0; iring != plan->grid->nrings; ++iring) {
     fftw_destroy_plan(plan->fft_plans[iring]);
   }
@@ -374,14 +526,14 @@ void fastsht_destroy_plan(fastsht_plan plan) {
     }
   }
   free(plan->threadlocal);
-  free(plan->fft_plans);
+  free(plan->fft_plans);*/
   free(plan);
 }
 
 int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
   int64_t N, nvecs;
   bfm_matrix_data_info info;
-  bfm_query_matrix_data((plan->resources->P_matrices + 2 * m + odd)->matrix_data,
+  bfm_query_matrix_data(plan->resources->matrices[m].data[odd],
                         &info);
   N = info.element_count;
   nvecs = 2;
@@ -408,7 +560,7 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int msto
      This should play well with MPI down the road as well.
      */
 
-  #pragma omp parallel num_threads(plan->nthreads)
+  //  #pragma omp parallel num_threads(plan->nthreads)
   {
     /* The worksharing is wholly manual, since the parallel algorithm
        is non-trivial.  */
@@ -425,18 +577,18 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int msto
     /* We use += to accumulate the phase information in output, so we must
        zero it up front. Zero it in parallel... */
     blocksize = (12 * nmaps * plan->Nside * plan->Nside) / (12 * nmaps);
-    #pragma omp for schedule(static, 1)
+    //    #pragma omp for schedule(static, 1)
     for (i = 0; i < 12 * nmaps; ++i) {
       memset(plan->output + i * blocksize, 0, blocksize * sizeof(double));
     }
 
     /* Allocate shared global lists */
-    #pragma omp master
+    //    #pragma omp master
     {
       ms = malloc(sizeof(int[BLOCKWIDTH * numthreads]));
       q_list = malloc(sizeof(void*[2 * BLOCKWIDTH * numthreads]));
     } 
-    #pragma omp barrier
+    //    #pragma omp barrier
 
     /* Thread-private buffers */
     work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
@@ -457,8 +609,8 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int msto
           double complex *work = odd ? work_odd : work_even;
           work += i_work * nmaps * nrings_half;
           q_list[2 * i_m + odd] = work;
-          rec = plan->resources->P_matrices + 2 * m + odd;
-          check(rec->matrix_data != NULL, "matrix data not present, invalid mstride");
+          rec = &plan->threadlocal[thread_id].m_resources[m];
+          check(rec->data[odd] != NULL, "matrix data not present, invalid mstride");
           fastsht_perform_matmul(plan, m, odd, nrings_half, work_a_l, work);
         }
       }
@@ -472,8 +624,8 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int msto
       }
 
       /* Do the transposition and assembly */
-      #pragma omp barrier
-      fastsht_assemble_rings_omp_worker(plan, BLOCKWIDTH * numthreads, ms, q_list);
+      //      #pragma omp barrier
+      //      fastsht_assemble_rings_omp_worker(plan, BLOCKWIDTH * numthreads, ms, q_list);
     }
 
     free(work_a_l);
@@ -487,7 +639,7 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int msto
 void fastsht_execute(fastsht_plan plan) {
   fastsht_perform_legendre_transforms(plan, 0, plan->mmax + 1, 1);
   /* Backward FFTs from plan->work to plan->output */
-  fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
+  //  fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
 }
 
 
@@ -548,7 +700,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,
                             double complex *work_a_l, double complex *output) {
-  bfm_index_t nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
+  /*  bfm_index_t nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
   double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
   m_resource_t *rec;
   rec = plan->resources->P_matrices + 2 * m + odd;
@@ -567,7 +719,7 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t nc
                                   (double*)output,
                                   ncols * 2 * plan->nmaps,
                                   &ctx);
-  checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);
+				  checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);*/
 }
 
 void fastsht_assemble_rings(fastsht_plan plan,
@@ -576,7 +728,7 @@ void fastsht_assemble_rings(fastsht_plan plan,
   /* The routine is made for being called by a team of threads;
      this wrapper is here so that one can call the worker directly
      if one is already within an parallel section. */
-  #pragma omp parallel
+  //  #pragma omp parallel
   {
     fastsht_assemble_rings_omp_worker(plan, ms_len, ms, q_list);  
   }
@@ -632,7 +784,7 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
      treatment necesarry.
   */
 
-  #pragma omp for schedule(dynamic, 4)
+  //  #pragma omp for schedule(dynamic, 4)
   for (iring = 0; iring < mid_ring + 1; ++iring) {
     n = ring_offsets[mid_ring - iring + 1] - ring_offsets[mid_ring - iring];
 
@@ -691,11 +843,11 @@ void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_e
   int nmaps = plan->nmaps;
   double *output = plan->output;
   bfm_index_t *ring_offsets = plan->grid->ring_offsets;
-  #pragma omp parallel
+  //  #pragma omp parallel
   {
     double *ring_data;
     int iring;
-    #pragma omp for schedule(dynamic, 16)
+    //    #pragma omp for schedule(dynamic, 16)
     for (iring = ring_start; iring < ring_end; ++iring) {
       ring_data = output + nmaps * ring_offsets[iring];
       fftw_execute_r2r(plan->fft_plans[iring], ring_data, ring_data);

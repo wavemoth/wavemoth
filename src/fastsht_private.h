@@ -16,6 +16,8 @@ The API is unstable and may change at any point.
 
 struct _precomputation_t;
 typedef struct _precomputation_t precomputation_t;
+struct _m_resource_t;
+typedef struct _m_resource_t m_resource_t;
 
 typedef struct {
   /* To phase shift, we multiply with
@@ -39,6 +41,11 @@ typedef struct {
 typedef struct {
   bfm_plan *bfm;
   char *legendre_transform_work;
+  m_resource_t *m_resources;
+  size_t *rings;
+  size_t nm, nrings;
+  int node;
+  int cpu;
 } fastsht_plan_threadlocal;
 
 struct _fastsht_plan {

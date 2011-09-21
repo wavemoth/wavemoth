@@ -47,7 +47,7 @@ static double *zeros(size_t n) {
 #define GB KB * KB * KB
 
 #define BENCH_BUF_SIZE GB / 4
-#define NSAMPLES 5
+#define NSAMPLES 3
 
 typedef struct {
   double value, std;
@@ -263,6 +263,15 @@ void execute(int threads_per_node) {
 
 }
 
+void print_nodemask(nodemask_t mask) {
+  int n = numa_max_node() + 1;
+  for (int i = 0; i != n; ++i) {
+    if (nodemask_isset(&mask, i)) {
+      printf("%d ", i);
+    }
+  }
+}
+
 int main() {
   char s1[SBUFLEN], s2[SBUFLEN], s3[SBUFLEN];
   if (numa_available() < 0) {
@@ -271,6 +280,20 @@ int main() {
   }
   nodecount = numa_max_node() + 1;
   printf("Number of nodes: %d\n", nodecount);
+
+  nodemask_t run_mask = numa_get_run_node_mask();
+
+  numa_set_membind(&run_mask); 
+  nodemask_t mem_mask = numa_get_membind();
+
+  printf("Memory mask: ");
+  print_nodemask(mem_mask);
+  printf("\n");
+
+  printf("Run mask: ");
+  print_nodemask(run_mask);
+  printf("\n");
+
   int cpucount = 0;
   for (int i = 0; i != nodecount; ++i) {
     long memtotal, memfree;

@@ -84,7 +84,7 @@ Precomputed data is stored as:
 #define MAX_NSIDE_LEVEL 15
 
 /*
-The precomputed data, per m. Index to data/len is even=1, odd=1*/
+The precomputed data, per m. Index to data/len is even=0, odd=1*/
 struct _m_resource_t {
   char *data[2];
   size_t len[2];
@@ -94,6 +94,7 @@ struct _m_resource_t {
 struct _precomputation_t {
   char *mmapped_buffer;
   size_t mmap_len;
+
   m_resource_t *matrices;  /* indexed by m */
   int lmax, mmax;
   int refcount;
@@ -334,7 +335,8 @@ static void *thread_main_adaptor(void *ctx_) {
 
 static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, void *ctx) {
   /* Spawn pthreads on the CPUs designated in the plan, and wait for them
-     to finish. Each thread will only allocate memory locally.*/
+     to finish. Each thread will only allocate memory locally, because
+     of numa_set_membind in thread_main_adaptor. */
   int n = plan->nthreads;
   thread_ctx_t adaptor_ctx[n];
   pthread_t threads[n];
@@ -382,6 +384,9 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->output = output;
   plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
+  plan->Nside = Nside;
+  plan->lmax = lmax;
+  plan->mmax = mmax;
 
   /* Figure out how threads should be distributed. We query NUMA for
      the nodes we can run on (intersection of cpubind and membind),
@@ -415,18 +420,24 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     }
   }
 
-  /* Figure out how work should be distributed. TODO: Do this properly */
+  /* Figure out how work should be distributed. */
+  size_t nm_bound = (mmax + 1) / nthreads + 1;
+  size_t nring_bound = nrings / nthreads + 1;
+  size_t nms[nthreads];
   for (int ithread = 0; ithread != nthreads; ++ithread) {
+    nms[ithread] = 0;
     fastsht_plan_threadlocal *td = &plan->threadlocal[ithread];
-    td->nm = 10;
-    td->nrings = 10;
-    td->m_resources = malloc(sizeof(m_resource_t[10]));
-    td->rings = malloc(sizeof(size_t[10]));
-    for (int i = 0; i != 10; ++i) {
-      td->m_resources[i].m = 10 * ithread + i;
-      /* The rest of ms[i] is filled in during thread initialization */
-      td->rings[i] = 10 * ithread + i;
-    }
+    td->m_resources = malloc(sizeof(m_resource_t[nm_bound]));
+    td->rings = malloc(sizeof(size_t[nring_bound]));
+  }
+  for (size_t m = 0; m != mmax + 1; ++m) {
+    int ithread = m % nthreads;
+    int im = nms[ithread];
+    plan->threadlocal[ithread].m_resources[im].m = m;
+    nms[ithread]++;
+  }
+  for (int ithread = 0; ithread != nthreads; ++ithread) {
+    plan->threadlocal[ithread].nm = nms[ithread];
   }
 
   /* Load map of resources globally... */
@@ -457,15 +468,18 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx
   size_t nm = localplan->nm;
   int nmaps = plan->nmaps;
   int node = localplan->node;
+  size_t nrings_half = plan->grid->mid_ring + 1;
 
   /* Copy matrix data into threadlocal buffers */
+  size_t allacc = 0;
   for (size_t im = 0; im != nm; ++im) {
     m_resource_t *localres = &localplan->m_resources[im];
     int m = localres->m;
     m_resource_t *fileres = &plan->resources->matrices[m];
     for (int odd = 0; odd != 2; ++odd) {
+      allacc += fileres->len[odd];
       localres->data[odd] = memalign(4096, fileres->len[odd]);
-      checkf(localres->data[odd] != NULL, "No memory allocated of size %d on node %d",
+      checkf(localres->data[odd] != NULL, "No memory allocated of size %ld on node %d",
 	     fileres->len[odd], node);
       localres->len[odd] = fileres->len[odd];
       memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
@@ -488,10 +502,15 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx
   localplan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
   localplan->legendre_transform_work = 
     (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
+
+  size_t nvecs = 2 * plan->nmaps;
+  size_t nmats = 2 * nm;
+  localplan->work = memalign(4096, sizeof(double[nmats * nvecs * nrings_half]));
+  localplan->work_a_l = memalign(4096, sizeof(double[(nvecs * (plan->lmax + 1))]));
+
+
   /* Make FFT plans */
-  /*  plan->Nside = Nside;
-  plan->lmax = lmax;
-  plan->mmax = mmax;
+  /*  
   plan->fft_plans = (fftw_plan*)malloc(nrings * sizeof(fftw_plan));
   for (iring = 0; iring != grid->nrings; ++iring) {
     start = grid->ring_offsets[iring];
@@ -541,103 +560,36 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
   return N * 2; /* count mul and add seperately */
 }
 
-void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride) {
-  int lmax = plan->lmax, nmaps = plan->nmaps, nrings_half = plan->grid->mid_ring + 1;
-  double complex **q_list;
-  int *ms;
 
-  const int BLOCKWIDTH = 16;
-
-  /* Parallelization: The first loop is trivially parallelizable over
-     m.  However, perform_matmul merge_even_odd_and_transpose needs to
-     be parallelized by ring, because m is taken modulo the number of
-     pixels in each ring => multiple m can end up doing "ringphases[m%n] += q[m]"
-     simultanously.
-
-     What we do is set up a block buffer for q_m, then use
-     merge_even_odd_and_transpose for block transposition.
-
-     This should play well with MPI down the road as well.
-     */
-
-  //  #pragma omp parallel num_threads(plan->nthreads)
-  {
-    /* The worksharing is wholly manual, since the parallel algorithm
-       is non-trivial.  */
-    int m, odd, thread_id, m_chunk_start, m_threadchunk_start, m_threadchunk_stop, i;
-    int numthreads, i_m, i_work;
-    size_t blocksize;
-    m_resource_t *rec;
-    double complex *work_even, *work_odd, *work_a_l;
+static void legendre_transforms_thread(fastsht_plan plan, int ithread, void *ctx) {
+  fastsht_plan_threadlocal *localplan = &plan->threadlocal[ithread];
+  size_t nrings_half = plan->grid->mid_ring + 1;
+  double *work = localplan->work;
+  int nvecs = 2 * plan->nmaps;
+  size_t lmax = plan->lmax;
+  size_t nm = localplan->nm;
     
-    numthreads = omp_get_num_threads();
-    thread_id = omp_get_thread_num();
-    check(thread_id < plan->nthreads, "Plan allocated for less threads than being used");
-
-    /* We use += to accumulate the phase information in output, so we must
-       zero it up front. Zero it in parallel... */
-    blocksize = (12 * nmaps * plan->Nside * plan->Nside) / (12 * nmaps);
-    //    #pragma omp for schedule(static, 1)
-    for (i = 0; i < 12 * nmaps; ++i) {
-      memset(plan->output + i * blocksize, 0, blocksize * sizeof(double));
+  /* Compute into the buffer */
+  for (int im = 0; im != nm; ++im) {
+    m_resource_t *m_resource = &localplan->m_resources[im];
+    size_t m = m_resource->m;
+    
+    for (int odd = 0; odd < 2; ++odd) {
+      double *target = work + (2 * im + odd) * nvecs * nrings_half;
+      fastsht_perform_matmul(plan, ithread, m, odd, nrings_half, target,
+                             localplan->legendre_transform_work,
+                             localplan->work_a_l);
     }
+  }
+}
 
-    /* Allocate shared global lists */
-    //    #pragma omp master
-    {
-      ms = malloc(sizeof(int[BLOCKWIDTH * numthreads]));
-      q_list = malloc(sizeof(void*[2 * BLOCKWIDTH * numthreads]));
-    } 
-    //    #pragma omp barrier
-
-    /* Thread-private buffers */
-    work_a_l = memalign(16, sizeof(complex double[2 * nmaps * (lmax + 1)])); /*TODO: 2 x here? */
-    work_even = memalign(16, sizeof(double complex[nmaps * nrings_half * BLOCKWIDTH]));
-    work_odd = memalign(16, sizeof(double complex[nmaps * nrings_half * BLOCKWIDTH]));
-
-    for (m_chunk_start = mstart;
-         m_chunk_start < mstop;
-         m_chunk_start += mstride * BLOCKWIDTH * numthreads) {
-      m_threadchunk_start = m_chunk_start + BLOCKWIDTH * thread_id;
-      m_threadchunk_stop = imin(m_threadchunk_start + mstride * BLOCKWIDTH, mstop);
-      /* Compute into the buffer */
-      for (i_m = BLOCKWIDTH * thread_id, m = m_threadchunk_start, i_work = 0;
-           m < m_threadchunk_stop;
-           m += mstride, ++i_m, ++i_work) {
-        ms[i_m] = m;
-        for (odd = 0; odd < 2; ++odd) {
-          double complex *work = odd ? work_odd : work_even;
-          work += i_work * nmaps * nrings_half;
-          q_list[2 * i_m + odd] = work;
-          rec = &plan->threadlocal[thread_id].m_resources[m];
-          check(rec->data[odd] != NULL, "matrix data not present, invalid mstride");
-          fastsht_perform_matmul(plan, m, odd, nrings_half, work_a_l, work);
-        }
-      }
-      /* Mark m's that are skipped/beyond the end with -1. This
-         interface with assemble_ring facilitates improving 
-         task distribution without changing what is cached in
-         each CPU. */
-      for (; i_m < BLOCKWIDTH * (thread_id + 1); ++i_m) {
-        ms[i_m] = -1;
-        q_list[2 * i_m] = q_list[2 * i_m + 1] = NULL;
-      }
-
-      /* Do the transposition and assembly */
-      //      #pragma omp barrier
-      //      fastsht_assemble_rings_omp_worker(plan, BLOCKWIDTH * numthreads, ms, q_list);
-    }
-
-    free(work_a_l);
-    free(work_even);
-    free(work_odd);
-  } /* parallel */
-  free(ms);
-  free(q_list);
+void fastsht_perform_legendre_transforms(fastsht_plan plan) {
+  fastsht_run_in_threads(plan, &legendre_transforms_thread, NULL);
+  
 }
 
 void fastsht_execute(fastsht_plan plan) {
-  fastsht_perform_legendre_transforms(plan, 0, plan->mmax + 1, 1);
+  fastsht_perform_legendre_transforms(plan);
   /* Backward FFTs from plan->work to plan->output */
   //  fastsht_perform_backward_ffts(plan, 0, plan->grid->nrings);
 }
@@ -658,7 +610,6 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
   size_t row_stop = read_int64(&payload);
   size_t nk = row_stop - row_start;
   input += row_start * nvecs;
-  
   if (nk <= 4 || start == stop) {
     double *A = read_aligned_array_d(&payload, (stop - start) * nk);
     dgemm_ccc(input, A, buf,
@@ -697,29 +648,28 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
   }
 }
 
-
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,
-                            double complex *work_a_l, double complex *output) {
-  /*  bfm_index_t nrows, l, lmax = plan->lmax, j, nmaps = plan->nmaps;
-  double complex *input_m = (double complex*)plan->input + nmaps * m * (2 * lmax - m + 3) / 2;
-  m_resource_t *rec;
-  rec = plan->resources->P_matrices + 2 * m + odd;
+void fastsht_perform_matmul(fastsht_plan plan, int ithread, bfm_index_t m, int odd, size_t ncols,
+                            double *output, char *legendre_transform_work,
+                            double *work_a_l) {
+  bfm_index_t nrows, l, lmax = plan->lmax, j;
+  size_t nvecs = 2 * plan->nmaps;
+  double *input_m = plan->input + nvecs * m * (2 * lmax - m + 3) / 2;
+  char *matrix_data = plan->resources->matrices[m].data[odd];
   nrows = 0;
   for (l = m + odd; l <= lmax; l += 2) {
-    for (j = 0; j != nmaps; ++j) {
-      work_a_l[nrows * nmaps + j] = input_m[(l - m) * nmaps + j];
+    for (j = 0; j != nvecs; ++j) {
+      work_a_l[nrows * nvecs + j] = input_m[(l - m) * nvecs + j];
     }
     ++nrows;
   }
-  transpose_apply_ctx_t ctx = { (double*)work_a_l,
-                                plan->threadlocal[omp_get_thread_num()].legendre_transform_work };
-  int ret = bfm_transpose_apply_d(plan->threadlocal[omp_get_thread_num()].bfm,
-                                  rec->matrix_data,
+  transpose_apply_ctx_t ctx = { work_a_l, legendre_transform_work };
+  int ret = bfm_transpose_apply_d(plan->threadlocal[ithread].bfm,
+                                  matrix_data,
                                   pull_a_through_legendre_block,
-                                  (double*)output,
-                                  ncols * 2 * plan->nmaps,
+                                  output,
+                                  ncols * nvecs,
                                   &ctx);
-				  checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);*/
+  checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);
 }
 
 void fastsht_assemble_rings(fastsht_plan plan,

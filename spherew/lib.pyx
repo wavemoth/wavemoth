@@ -49,7 +49,7 @@ cdef extern from "fastsht.h":
     void fastsht_execute(fastsht_plan plan)
     void fastsht_configure(char *resource_dir)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
-    void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride)
+    void fastsht_perform_legendre_transforms(fastsht_plan plan)
     void fastsht_assemble_rings(fastsht_plan plan,
                                 int ms_len, int *ms,
                                 double complex **q_list)
@@ -142,10 +142,10 @@ cdef class ShtPlan:
     def perform_backward_ffts(self, int ring_start, int ring_end):
         fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)
 
-    def perform_legendre_transform(self, mstart, mstop, mstride, int repeat=1):
+    def perform_legendre_transform(self, repeat=1):
         cdef int k
         for k in range(repeat):
-            fastsht_perform_legendre_transforms(self.plan, mstart, mstop, mstride)
+            fastsht_perform_legendre_transforms(self.plan)
 
     def assemble_rings(self, int m,
                        np.ndarray[double complex, ndim=2, mode='c'] q_even,

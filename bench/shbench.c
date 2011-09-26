@@ -108,7 +108,7 @@ void execute_sht() {
   if (do_ffts) {
     fastsht_execute(sht_plan); 
   } else {
-    fastsht_perform_legendre_transforms(sht_plan, 0, lmax + 1, sht_m_stride);
+    fastsht_perform_legendre_transforms(sht_plan);
   }
 }
 

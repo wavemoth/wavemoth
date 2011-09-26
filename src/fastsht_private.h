@@ -41,6 +41,7 @@ typedef struct {
 typedef struct {
   bfm_plan *bfm;
   char *legendre_transform_work;
+  double *work, *work_a_l;
   m_resource_t *m_resources;
   size_t *rings;
   size_t nm, nrings;
@@ -63,8 +64,9 @@ struct _fastsht_plan {
   int Nside;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,
-                            double complex *work_a_l, double complex *output);
+void fastsht_perform_matmul(fastsht_plan plan, int ithread,
+                            bfm_index_t m, int odd, size_t ncols, double *output,
+                            char *legendre_transform_work, double *work_a_l);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 void fastsht_assemble_rings(fastsht_plan plan,
                             int ms_len, int *ms,
@@ -73,7 +75,7 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
                                        int ms_len, int *ms,
                                        double complex **q_list);
 
-void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride);
+void fastsht_perform_legendre_transforms(fastsht_plan plan);
 
 void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end);
 

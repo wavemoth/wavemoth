@@ -22,22 +22,45 @@ def assert_aligned(np.ndarray x):
 cdef extern from "complex.h":
     pass
 
-cdef extern from "fastsht.h":
-    ctypedef int int64_t
+cdef extern from "fastsht_private.h":
+
+    ctypedef struct m_resource_t:
+        int m
     
-    cdef enum:
-        FASTSHT_MMAJOR
-    
+    ctypedef struct fastsht_plan_threadlocal:
+        double *work
+        int nm
+        m_resource_t *m_resources
+
     cdef struct _fastsht_plan:
         int type_ "type"
         int lmax, mmax
+        int nthreads
+        int nmaps
         double complex *output, *input
+        double *work
         int Nside
+        fastsht_plan_threadlocal *threadlocal
 
     ctypedef _fastsht_plan *fastsht_plan
 
     ctypedef int bfm_index_t
     
+    ctypedef struct fastsht_grid_info:
+        double *phi0s
+        bfm_index_t *ring_offsets
+        bfm_index_t nrings
+
+    void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end)
+    fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
+    void fastsht_free_grid_info(fastsht_grid_info *info)
+
+cdef extern from "fastsht.h":
+    ctypedef int int64_t
+    
+    cdef enum:
+        FASTSHT_MMAJOR
+
     fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax,
                                          int nmaps, int nthreads,
                                          double *input,
@@ -54,16 +77,6 @@ cdef extern from "fastsht.h":
                                 int ms_len, int *ms,
                                 double complex **q_list)
     void fastsht_disable_phase_shifting(fastsht_plan plan)
-
-cdef extern from "fastsht_private.h":
-    ctypedef struct fastsht_grid_info:
-        double *phi0s
-        bfm_index_t *ring_offsets
-        bfm_index_t nrings
-
-    void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end)
-    fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
-    void fastsht_free_grid_info(fastsht_grid_info *info)
 
 cdef extern from "legendre_transform.h":
     void fastsht_legendre_transform(size_t nx, size_t nl,
@@ -101,7 +114,7 @@ cdef class ShtPlan:
                   np.ndarray[double complex, ndim=2, mode='c'] input,
                   np.ndarray[double, ndim=2, mode='c'] output,
                   ordering, phase_shifts=True, bytes matrix_data_filename=None,
-                  nthreads=0):
+                  nthreads=1):
         global _configured
         cdef int flags
         if ordering == 'mmajor':
@@ -125,6 +138,8 @@ cdef class ShtPlan:
                                             flags,
                                             NULL if matrix_data_filename is None
                                             else <char*>matrix_data_filename)
+        if self.plan == NULL:
+            raise Exception("Plan creation failed")
         self.Nside = Nside
         self.lmax = lmax
         if not phase_shifts:
@@ -133,6 +148,30 @@ cdef class ShtPlan:
     def __dealloc__(self):
         if self.plan != NULL:
             fastsht_destroy_plan(self.plan)
+
+    def get_work(self):
+        """
+        For testing purposes, copy all thread-specific work buffers together into
+        a single NumPy array.
+        """
+        cdef np.ndarray[double complex, ndim=4, mode='c'] work
+        cdef double complex *work_slice
+        cdef Py_ssize_t im, m, j, odd, re_i, imap, nmaps, Nside
+        nmaps = self.plan.nmaps
+        nrings = 2 * self.Nside
+        work = np.empty((self.plan.mmax + 1, 2, nrings, nmaps), dtype=np.complex128)
+        for ithread in range(self.plan.nthreads):
+            for im in range(self.plan.threadlocal[ithread].nm):
+                work_slice = <double complex*>self.plan.threadlocal[ithread].work
+                m = self.plan.threadlocal[ithread].m_resources[im].m
+                for odd in range(2):
+                    for j in range(nrings):
+                        for imap in range(nmaps):
+                            work[m, odd, j, imap] = \
+                                    work_slice[(2 * im + odd) * (nrings * nmaps) +
+                                               j * nmaps + imap]
+        return work
+            
 
     def execute(self, int repeat=1):
         for i in range(repeat):

@@ -14,10 +14,24 @@ The API is unstable and may change at any point.
 #include "complex.h"
 #include <fftw3.h>
 
-struct _precomputation_t;
-typedef struct _precomputation_t precomputation_t;
-struct _m_resource_t;
-typedef struct _m_resource_t m_resource_t;
+/*
+The precomputed data, per m. Index to data/len is even=0, odd=1
+*/
+typedef struct {
+  char *data[2];
+  size_t len[2];
+  size_t m;
+} m_resource_t;
+
+typedef struct {
+  char *mmapped_buffer;
+  size_t mmap_len;
+
+  m_resource_t *matrices;  /* indexed by m */
+  int lmax, mmax;
+  int refcount;
+} precomputation_t;
+
 
 typedef struct {
   /* To phase shift, we multiply with

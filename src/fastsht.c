@@ -83,23 +83,6 @@ Precomputed data is stored as:
 
 #define MAX_NSIDE_LEVEL 15
 
-/*
-The precomputed data, per m. Index to data/len is even=0, odd=1*/
-struct _m_resource_t {
-  char *data[2];
-  size_t len[2];
-  size_t m;
-};
-
-struct _precomputation_t {
-  char *mmapped_buffer;
-  size_t mmap_len;
-
-  m_resource_t *matrices;  /* indexed by m */
-  int lmax, mmax;
-  int refcount;
-}; /* typedef in fastsht_private.h */
-
 
 /*
 Precomputed
@@ -394,7 +377,8 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 
   plan->threadlocal = malloc(sizeof(fastsht_plan_threadlocal[nthreads]));
 
-  if (nthreads == 0) {
+  if (nthreads <= 0) {
+    fprintf(stderr, "Require nthreads > 0\n");
     return NULL; /* TODO */
   }
 

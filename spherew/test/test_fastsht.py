@@ -240,5 +240,40 @@ def test_stripify_legendre():
     yield test, 256, 271
  
 
+#
+# Only legendre transforms
+#
+
+def test_legendre_transforms():
+    nmaps = 2
+    plan = make_plan(nmaps)
+    k = np.arange(1, 3)
+    for l in range(lmax + 1):
+        for m in range(l, lmax + 1):
+            plan.input[lm_to_idx_mmajor(l, m), :] = 10 * k * np.cos(l * 0.1) * np.sqrt(m)
+    plan.input[1, :] = (5 + 5j) * k
+    plan.input[2, :] = 34 + 3j
+    plan.perform_legendre_transform()
+    work = plan.get_work()
+
+
+    nodes = get_ring_thetas(Nside, positive_only=True)
+    work0 = np.zeros((lmax + 1, 2, 2 * Nside, nmaps), dtype=np.complex128)
+    idx = 0
+    for m in range(lmax + 1):
+        Lambda = compute_normalized_associated_legendre(m, nodes, lmax,
+                                                        epsilon=1e-30).T
+        ncoef = lmax - m + 1
+        a_l = plan.input[idx:idx + ncoef, :]
+        idx += ncoef
+        for odd in range(2):
+            work0[m, odd, :, :] = np.dot(a_l[odd::2, :].T, Lambda[odd::2, :]).T
+
+
+    assert_almost_equal(work0, work)
     
+    if 0:
+        as_matrix(work[:, 0, :, 0]).plot()
+        as_matrix(work0[:, 0, :, 0]).plot()
+        plt.show()
     

@@ -246,7 +246,7 @@ def test_stripify_legendre():
 
 def test_legendre_transforms():
     nmaps = 2
-    plan = make_plan(nmaps)
+    plan = make_plan(nmaps, nthreads=3)
     k = np.arange(1, 3)
     for l in range(lmax + 1):
         for m in range(l, lmax + 1):

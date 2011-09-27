@@ -75,6 +75,7 @@ def configure(conf):
     conf.env.LINKFLAGS_PROFILEUSE = ['-fprofile-use']
 
     conf.env.CFLAGS_C99 = ['-std=gnu99']
+    conf.env.CYTHONFLAGS = ['-a']
 
     if not conf.options.no_openmp:
         conf.env.CFLAGS_OPENMP = ['-fopenmp']

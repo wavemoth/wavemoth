@@ -297,17 +297,15 @@ void fastsht_release_resource(precomputation_t *data) {
   }
 }
 
-static nodemask_t nodemask_or(nodemask_t a, nodemask_t b) {
-  int n = numa_max_node() + 1;
-  nodemask_t r;
+static void bitmask_or(struct bitmask *a, struct bitmask *b, struct bitmask *out) {
+  int n = numa_bitmask_nbytes(a) * 8;
   for (int i = 0; i != n; ++i) {
-    if (nodemask_isset(&a, i) && nodemask_isset(&b, i)) {
-      nodemask_set(&r, i);
+    if (numa_bitmask_isbitset(a, i) && numa_bitmask_isbitset(b, i)) {
+      numa_bitmask_setbit(out, i);
     } else {
-      nodemask_clr(&r, i);
+      numa_bitmask_clearbit(out, i);
     }
   }
-  return r;
 }
 
 typedef void (*thread_main_func_t)(fastsht_plan, int, void*);
@@ -324,10 +322,11 @@ static void *thread_main_adaptor(void *ctx_) {
 
   /* Ensure that the thread only allocates memory locally. */
   int node = ctx->plan->threadlocal[ctx->ithread].node;
-  nodemask_t mask;
-  nodemask_zero(&mask);
-  nodemask_set(&mask, node);
-  numa_set_membind(&mask);
+  struct bitmask *mask = numa_allocate_nodemask();
+  numa_bitmask_clearall(mask);
+  numa_bitmask_setbit(mask, node);
+  numa_set_membind(mask);
+  numa_free_nodemask(mask);
 
   ctx->func(ctx->plan, ctx->ithread, ctx->ctx);
   return NULL;
@@ -398,20 +397,26 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   if (nthreads == 0) {
     return NULL; /* TODO */
   }
-  nodemask_t nodemask = nodemask_or(numa_get_run_node_mask(),
-				    numa_get_membind());
+
+  /* Find intersection of cpubind and membind */
+  struct bitmask *nodemask = numa_allocate_nodemask(), *a, *b;
+  a = numa_get_run_node_mask();
+  b = numa_get_membind();
+  bitmask_or(a, b, nodemask);
+  numa_free_nodemask(a);
+  numa_free_nodemask(b);
+
+  struct bitmask *cpumask = numa_allocate_cpumask();
   int ithread = 0;
   int numnodes = numa_max_node() + 1;
   for (int node = 0; node != numnodes; ++node) {
     if (ithread == nthreads) break;
-    if (nodemask_isset(&nodemask, node)) {
-      unsigned long cpumask[64];
-      int r = numa_node_to_cpus(node, cpumask, sizeof(cpumask));
+    if (numa_bitmask_isbitset(nodemask, node)) {
+      int r = numa_node_to_cpus(node, cpumask);
       check(r >= 0, "numa_node_to_cpus failed");
-      for (int cpu = 0; cpu < sizeof(long) * 8; ++cpu) {
+      for (int cpu = 0; cpu < numa_bitmask_nbytes(cpumask) * 8; ++cpu) {
 	if (ithread == nthreads) break;
-	/* TODO: >64 CPUs*/
-	if ((cpumask[0] >> cpu) & 1) {
+	if (numa_bitmask_isbitset(cpumask, cpu)) {
 	  plan->threadlocal[ithread].cpu = cpu;
 	  plan->threadlocal[ithread].node = node;
 	  ithread++;
@@ -419,6 +424,8 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       }
     }
   }
+  numa_free_nodemask(nodemask);
+  numa_free_cpumask(cpumask);
 
   /* Figure out how work should be distributed. */
   size_t nm_bound = (mmax + 1) / nthreads + 1;

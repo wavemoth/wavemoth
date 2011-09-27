@@ -20,6 +20,7 @@ def options(opt):
     opt.add_option('--with-acml-lib', help='path to ACML libs to use')
     opt.add_option('--with-perftools', help='path to google-perftools'
                    '(NOTE: must be configured with PIC)')
+    opt.add_option('--with-numa', help='path to NUMA')
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
     opt.add_option('--no-openmp', action='store_true')
@@ -61,6 +62,7 @@ def configure(conf):
         conf.check_fftw3()
         conf.check_google_perftools()
         conf.check_blas()
+        conf.check_numa()
     conf.env.BUTTERFLY_ONLY = conf.options.butterfly_only
 
     conf.env.LIB_RT = ['rt']
@@ -77,8 +79,6 @@ def configure(conf):
     if not conf.options.no_openmp:
         conf.env.CFLAGS_OPENMP = ['-fopenmp']
         conf.env.LINKFLAGS_OPENMP = ['-fopenmp']
-
-    conf.env.LIB_NUMA = ['pthread', 'numa']
     
 #    conf.env.LIBPATH_MKL = ['/opt/intel/mkl/lib/intel64']
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
@@ -336,6 +336,34 @@ def check_google_perftools(conf):
         conf.env.HAS_PERFTOOLS = True
     conf.end_msg(prefix if prefix else True)
 
+@conf
+def check_numa(conf):
+    conf.start_msg("Checking for NUMA")
+    conf.env.LIB_NUMA = ['numa', 'pthread']
+    if conf.options.with_numa:
+        prefix = conf.options.with_numa
+        conf.env.RPATH_NUMA = conf.env.LIBPATH_NUMA = pjoin(prefix, 'lib')
+        conf.env.INCLUDES_NUMA = pjoin(prefix, 'include')
+
+    cfrag = dedent('''\
+    #include <numa.h>
+    #if (LIBNUMA_API_VERSION != 2)
+    #error Currently only NUMA API version 2 supported
+    #endif
+    int main() {
+	struct bitmask *nodes;
+	nodes = numa_allocate_nodemask();
+        numa_bitmask_clearall(nodes);
+    }
+    ''')
+    
+    conf.check_cc(
+        fragment=cfrag,
+        features = 'c',
+        compile_filename='test.c',
+        use='NUMA')
+
+    conf.end_msg(conf.options.with_numa if conf.options.with_numa else '(default path)')
 
 from waflib import TaskGen
 

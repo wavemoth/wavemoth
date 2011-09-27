@@ -46,7 +46,7 @@ static double *zeros(size_t n) {
 #define MB KB * KB
 #define GB KB * KB * KB
 
-#define BENCH_BUF_SIZE GB / 4
+#define BENCH_BUF_SIZE GB / 8
 #define NSAMPLES 3
 
 typedef struct {
@@ -134,19 +134,20 @@ measurement_t benchmark_all_vs_all(void (*func)(float*), measurement_t *rates, i
 }
 
 int get_node_cpu(cpu_set_t *set, int node, int cpu_index) {
-  unsigned long cpumask[32];
+  struct bitmask *cpumask = numa_allocate_cpumask();
+  int ncpu = numa_bitmask_nbytes(cpumask) * 8; /* upper bound */
   int ret;
-  ret = numa_node_to_cpus(node, cpumask, sizeof(cpumask));
+  ret = numa_node_to_cpus(node, cpumask);
   if (ret < 0) return ret;
-  /* TODO: Support more than 64 CPUs */
-  for (int cpuid = 0; cpuid < sizeof(long) * 8; ++cpuid) {
-    if ((cpumask[0] >> cpuid) & 1) {
+  for (int cpuid = 0; cpuid < ncpu; ++cpuid) {
+    if (numa_bitmask_isbitset(cpumask, cpuid)) {
       if (cpu_index == 0) {
 	CPU_SET(cpuid, set);
       }
       cpu_index--;
     }
   }
+  numa_free_cpumask(cpumask);
 }
 
 void print_table_row(measurement_t *rates, int row) {
@@ -263,16 +264,16 @@ void execute(int threads_per_node) {
 
 }
 
-void print_nodemask(nodemask_t mask) {
+void print_nodemask(struct bitmask *mask) {
   int n = numa_max_node() + 1;
   for (int i = 0; i != n; ++i) {
-    if (nodemask_isset(&mask, i)) {
+    if (numa_bitmask_isbitset(mask, i)) {
       printf("%d ", i);
     }
   }
 }
 
-int main() {
+int main(int argc, char * argv[]) {
   char s1[SBUFLEN], s2[SBUFLEN], s3[SBUFLEN];
   if (numa_available() < 0) {
     printf("NUMA not available!\n");
@@ -281,10 +282,8 @@ int main() {
   nodecount = numa_max_node() + 1;
   printf("Number of nodes: %d\n", nodecount);
 
-  nodemask_t run_mask = numa_get_run_node_mask();
-
-  numa_set_membind(&run_mask); 
-  nodemask_t mem_mask = numa_get_membind();
+  struct bitmask *run_mask = numa_get_run_node_mask();
+  struct bitmask *mem_mask = numa_get_membind();
 
   printf("Memory mask: ");
   print_nodemask(mem_mask);
@@ -294,30 +293,37 @@ int main() {
   print_nodemask(run_mask);
   printf("\n");
 
+  numa_free_cpumask(run_mask);
+  numa_free_nodemask(mem_mask);
+
   int cpucount = 0;
+  struct bitmask *cpumask = numa_allocate_cpumask();
   for (int i = 0; i != nodecount; ++i) {
     long memtotal, memfree;
-    unsigned long cpumask[32]; /* TODO: >64 cores */
     memtotal = numa_node_size(i, &memfree);
     snprintsize(s1, SBUFLEN, memtotal);
     snprintsize(s2, SBUFLEN, memfree);
-    if (numa_node_to_cpus(i, cpumask, sizeof(cpumask)) < 0) {
+    if (numa_node_to_cpus(i, cpumask) < 0) {
       printf("ERANGE\n");
       return 2;
     }
     char *cpus = s3;
     for (int cpu = 0; cpu < sizeof(long) * 8; ++cpu) {
-      if ((cpumask[0] >> cpu) & 1) {
+      if (numa_bitmask_isbitset(cpumask, cpu)) {
 	cpucount++;
 	cpus += snprintf(cpus, SBUFLEN - (cpus - s3), "%d ", cpu);
       }
     }
     printf("#%d: Mem: %s (%s free), CPUs: %s\n", i, s1, s2, s3);
   }
+  numa_free_cpumask(cpumask);
 
 
-  //execute(1);
-  execute(6);
+  if (argc <= 1) {
+    printf("\nPass an integer (# threads per node) for a benchmark\n");
+  } else {
+    execute(atoi(argv[1]));
+  }
 
 
 }

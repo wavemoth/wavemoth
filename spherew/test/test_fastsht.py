@@ -28,9 +28,9 @@ do_plot = bool(os.environ.get('P', False))
 Nside = 4
 lmax = 2 * Nside
 
-def plot_map(m, title=None):
+def plot_map(m, title=None, **kw):
     from cmb.maps import pixel_sphere_map
-    pixel_sphere_map(m).plot(title=title)
+    pixel_sphere_map(m).plot(title=title, **kw)
 
 def lm_to_idx_mmajor(l, m):
     return m * (2 * lmax - m + 3) // 2 + (l - m)
@@ -72,9 +72,10 @@ def assert_basic(nmaps):
     y2 = psht.alm2map_mmajor(plan.input, lmax=lmax, Nside=Nside)
     if do_plot:
         for i in [0]:#nmaps):
+            print output[:, i]
             plot_map(y2[:, i], title='FID %d' % i)
             plot_map(output[:, i].copy('C'), title=' %d' % i)
-            plot_map(output[:, i].copy('C') - y2[:, i], title='delta %d' % i)
+ #           plot_map(output[:, i].copy('C') - y2[:, i], title='delta %d' % i)
 
         plt.show()
 
@@ -83,9 +84,10 @@ def assert_basic(nmaps):
         assert_almost_equal(y2[:, i], output[:, i])
 
 def test_basic():
-    yield assert_basic, 2
-    yield assert_basic, 6
-    yield assert_basic, 8
+    yield assert_basic, 1
+#    yield assert_basic, 2
+#    yield assert_basic, 6
+#    yield assert_basic, 8
 
 def do_deterministic(nthreads):
     def hash_array(x):

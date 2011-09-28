@@ -51,7 +51,7 @@ cdef extern from "fastsht_private.h":
         bfm_index_t *ring_offsets
         bfm_index_t nrings
 
-    void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end)
+    void fastsht_perform_backward_ffts(fastsht_plan plan)
     fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
     void fastsht_free_grid_info(fastsht_grid_info *info)
 
@@ -178,8 +178,8 @@ cdef class ShtPlan:
             fastsht_execute(self.plan)
         return self.output
 
-    def perform_backward_ffts(self, int ring_start, int ring_end):
-        fastsht_perform_backward_ffts(self.plan, ring_start, ring_end)
+    def perform_backward_ffts(self):
+        fastsht_perform_backward_ffts(self.plan)
 
     def perform_legendre_transform(self, repeat=1):
         cdef int k

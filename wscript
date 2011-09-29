@@ -255,7 +255,7 @@ def check_fftw3(conf):
     Settings for FFTW3
     """
     conf.start_msg("Checking for FFTW3")
-    conf.env.LIB_FFTW3 = ['fftw3']
+    conf.env.LIB_FFTW3 = ['fftw3', 'm']
     prefix = conf.options.with_fftw3
     if prefix:
         conf.env.LIBPATH_FFTW3 = [pjoin(prefix, 'lib')]

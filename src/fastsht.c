@@ -450,7 +450,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   for (size_t iring = 0; iring != nrings_half; iring += ring_block_size) {
     size_t stop = imin(nrings_half, iring + ring_block_size);
     size_t rings_in_block = stop - iring;
-    ithread = (ithread + 1) % nthreads;
     for (size_t j = 0; j != rings_in_block; ++j) {
       ring_pair_info_t *ri = &plan->threadlocal[ithread].ring_pairs[nrings_list[ithread] + j];
       ri->ring_number = iring + j;
@@ -461,6 +460,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                     grid->ring_offsets[mid_ring + + ri->ring_number]);
     }
     nrings_list[ithread] += rings_in_block;
+    ithread = (ithread + 1) % nthreads;
   }
   /* Copy nms and nrings to threads */
   for (int ithread = 0; ithread != nthreads; ++ithread) {
@@ -937,7 +937,9 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
   
   m128d conjugating_const = (m128d){ 1.0, -1.0 };
 
-  assert((mid_ring + 1) % FFT_CHUNK_SIZE == 0);
+  /* This assertion holds true currently simply because of how
+     work is distributed during plan initialization. */
+  assert((threadplan->nrings) % FFT_CHUNK_SIZE == 0);
 
   int s;
   for (size_t chunk_start = 0;
@@ -952,6 +954,8 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
       for (size_t j = 0; j != FFT_CHUNK_SIZE; ++j) {
         double *work_top = work + 2 * j * work_stride;
         double *work_bottom = work + (2 * j + 1) * work_stride;
+        /* Note: iring is index into task list, NOT the physical ring
+           number (which is ri->ring_number) */
         size_t iring = chunk_start + j;
         ring_pair_info_t *ri = &ring_pairs[iring];
 
@@ -959,15 +963,16 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
         double sin_phi = sin(m * ri->phi0);
         m128d phase_shift = (m128d){cos_phi, sin_phi};
 
-        int ringlen = ring_pairs[iring].length;
+        size_t ring_number = ri->ring_number;
+        int ringlen = ri->length;
         int j1, j2;
         j1 = m % ringlen;
         j2 = imod_divisorsign(ringlen - m, ringlen);
 
         for (size_t k = 0; k != nmaps; ++k) {
           m128d q_even, q_odd, q_top_1, q_bottom_1, q_top_2, q_bottom_2;
-          q_even = _mm_load_pd(q_m_even_array + 2 * (iring * nmaps + k));
-          q_odd = _mm_load_pd(q_m_odd_array + 2 * (iring * nmaps + k));
+          q_even = _mm_load_pd(q_m_even_array + 2 * (ring_number * nmaps + k));
+          q_odd = _mm_load_pd(q_m_odd_array + 2 * (ring_number * nmaps + k));
           q_top_1 = _mm_add_pd(q_even, q_odd);
           q_bottom_1 = _mm_sub_pd(q_even, q_odd);
 
@@ -993,7 +998,6 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
       size_t iring = chunk_start + j;
 
       ring_pair_info_t *ri = &ring_pairs[chunk_start + j];
-      printf("thread %d RING %d\n", ithread, ri->ring_number);
       double *work_top = work + 2 * j * work_stride;
       double *work_bottom = work + (2 * j + 1) * work_stride;
       fftw_plan fft_plan = ring_pairs[iring].fft_plan;

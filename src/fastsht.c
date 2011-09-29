@@ -487,15 +487,18 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 
   /* Spawn threads to do thread-local intialization:
      Copy over precomputed data, initialize butterfly & FFT plans */
-  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, NULL);
+  pthread_mutex_t mutex_fftw;
+  pthread_mutex_init(&mutex_fftw, NULL);
+  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, &mutex_fftw);
+  pthread_mutex_destroy(&mutex_fftw);
 
   /* Now that work has been allocated, set up m_to_phase_ring */
   double *m_to_phase_ring[mmax + 1];
   size_t work_stride = 2 * plan->nmaps * nrings_half;
   for (ithread = 0; ithread != nthreads; ++ithread) {
     fastsht_plan_threadlocal *lp = &plan->threadlocal[ithread];
-    for (size_t im = 0; im != mmax + 1; ++im) {
-      m_to_phase_ring[lp->m_resources[im].m] = &lp->work[(2 * im) * work_stride];
+    for (size_t im = 0; im != lp->nm; ++im) {
+      m_to_phase_ring[lp->m_resources[im].m] = lp->work + (2 * im) * work_stride;
     }
   }
   /* And copy it to each thread */
@@ -506,7 +509,8 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   return plan;
 }
 
-static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx) {
+static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mutex_fftw_) {
+  pthread_mutex_t *mutex_fftw = mutex_fftw_;
   fastsht_plan_threadlocal *localplan = &plan->threadlocal[ithread];
   size_t nm = localplan->nm;
   int nmaps = plan->nmaps;
@@ -558,35 +562,54 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx
   localplan->work_fft = memalign(4096, sizeof(double[2 * FFT_CHUNK_SIZE * nmaps * 
                                                      (4 * plan->Nside + 2)]));
 
-  /* Make FFT plans */
+  /* Make FFT plans. FFTW is *not* thread-safe in the fftw_plan_X functions,
+     but we *do* want to run it in each local thread, to properly benchmark
+     using local memory. So, we serialize access to FFTW. Note that the
+     fftw_execute_... functions *are* thread-safe (as long as used with
+     different plans).
+  */
+  pthread_mutex_lock(mutex_fftw);
   for (int i = 0; i != localplan->nrings; ++i) {
     ring_pair_info_t *ri = &localplan->ring_pairs[i];
     int ringlen = ri->length;
     ri->fft_plan = fftw_plan_many_dft_c2r(1, &ringlen, nmaps,
-                                          (fftw_complex*)localplan->work_fft, NULL, 1, 1,
-                                          localplan->work_fft, NULL, 1, 1,
+                                          (fftw_complex*)localplan->work_fft, NULL, nmaps, 1,
+                                          localplan->work_fft, NULL, nmaps, 1,
                                           flags);
   }
+  pthread_mutex_unlock(mutex_fftw);
 }
 
 
 void fastsht_destroy_plan(fastsht_plan plan) {
   int iring;
-  /*
-  for (iring = 0; iring != plan->grid->nrings; ++iring) {
-    fftw_destroy_plan(plan->fft_plans[iring]);
+
+  /* Cleanup for all threads. Do not move to per-thread without a mutex,
+     FFTW3 destructor access must be serialized!
+   */
+  for (int ithread = 0; ithread != plan->nthreads; ++ithread) {
+    fastsht_plan_threadlocal *lp = &plan->threadlocal[ithread];
+    for (size_t iring = 0; iring != lp->nrings; ++iring) {
+      fftw_destroy_plan(lp->ring_pairs[iring].fft_plan);
+    }
+    for (size_t im = 0; im != lp->nm; ++im) {
+      for (int odd = 0; odd != 2; ++odd) {
+        free(lp->m_resources[im].data[odd]);
+      }
+    }
+    bfm_destroy_plan(lp->bfm);
+    free(lp->work);
+    free(lp->work_a_l);
+    free(lp->work_fft);
+    /* Free buffer for ring_pairs, m_resources, and m_to_phase_ring,
+       allocated by numa_alloc. */
+    numa_free(lp->buf, lp->buf_size);
   }
+
   fastsht_free_grid_info(plan->grid);
   fastsht_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
-  for (int i = 0; i != plan->nthreads; ++i) {
-    bfm_destroy_plan(plan->threadlocal[i].bfm);
-    if (plan->threadlocal[i].legendre_transform_work != NULL) {
-      free(plan->threadlocal[i].legendre_transform_work);
-    }
-  }
   free(plan->threadlocal);
-  free(plan->fft_plans);*/
   free(plan);
 }
 
@@ -861,10 +884,26 @@ void fastsht_cossin(double *out, size_t n, double x0, double delta) {
 } 
 */
 
+static INLINE m128d complex_mul_pd(m128d a_b, m128d c_d) {
+  /* Multiply (a + I*b) and (c + I*d) */
+  m128d a_a = _mm_unpacklo_pd(a_b, a_b);
+  m128d b_b = _mm_unpackhi_pd(a_b, a_b);
+  m128d minusb_b = _mm_mul_pd(b_b, (m128d){-1.0, 1.0});
+  m128d d_c = _mm_shuffle_pd(c_d, c_d, _MM_SHUFFLE2(0, 1));
+
+  return _mm_add_pd(_mm_mul_pd(a_a, c_d), _mm_mul_pd(minusb_b, d_c));
+}
+
 static INLINE void inplace_add_pd(double *px, m128d r) {
-  m128d x = _mm_setzero_pd();//_mm_load_pd(px);
+  m128d x = _mm_load_pd(px);
   _mm_store_pd(px, _mm_add_pd(x, r));
 }
+
+static void _printreg(char *msg, m128d r) {
+  double *pd = (double*)&r;
+  printf("%s = [%.2f %.2f]\n", msg, pd[0], pd[1]);
+}
+#define printreg(x) _printreg(#x, x)
 
 static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *ctx) {
   /*
@@ -887,7 +926,7 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
   double *map, *ring;
 
   fastsht_plan_threadlocal *threadplan = &plan->threadlocal[ithread];
-  ring_pair_info_t *ring_pairs = &threadplan->ring_pairs[ithread];
+  ring_pair_info_t *ring_pairs = threadplan->ring_pairs;
 
   double **m_to_phase_ring = threadplan->m_to_phase_ring;
 
@@ -901,7 +940,10 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
   assert((mid_ring + 1) % FFT_CHUNK_SIZE == 0);
 
   int s;
-  for (size_t chunk_start = 0; chunk_start != threadplan->nrings; chunk_start += FFT_CHUNK_SIZE) {
+  for (size_t chunk_start = 0;
+       chunk_start < threadplan->nrings;
+       chunk_start += FFT_CHUNK_SIZE) {
+
     memset(work, 0, sizeof(double[2 * FFT_CHUNK_SIZE * work_stride]));
     for (size_t m = 0; m != mmax + 1; ++m) {
       double *q_m_even_array = m_to_phase_ring[m];
@@ -910,24 +952,31 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
       for (size_t j = 0; j != FFT_CHUNK_SIZE; ++j) {
         double *work_top = work + 2 * j * work_stride;
         double *work_bottom = work + (2 * j + 1) * work_stride;
-        
-        ring_pair_info_t *ri = &ring_pairs[chunk_start + j];
-        int is_pair = ri->offset_top != ri->offset_bottom;
+        size_t iring = chunk_start + j;
+        ring_pair_info_t *ri = &ring_pairs[iring];
+
+        double cos_phi = cos(m * ri->phi0);
+        double sin_phi = sin(m * ri->phi0);
+        m128d phase_shift = (m128d){cos_phi, sin_phi};
+
+        int ringlen = ring_pairs[iring].length;
+        int j1, j2;
+        j1 = m % ringlen;
+        j2 = imod_divisorsign(ringlen - m, ringlen);
+
         for (size_t k = 0; k != nmaps; ++k) {
           m128d q_even, q_odd, q_top_1, q_bottom_1, q_top_2, q_bottom_2;
-          q_even = _mm_load_pd(&q_m_even_array[2 * (j * nmaps + k)]);
-          q_odd = _mm_load_pd(&q_m_odd_array[2 * (j * nmaps + k)]);
+          q_even = _mm_load_pd(q_m_even_array + 2 * (iring * nmaps + k));
+          q_odd = _mm_load_pd(q_m_odd_array + 2 * (iring * nmaps + k));
           q_top_1 = _mm_add_pd(q_even, q_odd);
           q_bottom_1 = _mm_sub_pd(q_even, q_odd);
+
+          q_top_1 = complex_mul_pd(q_top_1, phase_shift);
+          q_bottom_1 = complex_mul_pd(q_bottom_1, phase_shift);
+
           q_top_2 = _mm_mul_pd(q_top_1, conjugating_const);
           q_bottom_2 = _mm_mul_pd(q_bottom_1, conjugating_const);
 
-          int ringlen = ring_pairs[chunk_start + j].length;
-          int j1, j2;
-          printf("ring= %ld ringlen = %d, ringoffs=%ld %ld\n", chunk_start + j, ringlen,
-                 ri->offset_top, ri->offset_bottom);
-          j1 = m % ringlen;
-          j2 = imod_divisorsign(ringlen - m, ringlen);
           if (j1 <= ringlen / 2) {
             inplace_add_pd(work_top + 2 * (j1 * nmaps + k), q_top_1);
             inplace_add_pd(work_bottom + 2 * (j1 * nmaps + k), q_bottom_1);
@@ -941,40 +990,23 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
     }
     
     for (size_t j = 0; j != FFT_CHUNK_SIZE; ++j) {
+      size_t iring = chunk_start + j;
+
       ring_pair_info_t *ri = &ring_pairs[chunk_start + j];
+      printf("thread %d RING %d\n", ithread, ri->ring_number);
       double *work_top = work + 2 * j * work_stride;
       double *work_bottom = work + (2 * j + 1) * work_stride;
-      fftw_plan fft_plan = ring_pairs[chunk_start + j].fft_plan;
-      print_array("work_top", work_top, 2 * (ri->length / 2 + 1));
+      fftw_plan fft_plan = ring_pairs[iring].fft_plan;
       fftw_execute_dft_c2r(fft_plan, (fftw_complex*)work_top, work_top);
-      memcpy(output + ri->offset_top, work_top, sizeof(double[ri->length]));
+      memcpy(output + nmaps * ri->offset_top, work_top,
+             sizeof(double[ri->length * nmaps]));
       if (ri->offset_bottom != ri->offset_top) {
         fftw_execute_dft_c2r(fft_plan, (fftw_complex*)work_bottom, work_bottom);
-        memcpy(output + ri->offset_bottom, work_bottom, sizeof(double[ri->length]));
+        memcpy(output + nmaps * ri->offset_bottom, work_bottom,
+               sizeof(double[ri->length * nmaps]));
       }
     }
-
-
   }
-  return;/*
-
-  for (iring = 0; iring < mid_ring + 1; ++iring) {
-    n = ring_offsets[mid_ring - iring + 1] - ring_offsets[mid_ring - iring];
-    assert(n % 2 == 0);
-    phi0 = plan->grid->phi0s[mid_ring + iring];
-    if (phi0 != 0) {
-      fastsht_cossin(cos_and_sin, plan->mmax, 0.0, phi0);
-
-    }
-    size_t ncoefs = n / 2;
-    for (imap = 0; imap != nmaps; ++imap) {
-      map = output + imap * npix;
-      ring = map + ring_offsets[mid_ring - iring];
-      fftw_execute_r2r(plan->fft_plans[mid_ring - iring], ring, ring);
-      ring = map + ring_offsets[mid_ring + iring];
-      fftw_execute_r2r(plan->fft_plans[mid_ring + iring], ring, ring);
-    }
-    }*/
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan) {

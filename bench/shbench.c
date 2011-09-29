@@ -30,6 +30,7 @@ C program to benchmark spherical harmonic transforms
 int Nside, lmax;
 char *sht_resourcefile;
 int do_ffts;
+int N_threads = 1;
 
 int N_threads;
 
@@ -107,7 +108,7 @@ void execute_sht() {
   if (do_ffts) {
     fastsht_execute(sht_plan); 
   } else {
-    fastsht_perform_legendre_transforms(sht_plan, 0, lmax + 1, sht_m_stride);
+    fastsht_perform_legendre_transforms(sht_plan);
   }
 }
 
@@ -124,9 +125,10 @@ void setup_sht() {
 
   sht_input = zeros((lmax + 1) * (lmax + 1) * 2 * nmaps);
   sht_output = zeros(12 * Nside * Nside * nmaps);
-  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, 0, sht_input,
+  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, N_threads, sht_input,
                                      sht_output, FASTSHT_MMAJOR,
                                      sht_resourcefile);
+  checkf(sht_plan, "plan not created, nthreads=%d", N_threads);
 
   /* Export FFTW wisdom generated during planning */
   fd = fopen("fftw.wisdom", "w");
@@ -144,19 +146,6 @@ void finish_sht(double dt) {
 
   fastsht_destroy_plan(sht_plan);
   free_sht_buffers();
-  
-  if (!do_ffts) {
-    for (m = 0; m != sht_plan->mmax + 1; ++m) {
-      for (odd = 0; odd != 2; ++odd) {
-        flops += fastsht_get_legendre_flops(sht_plan, m, odd) * 2;
-      }
-    }
-
-    snftime(timestr, MAXTIME, dt / sht_nmaps);
-    printf("  Per map: %s\n", timestr);
-    stridefudge = (double)(lmax / sht_m_stride) / lmax;
-    printf("  Speed: %.3f GFLOPS\n", flops / dt / 1e9 * stridefudge);
-  }
 }
 
 
@@ -266,7 +255,6 @@ int main(int argc, char *argv[]) {
   char *resource_path;
 
   /* Parse options */
-  N_threads = 1;
   sht_resourcefile = NULL;
   Nside = -1;
   miniter = 1;
@@ -275,7 +263,7 @@ int main(int argc, char *argv[]) {
   sht_nmaps = 1;
   do_ffts = -1;
 
-  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:")) != -1) {
+  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:F")) != -1) {
     switch (c) {
     case 'r': sht_resourcefile = optarg; break;
     case 'N': Nside = atoi(optarg);  break;
@@ -284,6 +272,9 @@ int main(int argc, char *argv[]) {
     case 't': mintime = atof(optarg); break;
     case 'S': 
       sht_m_stride = atoi(optarg); 
+      do_ffts = 0;
+      break;
+    case 'F':
       do_ffts = 0;
       break;
     case 'k': sht_nmaps = atoi(optarg); break;

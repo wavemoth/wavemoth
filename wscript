@@ -20,6 +20,7 @@ def options(opt):
     opt.add_option('--with-acml-lib', help='path to ACML libs to use')
     opt.add_option('--with-perftools', help='path to google-perftools'
                    '(NOTE: must be configured with PIC)')
+    opt.add_option('--with-numa', help='path to NUMA')
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
     opt.add_option('--no-openmp', action='store_true')
@@ -61,9 +62,11 @@ def configure(conf):
         conf.check_fftw3()
         conf.check_google_perftools()
         conf.check_blas()
+        conf.check_numa()
     conf.env.BUTTERFLY_ONLY = conf.options.butterfly_only
 
     conf.env.LIB_RT = ['rt']
+    conf.env.LIB_MATH = ['m']
     conf.env.LIB_MKL = ['mkl_rt']
 
     conf.env.CFLAGS_PROFILEGEN = ['-fprofile-generate']
@@ -72,6 +75,7 @@ def configure(conf):
     conf.env.LINKFLAGS_PROFILEUSE = ['-fprofile-use']
 
     conf.env.CFLAGS_C99 = ['-std=gnu99']
+    conf.env.CYTHONFLAGS = ['-a']
 
     if not conf.options.no_openmp:
         conf.env.CFLAGS_OPENMP = ['-fopenmp']
@@ -98,7 +102,7 @@ def build(bld):
         bld(target='fastsht',
             source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
             includes=['src'],
-            use='C99 BLAS FFTW3 OPENMP',
+            use='C99 BLAS FFTW3 OPENMP NUMA',
             features='c cshlib')
 
     bld.add_manual_dependency(
@@ -177,10 +181,22 @@ def build(bld):
         use='C99 BLAS OPENMP',
         features='cprogram c')
 
+    bld(source=['bench/numabench.c'],
+        includes=['src', 'bench'],
+        target='numabench',
+        use='C99 RT MATH NUMA',
+        features='cprogram c')
+
     bld(source=['bench/shbench.c'],
         includes=['src'],
         target='shbench',
-        use='C99 RT PSHT OPENMP fastsht',
+        use='C99 RT PSHT OPENMP NUMA fastsht',
+        features='cprogram c')
+
+    bld(source=['bench/fftbench.c'],
+        includes=['src'],
+        target='fftbench',
+        use='C99 RT FFTW3 OPENMP',
         features='cprogram c')
 
     if bld.env.HAS_PERFTOOLS:
@@ -327,6 +343,34 @@ def check_google_perftools(conf):
         conf.env.HAS_PERFTOOLS = True
     conf.end_msg(prefix if prefix else True)
 
+@conf
+def check_numa(conf):
+    conf.start_msg("Checking for NUMA")
+    conf.env.LIB_NUMA = ['numa', 'pthread']
+    if conf.options.with_numa:
+        prefix = conf.options.with_numa
+        conf.env.RPATH_NUMA = conf.env.LIBPATH_NUMA = pjoin(prefix, 'lib')
+        conf.env.INCLUDES_NUMA = pjoin(prefix, 'include')
+
+    cfrag = dedent('''\
+    #include <numa.h>
+    #if (LIBNUMA_API_VERSION != 2)
+    #error Currently only NUMA API version 2 supported
+    #endif
+    int main() {
+	struct bitmask *nodes;
+	nodes = numa_allocate_nodemask();
+        numa_bitmask_clearall(nodes);
+    }
+    ''')
+    
+    conf.check_cc(
+        fragment=cfrag,
+        features = 'c',
+        compile_filename='test.c',
+        use='NUMA')
+
+    conf.end_msg(conf.options.with_numa if conf.options.with_numa else '(default path)')
 
 from waflib import TaskGen
 

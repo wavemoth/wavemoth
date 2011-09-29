@@ -14,8 +14,32 @@ The API is unstable and may change at any point.
 #include "complex.h"
 #include <fftw3.h>
 
-struct _precomputation_t;
-typedef struct _precomputation_t precomputation_t;
+/*
+The precomputed data, per m. Index to data/len is even=0, odd=1
+*/
+typedef struct {
+  char *data[2];
+  size_t len[2];
+  size_t m;
+} m_resource_t;
+
+typedef struct {
+  char *mmapped_buffer;
+  size_t mmap_len;
+
+  m_resource_t *matrices;  /* indexed by m */
+  int lmax, mmax;
+  int refcount;
+} precomputation_t;
+
+
+typedef struct {
+  double phi0;
+  /* ring_number is with respect to equator; it is implied that both
+     negative and positive ring belongs to thread */
+  size_t ring_number, offset_top, offset_bottom, length;
+  fftw_plan fft_plan;
+} ring_pair_info_t;
 
 typedef struct {
   /* To phase shift, we multiply with
@@ -39,25 +63,39 @@ typedef struct {
 typedef struct {
   bfm_plan *bfm;
   char *legendre_transform_work;
+  double *work, *work_a_l, *work_fft;
+  size_t buf_size;
+  char *buf;
+  ring_pair_info_t *ring_pairs;
+  m_resource_t *m_resources;
+  /* Set up a map of m -> phase ring. This is copied to all threads
+     until it can be proven that sharing it for read-only access
+     doesn't hurt... */
+  double **m_to_phase_ring;
+  size_t nm, nrings;
+  int node;
+  int cpu;
 } fastsht_plan_threadlocal;
 
 struct _fastsht_plan {
-  int type;
-  int lmax, mmax;
-  int nmaps;
-  int nthreads;
   double *output, *input;
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
   fastsht_plan_threadlocal *threadlocal;
 
+  int type;
+  int lmax, mmax;
+  int nmaps;
+  int nthreads;
+
   int did_allocate_resources;
   int Nside;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd, size_t ncols,
-                            double complex *work_a_l, double complex *output);
+void fastsht_perform_matmul(fastsht_plan plan, int ithread,
+                            bfm_index_t m, int odd, size_t ncols, double *output,
+                            char *legendre_transform_work, double *work_a_l);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
 void fastsht_assemble_rings(fastsht_plan plan,
                             int ms_len, int *ms,
@@ -66,9 +104,9 @@ void fastsht_assemble_rings_omp_worker(fastsht_plan plan,
                                        int ms_len, int *ms,
                                        double complex **q_list);
 
-void fastsht_perform_legendre_transforms(fastsht_plan plan, int mstart, int mstop, int mstride);
+void fastsht_perform_legendre_transforms(fastsht_plan plan);
 
-void fastsht_perform_backward_ffts(fastsht_plan plan, int ring_start, int ring_end);
+void fastsht_perform_backward_ffts(fastsht_plan plan);
 
 fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside);
 void fastsht_free_grid_info(fastsht_grid_info *info);

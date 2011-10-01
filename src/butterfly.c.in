@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <xmmintrin.h>
 #include <emmintrin.h>
+#include <errno.h>
 #include "butterfly.h"
 #include "blas.h"
 #include "fastsht_error.h"
@@ -404,7 +405,8 @@ int bfm_apply_d(char *head, double *x, double *y,
 
 
 
-bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs) {
+bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs,
+                          sem_t *mem_semaphore, sem_t *cpu_semaphore) {
   bfm_plan *plan;
   size_t i;
   if (k_max == 0) k_max++;
@@ -412,6 +414,8 @@ bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs) {
   plan->k_max = k_max;
   plan->nblocks_max = nblocks_max;
   plan->nvecs = nvecs;
+  plan->mem_semaphore = mem_semaphore;
+  plan->cpu_semaphore = cpu_semaphore;
   plan->chunks_allocated = plan->chunk_stack_size = nblocks_max + 2;
   plan->vector_chunk_stack = malloc(sizeof(void*[plan->chunk_stack_size]));
   for (i = 0; i != plan->chunks_allocated; ++i) {
@@ -499,6 +503,36 @@ static void copy_vectors(double *input, double *target, size_t target_start, siz
   }
 }
 
+#if 0
+
+static void enter_mem_section(bfm_plan *plan) {}
+static void exit_mem_section(bfm_plan *plan) {}
+
+#else
+
+static void enter_mem_section(bfm_plan *plan) {
+  int r;
+  while (1) {
+    while ((r = sem_trywait(plan->mem_semaphore)) == EINTR) {};
+    if (r == 0) {
+      /* Got memory */
+      return;
+    } else {
+    /* No memory lock available right away, yield the CPU and
+       reacquire it in order to give CPU-bound threads a chance to take
+       over. */
+    sem_post(plan->cpu_semaphore);
+    while ((r = sem_wait(plan->cpu_semaphore)) == EINTR) {};
+    }
+  }
+}
+
+static void exit_mem_section(bfm_plan *plan) {
+  sem_post(plan->mem_semaphore);
+}
+
+#endif
+
 static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
                                    size_t inode,
                                    size_t target_start,
@@ -526,8 +560,10 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
     if (is_root) {
       /* Simply stream data straight through */
       assert(!ctx->add_push); /* TODO Do something sane */
+      exit_mem_section(ctx->plan);
       ctx->pull_func(ctx->target, target_start, target_stop, plan->nvecs, payloads[0],
                      payloads[1] - payloads[0], ctx->caller_ctx);
+      enter_mem_section(ctx->plan);
     } else {
       /* TODO: Avoid this copy at leafs, go straight to target in the nblocks=2 case */
       input_block = input_blocks[0];
@@ -564,10 +600,12 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
         assert(k <= plan->k_max);
         if (is_root) {
           input_block = acquire_vector_chunk(plan);
+          exit_mem_section(ctx->plan);
           ctx->pull_func(input_block, input_pos, input_pos + k,
                          plan->nvecs, payloads[2 * i + j],
                          payloads[2 * i + j + 1] - payloads[2 * i + j],
                          ctx->caller_ctx);
+          enter_mem_section(ctx->plan);
           input_pos += k;
         } else {
           input_block = input_blocks[2 * i + j];
@@ -606,6 +644,9 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   ctx.plan = plan;
   check((size_t)matrix_data % 16 == 0, "matrix_data not 128-bit aligned");
   
+  sem_wait(plan->cpu_semaphore);
+  enter_mem_section(plan);
+
   /* Read in tree. Shape of the S-matrix forest is determined by the
      start level and stop level. Offsets to each node is stored in a
      heap structure that is present; we translate it to pointers in
@@ -646,7 +687,8 @@ int bfm_transpose_apply_d(bfm_plan *plan,
     ctx.current_root_idx++;
   }
   assert(start == info.ncols);
-  
+  exit_mem_section(plan);
+  sem_post(plan->cpu_semaphore);
   return 0;
 }
 

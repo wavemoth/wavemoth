@@ -72,6 +72,7 @@ typedef struct {
      until it can be proven that sharing it for read-only access
      doesn't hurt... */
   double **m_to_phase_ring;
+  sem_t *cpu_lock;
   size_t nm, nrings;
   int node;
   int cpu;
@@ -83,6 +84,7 @@ struct _fastsht_plan {
   fftw_plan *fft_plans;
   precomputation_t *resources;
   fastsht_plan_threadlocal *threadlocal;
+  sem_t *mem_locks[8];
 
   int type;
   int lmax, mmax;

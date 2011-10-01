@@ -92,6 +92,7 @@ columns "n" is passed in from the outside. The data is:
 
 #include <stdint.h>
 #include <stddef.h>
+#include <semaphore.h>
 
 typedef int32_t bfm_index_t;
 
@@ -124,6 +125,10 @@ struct _bfm_plan {
                                  shape (k_max, nvecs)  */
   size_t chunk_stack_size; /* Current size of buffer stack */
   size_t k_max, nblocks_max, nvecs;
+
+  sem_t *mem_semaphore;
+  sem_t *cpu_semaphore;
+
 #ifndef NDEBUG
   size_t chunks_allocated;
 #endif  
@@ -133,7 +138,8 @@ struct _bfm_plan {
 struct _bfm_transpose_apply_context;
 typedef struct _bfm_transpose_apply_context bfm_transpose_apply_context;
 
-bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs);
+bfm_plan *bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs,
+                          sem_t *mem_semaphore, sem_t *cpu_semaphore);
 void bfm_destroy_plan(bfm_plan *plan);
 
 int bfm_transpose_apply_d(bfm_plan *plan,

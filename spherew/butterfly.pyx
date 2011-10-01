@@ -13,6 +13,11 @@ from spherew cimport blas
 from interpolative_decomposition import sparse_interpolative_decomposition
 from collections import namedtuple
 
+cdef extern from "semaphore.h":
+    ctypedef int sem_t
+    cdef int sem_init(sem_t *sem, int pshared, unsigned int value)
+    cdef int sem_destroy(sem_t *sem)
+
 cdef extern from "malloc.h":
     void *memalign(size_t boundary, size_t size)
 
@@ -32,7 +37,8 @@ cdef extern from "butterfly.h":
 
     ctypedef struct bfm_plan
 
-    bfm_plan* bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs)
+    bfm_plan* bfm_create_plan(size_t k_max, size_t nblocks_max, size_t nvecs,
+                              sem_t *mem_semaphore, sem_t *cpu_semaphore)
     void bfm_destroy_plan(bfm_plan *plan)
 
     int bfm_transpose_apply_d(bfm_plan *plan,
@@ -68,12 +74,18 @@ cdef class ButterflyPlan:
     cdef bfm_plan *plan
     cdef size_t nvecs
     cdef np.ndarray input_array, output_array
+    cdef sem_t mem_sem, cpu_sem
     
     def __cinit__(self, k_max, nblocks_max, nvecs):
-        self.plan = bfm_create_plan(k_max, nblocks_max, nvecs)
+        sem_init(&self.mem_sem, 0, 1)
+        sem_init(&self.cpu_sem, 0, 1)
+        self.plan = bfm_create_plan(k_max, nblocks_max, nvecs,
+                                    &self.mem_sem, &self.cpu_sem)
         self.nvecs = nvecs
 
     def __dealloc__(self):
+        sem_destroy(&self.mem_sem)
+        sem_destroy(&self.cpu_sem)
         pass
         #bfm_destroy_plan(self.plan)
 

@@ -399,6 +399,10 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   int numnodes = numa_max_node() + 1;
   for (int node = 0; node != numnodes; ++node) {
     if (ithread == nthreads) break;
+
+    plan->mem_locks[node] = memalign(64, 64);
+    sem_init(plan->mem_locks[node], 0, 3);
+
     if (numa_bitmask_isbitset(nodemask, node)) {
       int r = numa_node_to_cpus(node, cpumask);
       check(r >= 0, "numa_node_to_cpus failed");
@@ -518,6 +522,9 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mut
   size_t nrings_half = plan->grid->mid_ring + 1;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
 
+  localplan->cpu_lock = memalign(64, 64);
+  sem_init(localplan->cpu_lock, 0, 1);
+
   /* Copy matrix data into threadlocal buffers */
   for (size_t im = 0; im != nm; ++im) {
     m_resource_t *localres = &localplan->m_resources[im];
@@ -545,7 +552,9 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mut
   }
 
   size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);
-  localplan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps);
+  localplan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps,
+                                   plan->mem_locks[localplan->node],
+                                   localplan->cpu_lock);
   localplan->legendre_transform_work = 
     (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
 

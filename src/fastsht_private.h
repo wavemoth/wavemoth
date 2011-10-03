@@ -86,14 +86,14 @@ typedef struct {
   int threadnum_on_node;
   int cpu, node;
   fastsht_node_plan_t *node_plan;
-} fastsht_plan_threadlocal;
+} fastsht_core_plan_t;
 
 struct _fastsht_plan {
   double *output, *input;
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
-  fastsht_plan_threadlocal *threadlocal;
+  fastsht_core_plan_t *core_plans;
   fastsht_node_plan_t *node_plans[8];
   double **m_to_phase_ring;
 

@@ -61,21 +61,31 @@ typedef struct {
 } fastsht_grid_info;
 
 typedef struct {
-  bfm_plan *bfm;
-  char *legendre_transform_work;
-  double *work, *work_a_l, *work_fft;
-  size_t buf_size;
-  char *buf;
-  ring_pair_info_t *ring_pairs;
+  double *work_q;
+  size_t size_allocated;
   m_resource_t *m_resources;
   /* Set up a map of m -> phase ring. This is copied to all threads
      until it can be proven that sharing it for read-only access
      doesn't hurt... */
-  double **m_to_phase_ring;
-  sem_t *cpu_lock;
-  size_t nm, nrings;
+  size_t nm, im;
+  sem_t memory_bus_semaphore;
+  pthread_mutex_t queue_lock;
+  size_t k_max, nblocks_max;
+  int nthreads;
   int node;
-  int cpu;
+} fastsht_node_plan_t;
+
+typedef struct {
+  size_t buf_size;
+  bfm_plan *bfm;
+  ring_pair_info_t *ring_pairs;
+  char *legendre_transform_work;
+  double *work_a_l, *work_fft;
+  size_t nrings;
+  sem_t *cpu_lock;
+  int threadnum_on_node;
+  int cpu, node;
+  fastsht_node_plan_t *node_plan;
 } fastsht_plan_threadlocal;
 
 struct _fastsht_plan {
@@ -84,12 +94,15 @@ struct _fastsht_plan {
   fftw_plan *fft_plans;
   precomputation_t *resources;
   fastsht_plan_threadlocal *threadlocal;
-  sem_t *mem_locks[8];
+  fastsht_node_plan_t *node_plans[8];
+  double **m_to_phase_ring;
+
+  size_t work_q_stride;
 
   int type;
   int lmax, mmax;
   int nmaps;
-  int nthreads;
+  int nthreads, nnodes;
 
   int did_allocate_resources;
   int Nside;

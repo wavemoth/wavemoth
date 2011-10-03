@@ -48,6 +48,7 @@
 
 typedef __m128d m128d;
 
+#define CACHELINE 64
 
 /*
 Every time resource format changes, we increase this, so that
@@ -397,13 +398,31 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   struct bitmask *cpumask = numa_allocate_cpumask();
   int ithread = 0;
   int numnodes = numa_max_node() + 1;
+  plan->nnodes = numnodes;
+  size_t nm_bound = (mmax + 1) / numnodes + 1;
   for (int node = 0; node != numnodes; ++node) {
     if (ithread == nthreads) break;
 
-    plan->mem_locks[node] = memalign(64, 64);
-    sem_init(plan->mem_locks[node], 0, 3);
-
     if (numa_bitmask_isbitset(nodemask, node)) {
+      size_t bufsize = sizeof(fastsht_node_plan_t) + 
+        sizeof(m_resource_t[nm_bound]) + 
+        sizeof(double*[mmax + 1]);
+      char *buf = numa_alloc_onnode(bufsize, node);
+      fastsht_node_plan_t *node_plan = (void*)buf;
+      buf += sizeof(fastsht_node_plan_t);
+      if ((size_t)buf % sizeof(void*) != 0) {
+        buf += sizeof(void*) - (size_t)buf % sizeof(void*);
+      }
+      //node_plan->m_to_phase_ring = (void*)buf;
+      buf += sizeof(double*[mmax + 1]);
+      node_plan->m_resources = (void*)buf;
+      buf += sizeof(m_resource_t[nm_bound]);
+
+      node_plan->nthreads = 0;      
+      sem_init(&node_plan->memory_bus_semaphore, 0, 3);
+      pthread_mutex_init(&node_plan->queue_lock, NULL);
+      plan->node_plans[node] = node_plan;
+
       int r = numa_node_to_cpus(node, cpumask);
       check(r >= 0, "numa_node_to_cpus failed");
       for (int cpu = 0; cpu < numa_bitmask_nbytes(cpumask) * 8; ++cpu) {
@@ -411,6 +430,8 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 	if (numa_bitmask_isbitset(cpumask, cpu)) {
 	  plan->threadlocal[ithread].cpu = cpu;
 	  plan->threadlocal[ithread].node = node;
+	  plan->threadlocal[ithread].threadnum_on_node = node_plan->nthreads++;
+          plan->threadlocal[ithread].node_plan = node_plan;
 	  ithread++;
 	}
       }
@@ -419,33 +440,29 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   numa_free_nodemask(nodemask);
   numa_free_cpumask(cpumask);
 
-  /* Figure out how work should be distributed. */
+  /* Distribute Legendre transform tasks to nodes */
+  size_t nms[numnodes];
+  memset(nms, 0, sizeof(nms));
+  int inode = 0;
+  for (int m = 0; m != mmax + 1; ++m) {
+    int im = nms[inode];
+    plan->node_plans[inode]->m_resources[im].m = m;
+    nms[inode]++;
+    inode = (inode + 1) % numnodes;
+  }
+  for (int inode = 0; inode != numnodes; ++inode) {
+    plan->node_plans[inode]->nm = nms[inode];
+  }
+  /* Figure out how work should be distributed among nodes. */
   /* First allocate information buffers */
   int ring_block_size = FFT_CHUNK_SIZE;
-  size_t nm_bound = (mmax + 1) / nthreads + 1;
   size_t nring_bound = nrings / nthreads + ring_block_size;
-  size_t nms[nthreads], nrings_list[nthreads];
+  size_t nrings_list[nthreads];
   for (ithread = 0; ithread != nthreads; ++ithread) {
-    nms[ithread] = nrings_list[ithread] = 0;
+    nrings_list[ithread] = 0;
     fastsht_plan_threadlocal *td = &plan->threadlocal[ithread];
-    td->buf_size = (sizeof(m_resource_t[nm_bound]) + sizeof(ring_pair_info_t[nring_bound]) +
-                    sizeof(double*[mmax + 1]));
-    char *buf = numa_alloc_onnode(td->buf_size, td->node);
-    td->buf = buf;
-    td->m_to_phase_ring = (double**)buf;
-    buf += sizeof(double*[mmax + 1]);
-    td->m_resources = (m_resource_t*)buf;
-    buf += sizeof(m_resource_t[nm_bound]);
-    td->ring_pairs = (ring_pair_info_t*)buf;
-    buf += sizeof(ring_pair_info_t[nring_bound]);
-  }
-  /* Distribute m's */
-  ithread = 0;
-  for (size_t m = 0; m != mmax + 1; ++m) {
-    ithread = (ithread + 1) % nthreads;
-    int im = nms[ithread];
-    plan->threadlocal[ithread].m_resources[im].m = m;
-    nms[ithread]++;
+    td->buf_size = sizeof(ring_pair_info_t[nring_bound]);
+    td->ring_pairs = numa_alloc_onnode(td->buf_size, td->node);
   }
   /* Distribute rings */
   size_t mid_ring = plan->grid->mid_ring;
@@ -468,7 +485,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   }
   /* Copy nms and nrings to threads */
   for (int ithread = 0; ithread != nthreads; ++ithread) {
-    plan->threadlocal[ithread].nm = nms[ithread];
     plan->threadlocal[ithread].nrings = nrings_list[ithread];
   }
 
@@ -489,45 +505,66 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   check(mmax == plan->resources->mmax, "Incompatible mmax");
   check(lmax == plan->resources->lmax, "Incompatible lmax");
 
+
+  /* Compute stride for work_q */
+  size_t nvecs = 2 * plan->nmaps;
+  size_t s = nvecs * nrings_half;
+  assert(CACHELINE % sizeof(double) == 0);
+  s *= sizeof(double);
+  if (s % CACHELINE != 0) s += CACHELINE - s % CACHELINE;
+  s /= sizeof(double);
+  plan->work_q_stride = s;
+
   /* Spawn threads to do thread-local intialization:
      Copy over precomputed data, initialize butterfly & FFT plans */
-  pthread_mutex_t mutex_fftw;
-  pthread_mutex_init(&mutex_fftw, NULL);
-  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, &mutex_fftw);
-  pthread_mutex_destroy(&mutex_fftw);
+  
+  struct {
+    pthread_mutex_t mutex;
+    pthread_barrier_t barrier;
+  } sync;
+  pthread_mutex_init(&sync.mutex, NULL);
+  pthread_barrier_init(&sync.barrier, NULL, nthreads);
+  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, &sync);
+  pthread_barrier_destroy(&sync.barrier);
+  pthread_mutex_destroy(&sync.mutex);
 
-  /* Now that work has been allocated, set up m_to_phase_ring */
-  double *m_to_phase_ring[mmax + 1];
-  size_t work_stride = 2 * plan->nmaps * nrings_half;
-  for (ithread = 0; ithread != nthreads; ++ithread) {
-    fastsht_plan_threadlocal *lp = &plan->threadlocal[ithread];
-    for (size_t im = 0; im != lp->nm; ++im) {
-      m_to_phase_ring[lp->m_resources[im].m] = lp->work + (2 * im) * work_stride;
+  /* Now that work_q has been allocated, set up m_to_phase_ring */
+  double **m_to_phase_ring = plan->m_to_phase_ring = malloc(sizeof(double[mmax + 1]));
+  size_t work_stride = plan->work_q_stride;
+  for (inode = 0; inode != numnodes; ++inode) {
+    fastsht_node_plan_t *np = plan->node_plans[inode];
+    for (size_t im = 0; im != np->nm; ++im) {
+      m_to_phase_ring[np->m_resources[im].m] = np->work_q + (2 * im) * work_stride;
     }
-  }
-  /* And copy it to each thread */
-  for (ithread = 0; ithread != nthreads; ++ithread) {
-    memcpy(plan->threadlocal[ithread].m_to_phase_ring, m_to_phase_ring,
-           sizeof(double[mmax + 1]));
   }
   return plan;
 }
 
-static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mutex_fftw_) {
-  pthread_mutex_t *mutex_fftw = mutex_fftw_;
+static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx) {
+  struct {
+    pthread_mutex_t mutex;
+    pthread_barrier_t barrier;
+  } *sync = ctx;
   fastsht_plan_threadlocal *localplan = &plan->threadlocal[ithread];
-  size_t nm = localplan->nm;
+  size_t nm = localplan->node_plan->nm;
   int nmaps = plan->nmaps;
   int node = localplan->node;
   size_t nrings_half = plan->grid->mid_ring + 1;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
+  fastsht_node_plan_t *node_plan = localplan->node_plan;
 
-  localplan->cpu_lock = memalign(64, 64);
+  localplan->cpu_lock = memalign(CACHELINE, zmax(sizeof(sem_t), CACHELINE));
   sem_init(localplan->cpu_lock, 0, 1);
 
-  /* Copy matrix data into threadlocal buffers */
-  for (size_t im = 0; im != nm; ++im) {
-    m_resource_t *localres = &localplan->m_resources[im];
+  /* Copy matrix data into threadlocal buffers. Stride by
+     our thread-on-node number.
+
+     While we're at it, inspect precomputed data to figure out buffer
+     sizes (common for all, so synchronize/reduce-max at the end). */
+  size_t k_max = 0, nblocks_max = 0;
+  for (size_t im = localplan->threadnum_on_node; im < nm;
+       im += node_plan->nthreads) {
+    m_resource_t *localres = &node_plan->m_resources[im];
     int m = localres->m;
     m_resource_t *fileres = &plan->resources->matrices[m];
     for (int odd = 0; odd != 2; ++odd) {
@@ -536,31 +573,41 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mut
 	     fileres->len[odd], node);
       localres->len[odd] = fileres->len[odd];
       memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
-    }
-  }
 
-  /* Make Butterfly plans. Need to inspect precomputed data to figure
-     out buffer sizes. */
-  size_t k_max = 0, nblocks_max = 0;
-  for (size_t im = 0; im != nm; ++im) {
-    for (int odd = 0; odd != 2; ++odd) {
       bfm_matrix_data_info info;
-      bfm_query_matrix_data(localplan->m_resources[im].data[odd], &info);
+      bfm_query_matrix_data(localres->data[odd], &info);
       k_max = zmax(k_max, info.k_max);
       nblocks_max = zmax(nblocks_max, info.nblocks_max);
     }
   }
 
+  /* reduce-max*/
+  if (localplan->threadnum_on_node == 0) {
+    node_plan->k_max = node_plan->nblocks_max = 0;
+  }
+  pthread_barrier_wait(&sync->barrier);
+
+  pthread_mutex_lock(&sync->mutex);
+  k_max = node_plan->k_max = zmax(node_plan->k_max, k_max);
+  nblocks_max = node_plan->nblocks_max = zmax(node_plan->nblocks_max,
+                                              nblocks_max);
+  pthread_mutex_unlock(&sync->mutex);
+  pthread_barrier_wait(&sync->barrier);
+
+  
   size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);
   localplan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps,
-                                   plan->mem_locks[localplan->node],
+                                   &node_plan->memory_bus_semaphore,
                                    localplan->cpu_lock);
   localplan->legendre_transform_work = 
     (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
 
   size_t nvecs = 2 * plan->nmaps;
   size_t nmats = 2 * nm;
-  localplan->work = memalign(4096, sizeof(double[nmats * nvecs * nrings_half]));
+
+  if (localplan->threadnum_on_node == 0) {
+    node_plan->work_q = memalign(4096, sizeof(double[nmats * plan->work_q_stride]));
+  }
   localplan->work_a_l = memalign(4096, sizeof(double[(nvecs * (plan->lmax + 1))]));
 
   /* For FFTs, we use inplace c2r/r2c. This means that the buffer per
@@ -577,7 +624,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mut
      fftw_execute_... functions *are* thread-safe (as long as used with
      different plans).
   */
-  pthread_mutex_lock(mutex_fftw);
+  pthread_mutex_lock(&sync->mutex);
   for (int i = 0; i != localplan->nrings; ++i) {
     ring_pair_info_t *ri = &localplan->ring_pairs[i];
     int ringlen = ri->length;
@@ -586,7 +633,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *mut
                                           localplan->work_fft, NULL, nmaps, 1,
                                           flags);
   }
-  pthread_mutex_unlock(mutex_fftw);
+  pthread_mutex_unlock(&sync->mutex);
 }
 
 
@@ -596,7 +643,7 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   /* Cleanup for all threads. Do not move to per-thread without a mutex,
      FFTW3 destructor access must be serialized!
    */
-  for (int ithread = 0; ithread != plan->nthreads; ++ithread) {
+  /*  for (int ithread = 0; ithread != plan->nthreads; ++ithread) {
     fastsht_plan_threadlocal *lp = &plan->threadlocal[ithread];
     for (size_t iring = 0; iring != lp->nrings; ++iring) {
       fftw_destroy_plan(lp->ring_pairs[iring].fft_plan);
@@ -609,11 +656,11 @@ void fastsht_destroy_plan(fastsht_plan plan) {
     bfm_destroy_plan(lp->bfm);
     free(lp->work);
     free(lp->work_a_l);
-    free(lp->work_fft);
+    free(lp->work_fft);*/
     /* Free buffer for ring_pairs, m_resources, and m_to_phase_ring,
        allocated by numa_alloc. */
-    numa_free(lp->buf, lp->buf_size);
-  }
+  //    numa_free(lp->buf, lp->buf_size);
+  //}
 
   fastsht_free_grid_info(plan->grid);
   fastsht_release_resource(plan->resources);
@@ -636,19 +683,34 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 
 static void legendre_transforms_thread(fastsht_plan plan, int ithread, void *ctx) {
   fastsht_plan_threadlocal *localplan = &plan->threadlocal[ithread];
+  fastsht_node_plan_t *node_plan = localplan->node_plan;
   size_t nrings_half = plan->grid->mid_ring + 1;
-  double *work = localplan->work;
+  double *work_q = node_plan->work_q;
   int nvecs = 2 * plan->nmaps;
   size_t lmax = plan->lmax;
-  size_t nm = localplan->nm;
-    
-  /* Compute into the buffer */
-  for (int im = 0; im != nm; ++im) {
-    m_resource_t *m_resource = &localplan->m_resources[im];
+  size_t nm = node_plan->nm;
+  size_t work_q_stride = plan->work_q_stride;
+
+  while (1) {
+    /* Fetch next work item from queue */
+    size_t im;
+    pthread_mutex_lock(&node_plan->queue_lock);
+    im = node_plan->im;
+    if (im < nm) {
+      ++node_plan->im;
+    }
+    pthread_mutex_unlock(&node_plan->queue_lock);
+
+    if (im == nm) {
+      /* All tasks dispatched */
+      break;
+    }
+
+    m_resource_t *m_resource = &node_plan->m_resources[im];
     size_t m = m_resource->m;
     
     for (int odd = 0; odd < 2; ++odd) {
-      double *target = work + (2 * im + odd) * nvecs * nrings_half;
+      double *target = work_q + (2 * im + odd) * plan->work_q_stride;
       fastsht_perform_matmul(plan, ithread, m, odd, nrings_half, target,
                              localplan->legendre_transform_work,
                              localplan->work_a_l);
@@ -657,6 +719,11 @@ static void legendre_transforms_thread(fastsht_plan plan, int ithread, void *ctx
 }
 
 void fastsht_perform_legendre_transforms(fastsht_plan plan) {
+  /* Reset queue head for all nodes */
+  for (int inode = 0; inode != plan->nnodes; ++inode) {
+    plan->node_plans[inode]->im = 0;
+  }
+  /* Run threads */
   fastsht_run_in_threads(plan, &legendre_transforms_thread, NULL);
 }
 
@@ -937,7 +1004,7 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
   fastsht_plan_threadlocal *threadplan = &plan->threadlocal[ithread];
   ring_pair_info_t *ring_pairs = threadplan->ring_pairs;
 
-  double **m_to_phase_ring = threadplan->m_to_phase_ring;
+  double **m_to_phase_ring = plan->m_to_phase_ring;
 
   size_t idx, offset, length;
 

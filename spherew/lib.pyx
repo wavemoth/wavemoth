@@ -27,20 +27,22 @@ cdef extern from "fastsht_private.h":
     ctypedef struct m_resource_t:
         int m
     
-    ctypedef struct fastsht_plan_threadlocal:
-        double *work
+    ctypedef struct fastsht_node_plan_t:
+        double *work_q
         int nm
         m_resource_t *m_resources
+        
 
     cdef struct _fastsht_plan:
         int type_ "type"
         int lmax, mmax
         int nthreads
+        int nnodes
         int nmaps
         double complex *output, *input
         double *work
         int Nside
-        fastsht_plan_threadlocal *threadlocal
+        fastsht_node_plan_t **node_plans
 
     ctypedef _fastsht_plan *fastsht_plan
 
@@ -160,10 +162,10 @@ cdef class ShtPlan:
         nmaps = self.plan.nmaps
         nrings = 2 * self.Nside
         work = np.empty((self.plan.mmax + 1, 2, nrings, nmaps), dtype=np.complex128)
-        for ithread in range(self.plan.nthreads):
-            for im in range(self.plan.threadlocal[ithread].nm):
-                work_slice = <double complex*>self.plan.threadlocal[ithread].work
-                m = self.plan.threadlocal[ithread].m_resources[im].m
+        for inode in range(self.plan.nnodes):
+            for im in range(self.plan.node_plans[inode].nm):
+                work_slice = <double complex*>self.plan.node_plans[inode].work_q
+                m = self.plan.node_plans[inode].m_resources[im].m
                 for odd in range(2):
                     for j in range(nrings):
                         for imap in range(nmaps):

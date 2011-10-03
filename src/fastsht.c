@@ -49,6 +49,7 @@
 typedef __m128d m128d;
 
 #define CACHELINE 64
+#define THREADS_PER_CPU 3
 
 /*
 Every time resource format changes, we increase this, so that
@@ -300,72 +301,74 @@ static void bitmask_or(struct bitmask *a, struct bitmask *b, struct bitmask *out
   }
 }
 
-typedef void (*thread_main_func_t)(fastsht_plan, int, void*);
+typedef void (*thread_main_func_t)(fastsht_plan, int, int, int, void*);
 
 typedef struct {
   void *ctx;
   thread_main_func_t func;
   fastsht_plan plan;
-  int ithread;
+  int inode, icpu, ithread;
 } thread_ctx_t;
 
 static void *thread_main_adaptor(void *ctx_) {
   thread_ctx_t *ctx = ctx_;
 
   /* Ensure that the thread only allocates memory locally. */
-  int node = ctx->plan->core_plans[ctx->ithread].node;
   struct bitmask *mask = numa_allocate_nodemask();
   numa_bitmask_clearall(mask);
-  numa_bitmask_setbit(mask, node);
+  numa_bitmask_setbit(mask, ctx->plan->node_plans[ctx->inode]->node_id);
   numa_set_membind(mask);
   numa_free_nodemask(mask);
 
-  ctx->func(ctx->plan, ctx->ithread, ctx->ctx);
+  ctx->func(ctx->plan, ctx->inode, ctx->icpu, ctx->ithread, ctx->ctx);
   return NULL;
 }
 
-static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, void *ctx) {
+static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, int threads_per_cpu,
+                                   void *ctx) {
   /* Spawn pthreads on the CPUs designated in the plan, and wait for them
      to finish. Each thread will only allocate memory locally, because
      of numa_set_membind in thread_main_adaptor. */
-  int n = plan->nthreads;
+  int n = plan->ncpus_total * threads_per_cpu;
   thread_ctx_t adaptor_ctx[n];
   pthread_t threads[n];
-  for (int ithread = 0; ithread != n; ++ithread) {
-    cpu_set_t cpu_set;
-    pthread_attr_t attr;
-    CPU_ZERO(&cpu_set);
-    CPU_SET(plan->core_plans[ithread].cpu, &cpu_set);
-
-    adaptor_ctx[ithread].ctx = ctx;
-    adaptor_ctx[ithread].plan = plan;
-    adaptor_ctx[ithread].func = func;
-    adaptor_ctx[ithread].ithread = ithread;
-
-    pthread_attr_init(&attr);
-    pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu_set);
-    pthread_create(&threads[ithread], &attr, thread_main_adaptor, &adaptor_ctx[ithread]);
-    pthread_attr_destroy(&attr);
+  int idx = 0;
+  for (int inode = 0; inode != plan->nnodes; ++inode) {
+    for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
+      cpu_set_t cpu_set;
+      pthread_attr_t attr;
+      CPU_ZERO(&cpu_set);
+      CPU_SET(plan->node_plans[inode]->cpu_plans[icpu].cpu_id, &cpu_set);
+      pthread_attr_init(&attr);
+      pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu_set);
+      for (int ithread = 0; ithread != threads_per_cpu; ++ithread) {
+        adaptor_ctx[idx] = (thread_ctx_t){ ctx, func, plan, inode, icpu, ithread };
+        pthread_create(&threads[idx], &attr, thread_main_adaptor, &adaptor_ctx[ithread]);
+        idx++;
+      }
+      pthread_attr_destroy(&attr);
+    }
   }
-  for (int ithread = 0; ithread != n; ++ithread) {
-    pthread_join(threads[ithread], NULL);
+  assert(idx == n);
+  for (idx = 0; idx != n; ++idx) {
+    pthread_join(threads[idx], NULL);
   }
 }
 
-static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx); /* forward decl */
+static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
+                                       int ithread, void *ctx); /* forward decl */
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads, double *input, double *output,
                                      int ordering, char *resource_filename) {
   fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
-  int nrings, iring;
+  size_t nrings;
   int out_Nside;
   fastsht_grid_info *grid;
   bfm_index_t start, stop;
 
   /* Simple attribute assignment */
   nrings = 4 * Nside - 1;
-  plan->nthreads = nthreads;
   plan->type = PLANTYPE_HEALPIX;
   plan->input = input;
   plan->output = output;
@@ -380,8 +383,6 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
      and then fill up node-by-node until we
      hit nthreads. */
 
-  plan->core_plans = malloc(sizeof(fastsht_core_plan_t[nthreads]));
-
   if (nthreads <= 0) {
     fprintf(stderr, "Require nthreads > 0\n");
     return NULL; /* TODO */
@@ -395,19 +396,21 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   numa_free_nodemask(a);
   numa_free_nodemask(b);
 
-  struct bitmask *cpumask = numa_allocate_cpumask();
-  int ithread = 0;
-  int numnodes = numa_max_node() + 1;
-  plan->nnodes = numnodes;
-  size_t nm_bound = (mmax + 1) / numnodes + 1;
-  for (int node = 0; node != numnodes; ++node) {
-    if (ithread == nthreads) break;
+  plan->ncpus_total = 0;
 
-    if (numa_bitmask_isbitset(nodemask, node)) {
+  struct bitmask *cpumask = numa_allocate_cpumask();
+  int icpu = 0;
+  int max_node_id = numa_max_node();
+  size_t nm_bound = (mmax + 1) / (max_node_id + 1) + 1;
+  size_t inode = 0;
+  for (int node_id = 0; node_id <= max_node_id; ++node_id) {
+    if (icpu == nthreads) break;
+
+    if (numa_bitmask_isbitset(nodemask, node_id)) {
       size_t bufsize = sizeof(fastsht_node_plan_t) + 
         sizeof(m_resource_t[nm_bound]) + 
         sizeof(double*[mmax + 1]);
-      char *buf = numa_alloc_onnode(bufsize, node);
+      char *buf = numa_alloc_onnode(bufsize, node_id);
       fastsht_node_plan_t *node_plan = (void*)buf;
       buf += sizeof(fastsht_node_plan_t);
       if ((size_t)buf % sizeof(void*) != 0) {
@@ -418,21 +421,23 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       node_plan->m_resources = (void*)buf;
       buf += sizeof(m_resource_t[nm_bound]);
 
-      node_plan->nthreads = 0;      
+      node_plan->ncpus = 0;      
+      node_plan->cpu_plans = malloc(sizeof(fastsht_cpu_plan_t[12])); // TODO
       sem_init(&node_plan->memory_bus_semaphore, 0, 3);
       pthread_mutex_init(&node_plan->queue_lock, NULL);
-      plan->node_plans[node] = node_plan;
+      plan->node_plans[inode] = node_plan;
+      inode++;
 
-      int r = numa_node_to_cpus(node, cpumask);
+      int r = numa_node_to_cpus(node_id, cpumask);
       check(r >= 0, "numa_node_to_cpus failed");
-      for (int cpu = 0; cpu < numa_bitmask_nbytes(cpumask) * 8; ++cpu) {
-	if (ithread == nthreads) break;
-	if (numa_bitmask_isbitset(cpumask, cpu)) {
-	  plan->core_plans[ithread].cpu = cpu;
-	  plan->core_plans[ithread].node = node;
-	  plan->core_plans[ithread].threadnum_on_node = node_plan->nthreads++;
-          plan->core_plans[ithread].node_plan = node_plan;
-	  ithread++;
+      for (int cpuid = 0; cpuid < numa_bitmask_nbytes(cpumask) * 8; ++cpuid) {
+	if (icpu == nthreads) break;
+	if (numa_bitmask_isbitset(cpumask, cpuid)) {
+          fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
+	  cpu_plan->cpu_id = cpuid;
+          node_plan->ncpus++;
+          plan->ncpus_total++;
+	  icpu++;
 	}
       }
     }
@@ -440,52 +445,63 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   numa_free_nodemask(nodemask);
   numa_free_cpumask(cpumask);
 
+  int nnodes = plan->nnodes = inode;
+
   /* Distribute Legendre transform tasks to nodes */
-  size_t nms[numnodes];
+  size_t nms[nnodes];
   memset(nms, 0, sizeof(nms));
-  int inode = 0;
+  inode = 0;
   for (int m = 0; m != mmax + 1; ++m) {
     int im = nms[inode];
     plan->node_plans[inode]->m_resources[im].m = m;
     nms[inode]++;
-    inode = (inode + 1) % numnodes;
+    inode = (inode + 1) % nnodes;
   }
-  for (int inode = 0; inode != numnodes; ++inode) {
+  for (int inode = 0; inode != nnodes; ++inode) {
     plan->node_plans[inode]->nm = nms[inode];
   }
   /* Figure out how work should be distributed among nodes. */
   /* First allocate information buffers */
   int ring_block_size = FFT_CHUNK_SIZE;
   size_t nring_bound = nrings / nthreads + ring_block_size;
-  size_t nrings_list[nthreads];
-  for (ithread = 0; ithread != nthreads; ++ithread) {
-    nrings_list[ithread] = 0;
-    fastsht_core_plan_t *td = &plan->core_plans[ithread];
-    td->buf_size = sizeof(ring_pair_info_t[nring_bound]);
-    td->ring_pairs = numa_alloc_onnode(td->buf_size, td->node);
+  for (int inode = 0; inode != nnodes; ++inode) {
+    for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
+      fastsht_cpu_plan_t *td = &plan->node_plans[inode]->cpu_plans[icpu];
+      td->buf_size = sizeof(ring_pair_info_t[nring_bound]);
+      td->ring_pairs = numa_alloc_onnode(td->buf_size, inode);
+    }
   }
   /* Distribute rings */
   size_t mid_ring = plan->grid->mid_ring;
   size_t nrings_half = mid_ring + 1;
-  ithread = 0;
-  for (size_t iring = 0; iring != nrings_half; iring += ring_block_size) {
-    size_t stop = imin(nrings_half, iring + ring_block_size);
-    size_t rings_in_block = stop - iring;
-    for (size_t j = 0; j != rings_in_block; ++j) {
-      ring_pair_info_t *ri = &plan->core_plans[ithread].ring_pairs[nrings_list[ithread] + j];
-      ri->ring_number = iring + j;
-      ri->phi0 = grid->phi0s[mid_ring + iring + j];
-      ri->offset_top = grid->ring_offsets[mid_ring - ri->ring_number];
-      ri->offset_bottom = grid->ring_offsets[mid_ring + ri->ring_number];
-      ri->length = (grid->ring_offsets[mid_ring + + ri->ring_number + 1] - 
-                    grid->ring_offsets[mid_ring + + ri->ring_number]);
+  size_t iring = 0;
+  for (int inode = 0; inode != nnodes; ++inode) {
+    for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
+      fastsht_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
+      cpu_plan->nrings = 0;
     }
-    nrings_list[ithread] += rings_in_block;
-    ithread = (ithread + 1) % nthreads;
   }
-  /* Copy nms and nrings to threads */
-  for (int ithread = 0; ithread != nthreads; ++ithread) {
-    plan->core_plans[ithread].nrings = nrings_list[ithread];
+  while (iring < nrings_half) {
+    for (int inode = 0; inode != nnodes; ++inode) {
+      for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
+        size_t stop = imin(nrings_half, iring + ring_block_size);
+        size_t rings_in_block = stop - iring;
+
+        fastsht_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
+        ring_pair_info_t *ring_pairs = cpu_plan->ring_pairs;
+        for (size_t j = 0; j != rings_in_block; ++j) {
+          ring_pair_info_t *ri = &ring_pairs[cpu_plan->nrings + j];
+          ri->ring_number = iring + j;
+          ri->phi0 = grid->phi0s[mid_ring + iring + j];
+          ri->offset_top = grid->ring_offsets[mid_ring - ri->ring_number];
+          ri->offset_bottom = grid->ring_offsets[mid_ring + ri->ring_number];
+          ri->length = (grid->ring_offsets[mid_ring + ri->ring_number + 1] - 
+                        grid->ring_offsets[mid_ring + ri->ring_number]);
+        }
+        cpu_plan->nrings += rings_in_block;
+        iring += rings_in_block;
+      }
+    }
   }
 
   /* Load map of resources globally... */
@@ -524,14 +540,14 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   } sync;
   pthread_mutex_init(&sync.mutex, NULL);
   pthread_barrier_init(&sync.barrier, NULL, nthreads);
-  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, &sync);
+  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync);
   pthread_barrier_destroy(&sync.barrier);
   pthread_mutex_destroy(&sync.mutex);
 
   /* Now that work_q has been allocated, set up m_to_phase_ring */
   double **m_to_phase_ring = plan->m_to_phase_ring = malloc(sizeof(double[mmax + 1]));
   size_t work_stride = plan->work_q_stride;
-  for (inode = 0; inode != numnodes; ++inode) {
+  for (inode = 0; inode != nnodes; ++inode) {
     fastsht_node_plan_t *np = plan->node_plans[inode];
     for (size_t im = 0; im != np->nm; ++im) {
       m_to_phase_ring[np->m_resources[im].m] = np->work_q + (2 * im) * work_stride;
@@ -540,37 +556,36 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   return plan;
 }
 
-static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx) {
+static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
+                                       int ithread, void *ctx) {
   struct {
     pthread_mutex_t mutex;
     pthread_barrier_t barrier;
   } *sync = ctx;
-  fastsht_core_plan_t *localplan = &plan->core_plans[ithread];
-  size_t nm = localplan->node_plan->nm;
+
+  fastsht_node_plan_t *node_plan = plan->node_plans[inode];
+  fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
+  size_t nm = node_plan->nm;
   int nmaps = plan->nmaps;
-  int node = localplan->node;
   size_t nrings_half = plan->grid->mid_ring + 1;
   unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
-  fastsht_node_plan_t *node_plan = localplan->node_plan;
 
-  localplan->cpu_lock = memalign(CACHELINE, zmax(sizeof(sem_t), CACHELINE));
-  sem_init(localplan->cpu_lock, 0, 1);
+  sem_init(&cpu_plan->cpu_lock, 0, 1);
 
-  /* Copy matrix data into core_plans buffers. Stride by
+  /* Copy matrix data into cpu_plans buffers. Stride by
      our thread-on-node number.
 
      While we're at it, inspect precomputed data to figure out buffer
      sizes (common for all, so synchronize/reduce-max at the end). */
   size_t k_max = 0, nblocks_max = 0;
-  for (size_t im = localplan->threadnum_on_node; im < nm;
-       im += node_plan->nthreads) {
+  for (size_t im = icpu; im < nm; im += node_plan->ncpus) {
     m_resource_t *localres = &node_plan->m_resources[im];
     int m = localres->m;
     m_resource_t *fileres = &plan->resources->matrices[m];
     for (int odd = 0; odd != 2; ++odd) {
       localres->data[odd] = memalign(4096, fileres->len[odd]);
       checkf(localres->data[odd] != NULL, "No memory allocated of size %ld on node %d",
-	     fileres->len[odd], node);
+	     fileres->len[odd], node_plan->node_id);
       localres->len[odd] = fileres->len[odd];
       memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
 
@@ -582,7 +597,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx
   }
 
   /* reduce-max*/
-  if (localplan->threadnum_on_node == 0) {
+  if (icpu == 0) {
     node_plan->k_max = node_plan->nblocks_max = 0;
   }
   pthread_barrier_wait(&sync->barrier);
@@ -594,28 +609,33 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx
   pthread_mutex_unlock(&sync->mutex);
   pthread_barrier_wait(&sync->barrier);
 
-  
+  /* Allocate legendre-worker plans (>1 per cpu) */
   size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);
-  localplan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps,
-                                   &node_plan->memory_bus_semaphore,
-                                   localplan->cpu_lock);
-  localplan->legendre_transform_work = 
-    (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
-
   size_t nvecs = 2 * plan->nmaps;
   size_t nmats = 2 * nm;
 
-  if (localplan->threadnum_on_node == 0) {
+  cpu_plan->legendre_workers = malloc(sizeof(fastsht_legendre_worker_t[THREADS_PER_CPU]));
+  for (int w = 0; w != THREADS_PER_CPU; ++w) {
+    fastsht_legendre_worker_t *worker_plan = &cpu_plan->legendre_workers[w];
+    worker_plan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps,
+                                       &node_plan->memory_bus_semaphore,
+                                       &cpu_plan->cpu_lock);
+    worker_plan->legendre_transform_work = 
+      (legendre_work_size == 0) ? NULL : memalign(4096, legendre_work_size);
+    worker_plan->work_a_l = memalign(4096, sizeof(double[(nvecs * (plan->lmax + 1))]));
+  }
+
+  /* Target q_m buffer (per node) */
+  if (icpu == 0) {
     node_plan->work_q = memalign(4096, sizeof(double[nmats * plan->work_q_stride]));
   }
-  localplan->work_a_l = memalign(4096, sizeof(double[(nvecs * (plan->lmax + 1))]));
 
   /* For FFTs, we use inplace c2r/r2c. This means that the buffer per
      map must be as long as the longest ring + one complex
      coefficient: len(complex) = len(real) // 2 + 1. We allocate
      work space for FFT_CHUNK_SIZE rings in both the northern and southern
      hemisphere. */
-  localplan->work_fft = memalign(4096, sizeof(double[2 * FFT_CHUNK_SIZE * nmaps * 
+  cpu_plan->work_fft = memalign(4096, sizeof(double[2 * FFT_CHUNK_SIZE * nmaps * 
                                                      (4 * plan->Nside + 2)]));
 
   /* Make FFT plans. FFTW is *not* thread-safe in the fftw_plan_X functions,
@@ -625,12 +645,12 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int ithread, void *ctx
      different plans).
   */
   pthread_mutex_lock(&sync->mutex);
-  for (int i = 0; i != localplan->nrings; ++i) {
-    ring_pair_info_t *ri = &localplan->ring_pairs[i];
+  for (int i = 0; i != cpu_plan->nrings; ++i) {
+    ring_pair_info_t *ri = &cpu_plan->ring_pairs[i];
     int ringlen = ri->length;
     ri->fft_plan = fftw_plan_many_dft_c2r(1, &ringlen, nmaps,
-                                          (fftw_complex*)localplan->work_fft, NULL, nmaps, 1,
-                                          localplan->work_fft, NULL, nmaps, 1,
+                                          (fftw_complex*)cpu_plan->work_fft, NULL, nmaps, 1,
+                                          cpu_plan->work_fft, NULL, nmaps, 1,
                                           flags);
   }
   pthread_mutex_unlock(&sync->mutex);
@@ -644,7 +664,7 @@ void fastsht_destroy_plan(fastsht_plan plan) {
      FFTW3 destructor access must be serialized!
    */
   /*  for (int ithread = 0; ithread != plan->nthreads; ++ithread) {
-    fastsht_core_plan_t *lp = &plan->core_plans[ithread];
+    fastsht_cpu_plan_t *lp = &plan->cpu_plans[ithread];
     for (size_t iring = 0; iring != lp->nrings; ++iring) {
       fftw_destroy_plan(lp->ring_pairs[iring].fft_plan);
     }
@@ -665,7 +685,6 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   fastsht_free_grid_info(plan->grid);
   fastsht_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
-  free(plan->core_plans);
   free(plan);
 }
 
@@ -681,15 +700,18 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 }
 
 
-static void legendre_transforms_thread(fastsht_plan plan, int ithread, void *ctx) {
-  fastsht_core_plan_t *localplan = &plan->core_plans[ithread];
-  fastsht_node_plan_t *node_plan = localplan->node_plan;
+static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
+                                       int ithread, void *ctx) {
+  fastsht_node_plan_t *node_plan = plan->node_plans[inode];
+  fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
   size_t nrings_half = plan->grid->mid_ring + 1;
   double *work_q = node_plan->work_q;
   int nvecs = 2 * plan->nmaps;
   size_t lmax = plan->lmax;
   size_t nm = node_plan->nm;
   size_t work_q_stride = plan->work_q_stride;
+
+  fastsht_legendre_worker_t *thread_plan = &cpu_plan->legendre_workers[ithread];
 
   while (1) {
     /* Fetch next work item from queue */
@@ -711,9 +733,9 @@ static void legendre_transforms_thread(fastsht_plan plan, int ithread, void *ctx
     
     for (int odd = 0; odd < 2; ++odd) {
       double *target = work_q + (2 * im + odd) * plan->work_q_stride;
-      fastsht_perform_matmul(plan, ithread, m, odd, nrings_half, target,
-                             localplan->legendre_transform_work,
-                             localplan->work_a_l);
+      fastsht_perform_matmul(plan, thread_plan->bfm, m, odd, nrings_half, target,
+                             thread_plan->legendre_transform_work,
+                             thread_plan->work_a_l);
     }
   }
 }
@@ -724,7 +746,7 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan) {
     plan->node_plans[inode]->im = 0;
   }
   /* Run threads */
-  fastsht_run_in_threads(plan, &legendre_transforms_thread, NULL);
+  fastsht_run_in_threads(plan, &legendre_transforms_thread, THREADS_PER_CPU, NULL);
 }
 
 void fastsht_execute(fastsht_plan plan) {
@@ -787,7 +809,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
   }
 }
 
-void fastsht_perform_matmul(fastsht_plan plan, int ithread, bfm_index_t m, int odd, size_t ncols,
+void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, bfm_index_t m, int odd, size_t ncols,
                             double *output, char *legendre_transform_work,
                             double *work_a_l) {
   bfm_index_t nrows, l, lmax = plan->lmax, j;
@@ -802,7 +824,7 @@ void fastsht_perform_matmul(fastsht_plan plan, int ithread, bfm_index_t m, int o
     ++nrows;
   }
   transpose_apply_ctx_t ctx = { work_a_l, legendre_transform_work };
-  int ret = bfm_transpose_apply_d(plan->core_plans[ithread].bfm,
+  int ret = bfm_transpose_apply_d(bfm,
                                   matrix_data,
                                   pull_a_through_legendre_block,
                                   output,
@@ -981,12 +1003,14 @@ static void _printreg(char *msg, m128d r) {
 }
 #define printreg(x) _printreg(#x, x)
 
-static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *ctx) {
+static void perform_backward_ffts_thread(fastsht_plan plan, int inode, int icpu,
+                                         int ithread, void *ctx) {
   /*
     a) Phase shift all coefficients according to their phi0
     b) Zero padding and wrap-around coefficients (contribution from +/- m)
     c) Fourier transforms
   */
+  assert(ithread == 0);
   int nmaps = plan->nmaps;
   size_t mid_ring = plan->grid->mid_ring;
   size_t nrings_half = mid_ring + 1;
@@ -1001,25 +1025,25 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
   double phi0;
   double *map, *ring;
 
-  fastsht_core_plan_t *threadplan = &plan->core_plans[ithread];
-  ring_pair_info_t *ring_pairs = threadplan->ring_pairs;
+  fastsht_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
+  ring_pair_info_t *ring_pairs = cpu_plan->ring_pairs;
 
   double **m_to_phase_ring = plan->m_to_phase_ring;
 
   size_t idx, offset, length;
 
-  double *work = threadplan->work_fft;
+  double *work = cpu_plan->work_fft;
   size_t work_stride = nmaps * (4 * plan->Nside + 2);
   
   m128d conjugating_const = (m128d){ 1.0, -1.0 };
 
   /* This assertion holds true currently simply because of how
      work is distributed during plan initialization. */
-  assert((threadplan->nrings) % FFT_CHUNK_SIZE == 0);
+  assert((cpu_plan->nrings) % FFT_CHUNK_SIZE == 0);
 
   int s;
   for (size_t chunk_start = 0;
-       chunk_start < threadplan->nrings;
+       chunk_start < cpu_plan->nrings;
        chunk_start += FFT_CHUNK_SIZE) {
 
     memset(work, 0, sizeof(double[2 * FFT_CHUNK_SIZE * work_stride]));
@@ -1090,7 +1114,7 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int ithread, void *c
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan) {
-  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, NULL);
+  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL);
 }
 
 

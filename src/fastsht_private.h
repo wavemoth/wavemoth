@@ -61,6 +61,24 @@ typedef struct {
 } fastsht_grid_info;
 
 typedef struct {
+  bfm_plan *bfm;
+  char *legendre_transform_work;
+  double *work_a_l;  
+} fastsht_legendre_worker_t;
+
+typedef struct {
+  size_t buf_size;
+  ring_pair_info_t *ring_pairs;
+  double *work_fft;
+  size_t nrings;
+  int threadnum_on_node;
+  int cpu_id;
+  sem_t cpu_lock;
+  fastsht_legendre_worker_t *legendre_workers;
+} fastsht_cpu_plan_t;
+
+
+typedef struct {
   double *work_q;
   size_t size_allocated;
   m_resource_t *m_resources;
@@ -71,29 +89,17 @@ typedef struct {
   sem_t memory_bus_semaphore;
   pthread_mutex_t queue_lock;
   size_t k_max, nblocks_max;
-  int nthreads;
-  int node;
+  fastsht_cpu_plan_t *cpu_plans;
+  int ncpus;
+  int node_id;
 } fastsht_node_plan_t;
 
-typedef struct {
-  size_t buf_size;
-  bfm_plan *bfm;
-  ring_pair_info_t *ring_pairs;
-  char *legendre_transform_work;
-  double *work_a_l, *work_fft;
-  size_t nrings;
-  sem_t *cpu_lock;
-  int threadnum_on_node;
-  int cpu, node;
-  fastsht_node_plan_t *node_plan;
-} fastsht_core_plan_t;
 
 struct _fastsht_plan {
   double *output, *input;
   fastsht_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
-  fastsht_core_plan_t *core_plans;
   fastsht_node_plan_t *node_plans[8];
   double **m_to_phase_ring;
 
@@ -102,13 +108,13 @@ struct _fastsht_plan {
   int type;
   int lmax, mmax;
   int nmaps;
-  int nthreads, nnodes;
+  int nnodes, ncpus_total;
 
   int did_allocate_resources;
   int Nside;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, int ithread,
+void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm,
                             bfm_index_t m, int odd, size_t ncols, double *output,
                             char *legendre_transform_work, double *work_a_l);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);

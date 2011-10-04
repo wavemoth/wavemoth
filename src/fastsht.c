@@ -50,7 +50,7 @@ typedef __m128d m128d;
 
 #define CACHELINE 64
 #define THREADS_PER_CPU 3
-
+#define CONCURRENT_MEMORY_BUS_USE 3
 /*
 Every time resource format changes, we increase this, so that
 we can keep multiple resource files around and jump in git
@@ -423,7 +423,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 
       node_plan->ncpus = 0;      
       node_plan->cpu_plans = malloc(sizeof(fastsht_cpu_plan_t[12])); // TODO
-      sem_init(&node_plan->memory_bus_semaphore, 0, 3);
+      sem_init(&node_plan->memory_bus_semaphore, 0, CONCURRENT_MEMORY_BUS_USE);
       pthread_mutex_init(&node_plan->queue_lock, NULL);
       plan->node_plans[inode] = node_plan;
       inode++;
@@ -713,9 +713,14 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
 
   fastsht_legendre_worker_t *thread_plan = &cpu_plan->legendre_workers[ithread];
 
-  while (1) {
+  size_t im;
+  do {
+    /* First grab the CPU lock */
+    int val;
+    sem_getvalue(&cpu_plan->cpu_lock, &val);
+    sem_wait(&cpu_plan->cpu_lock);
+
     /* Fetch next work item from queue */
-    size_t im;
     pthread_mutex_lock(&node_plan->queue_lock);
     im = node_plan->im;
     if (im < nm) {
@@ -723,21 +728,21 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
     }
     pthread_mutex_unlock(&node_plan->queue_lock);
 
-    if (im == nm) {
-      /* All tasks dispatched */
-      break;
-    }
+    if (im < nm) {
+      /* Not done */
+      m_resource_t *m_resource = &node_plan->m_resources[im];
+      size_t m = m_resource->m;
 
-    m_resource_t *m_resource = &node_plan->m_resources[im];
-    size_t m = m_resource->m;
-    
-    for (int odd = 0; odd < 2; ++odd) {
-      double *target = work_q + (2 * im + odd) * plan->work_q_stride;
-      fastsht_perform_matmul(plan, thread_plan->bfm, m, odd, nrings_half, target,
-                             thread_plan->legendre_transform_work,
-                             thread_plan->work_a_l);
+      
+      for (int odd = 0; odd < 2; ++odd) {
+        double *target = work_q + (2 * im + odd) * plan->work_q_stride;
+        fastsht_perform_matmul(plan, thread_plan->bfm, m, odd, nrings_half, target,
+                               thread_plan->legendre_transform_work,
+                               thread_plan->work_a_l);
+      }
     }
-  }
+    sem_post(&cpu_plan->cpu_lock);
+  } while (im != nm);
 }
 
 void fastsht_perform_legendre_transforms(fastsht_plan plan) {

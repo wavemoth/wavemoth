@@ -644,7 +644,6 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   ctx.plan = plan;
   check((size_t)matrix_data % 16 == 0, "matrix_data not 128-bit aligned");
   
-  sem_wait(plan->cpu_semaphore);
   enter_mem_section(plan);
 
   /* Read in tree. Shape of the S-matrix forest is determined by the
@@ -688,7 +687,6 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   }
   assert(start == info.ncols);
   exit_mem_section(plan);
-  sem_post(plan->cpu_semaphore);
   return 0;
 }
 

@@ -401,8 +401,9 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   struct bitmask *cpumask = numa_allocate_cpumask();
   int icpu = 0;
   int max_node_id = numa_max_node();
-  size_t nm_bound = (mmax + 1) / (max_node_id + 1) + 1;
+  size_t nm_bound = (mmax + 1);
   size_t inode = 0;
+  int threads_assigned = 0;
   for (int node_id = 0; node_id <= max_node_id; ++node_id) {
     if (icpu == nthreads) break;
 
@@ -431,16 +432,18 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       int r = numa_node_to_cpus(node_id, cpumask);
       check(r >= 0, "numa_node_to_cpus failed");
       for (int cpuid = 0; cpuid < numa_bitmask_nbytes(cpumask) * 8; ++cpuid) {
-	if (icpu == nthreads) break;
 	if (numa_bitmask_isbitset(cpumask, cpuid)) {
           fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
 	  cpu_plan->cpu_id = cpuid;
           node_plan->ncpus++;
 	  icpu++;
+          threads_assigned++;
+          if (threads_assigned == nthreads) break;
 	}
       }
       plan->ncpus_total += icpu;
       inode++;
+      if (threads_assigned == nthreads) break;
     }
   }
   numa_free_nodemask(nodemask);

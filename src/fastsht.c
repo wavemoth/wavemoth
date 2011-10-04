@@ -600,18 +600,24 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
     }
   }
 
-  /* reduce-max*/
+  /* reduce-max */
   if (icpu == 0) {
+    /* root-cpu initializes to 0 */
     node_plan->k_max = node_plan->nblocks_max = 0;
   }
+
   pthread_barrier_wait(&sync->barrier);
 
+  /* all threads do max*/
   pthread_mutex_lock(&sync->mutex);
-  k_max = node_plan->k_max = zmax(node_plan->k_max, k_max);
-  nblocks_max = node_plan->nblocks_max = zmax(node_plan->nblocks_max,
-                                              nblocks_max);
+  node_plan->k_max = zmax(node_plan->k_max, k_max);
+  node_plan->nblocks_max = zmax(node_plan->nblocks_max,
+                                nblocks_max);
   pthread_mutex_unlock(&sync->mutex);
   pthread_barrier_wait(&sync->barrier);
+  /* all threads read back values */
+  k_max = node_plan->k_max;
+  nblocks_max = node_plan->nblocks_max;
 
   /* Allocate legendre-worker plans (>1 per cpu) */
   size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);

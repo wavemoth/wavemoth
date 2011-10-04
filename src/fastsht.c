@@ -343,7 +343,7 @@ static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, i
       pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu_set);
       for (int ithread = 0; ithread != threads_per_cpu; ++ithread) {
         adaptor_ctx[idx] = (thread_ctx_t){ ctx, func, plan, inode, icpu, ithread };
-        pthread_create(&threads[idx], &attr, thread_main_adaptor, &adaptor_ctx[ithread]);
+        pthread_create(&threads[idx], &attr, thread_main_adaptor, &adaptor_ctx[idx]);
         idx++;
       }
       pthread_attr_destroy(&attr);

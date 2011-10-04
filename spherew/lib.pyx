@@ -131,7 +131,7 @@ cdef class ShtPlan:
             raise ValueError("Output must have shape (Npix, nmaps), has %r" %
                              (<object>output).shape)
 
-        if not _configured:
+        if not _configured and matrix_data_filename is None:
             fastsht_configure(os.environ['SHTRESOURCES'])
             _configured = True
         

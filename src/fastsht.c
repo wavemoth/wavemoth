@@ -426,7 +426,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       sem_init(&node_plan->memory_bus_semaphore, 0, CONCURRENT_MEMORY_BUS_USE);
       pthread_mutex_init(&node_plan->queue_lock, NULL);
       plan->node_plans[inode] = node_plan;
-      inode++;
+      icpu = 0;
 
       int r = numa_node_to_cpus(node_id, cpumask);
       check(r >= 0, "numa_node_to_cpus failed");
@@ -436,10 +436,11 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
           fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
 	  cpu_plan->cpu_id = cpuid;
           node_plan->ncpus++;
-          plan->ncpus_total++;
 	  icpu++;
 	}
       }
+      plan->ncpus_total += icpu;
+      inode++;
     }
   }
   numa_free_nodemask(nodemask);

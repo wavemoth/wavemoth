@@ -75,9 +75,6 @@ cdef extern from "fastsht.h":
     void fastsht_configure(char *resource_dir)
     void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
     void fastsht_perform_legendre_transforms(fastsht_plan plan)
-    void fastsht_assemble_rings(fastsht_plan plan,
-                                int ms_len, int *ms,
-                                double complex **q_list)
     void fastsht_disable_phase_shifting(fastsht_plan plan)
 
 cdef extern from "legendre_transform.h":
@@ -187,18 +184,6 @@ cdef class ShtPlan:
         cdef int k
         for k in range(repeat):
             fastsht_perform_legendre_transforms(self.plan)
-
-    def assemble_rings(self, int m,
-                       np.ndarray[double complex, ndim=2, mode='c'] q_even,
-                       np.ndarray[double complex, ndim=2, mode='c'] q_odd):
-        cdef double complex *q_list[2]
-        if not (q_even.shape[0] == q_odd.shape[0] == 2 * self.Nside):
-            raise ValueError("Invalid array length")
-        if  not (q_even.shape[1] == q_odd.shape[1] == self.output.shape[1]):
-            raise ValueError("Does not conform with nmaps")
-        q_list[0] = <double complex*>q_even.data
-        q_list[1] = <double complex*>q_odd.data
-        fastsht_assemble_rings(self.plan, 1, &m, q_list)
 
         
 

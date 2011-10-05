@@ -764,12 +764,13 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
   size_t work_q_stride = plan->work_q_stride;
 
   fastsht_legendre_worker_t *thread_plan = &cpu_plan->legendre_workers[ithread];
+  assert(ithread == 0);
 
   size_t im;
   do {
     /* First grab the CPU lock */
     int val;
-    sem_wait(&cpu_plan->cpu_lock);
+    /*sem_wait(&cpu_plan->cpu_lock);*/
     /* Fetch next work item from queue */
     pthread_mutex_lock(&node_plan->queue_lock);
     im = node_plan->im;
@@ -792,7 +793,7 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
                                thread_plan->work_a_l);
       }
     }
-    sem_post(&cpu_plan->cpu_lock);
+    /*sem_post(&cpu_plan->cpu_lock);*/
   } while (im != nm);
 }
 

@@ -1,6 +1,6 @@
 #./waf-light --tools=compat15,swig,fc,compiler_fc,fc_config,fc_scan,gfortran,g95,ifort,gccdeps;
 
-
+import os
 from textwrap import dedent
 
 top = '.'
@@ -18,6 +18,7 @@ def options(opt):
     opt.add_option('--with-atlas-lib', help='path to ATLAS libs to use '
                    '(NOTE: must be configured with PIC)')
     opt.add_option('--with-acml-lib', help='path to ACML libs to use')
+    opt.add_option('--with-blas', help='path to BLAS .so file to use (Unix only)')
     opt.add_option('--with-perftools', help='path to google-perftools'
                    '(NOTE: must be configured with PIC)')
     opt.add_option('--with-numa', help='path to NUMA')
@@ -286,8 +287,17 @@ def check_blas(conf):
     path = []
     if conf.options.with_acml_lib:
         path = conf.options.with_acml_lib
-        conf.env.LIB_BLAS = 'acml acml_mv'.split()
+        conf.env.LIB_BLAS = ['acml']
         name = 'ACML'
+    elif conf.options.with_blas:
+        # Unix-only
+        path, lib = os.path.split(conf.options.with_blas)
+        if lib.startswith('lib'):
+            lib = lib[3:]
+        if lib.endswith('.so'):
+            lib = lib[:-3]
+        conf.env.LIB_BLAS = [lib, 'gfortran']
+        name = 'generic'
     else:
         conf.env.LIB_BLAS = 'f77blas atlas gfortran'.split()
         path = conf.options.with_atlas_lib

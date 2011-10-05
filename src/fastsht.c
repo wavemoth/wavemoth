@@ -49,8 +49,8 @@
 typedef __m128d m128d;
 
 #define CACHELINE 64
-#define THREADS_PER_CPU 3
-#define CONCURRENT_MEMORY_BUS_USE 3
+#define THREADS_PER_CPU 1
+#define CONCURRENT_MEMORY_BUS_USE 1
 /*
 Every time resource format changes, we increase this, so that
 we can keep multiple resource files around and jump in git
@@ -769,9 +769,7 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
   do {
     /* First grab the CPU lock */
     int val;
-    sem_getvalue(&cpu_plan->cpu_lock, &val);
     sem_wait(&cpu_plan->cpu_lock);
-
     /* Fetch next work item from queue */
     pthread_mutex_lock(&node_plan->queue_lock);
     im = node_plan->im;

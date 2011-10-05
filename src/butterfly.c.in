@@ -6,6 +6,7 @@
 #include <xmmintrin.h>
 #include <emmintrin.h>
 #include <errno.h>
+#include <unistd.h>
 #include "butterfly.h"
 #include "blas.h"
 #include "fastsht_error.h"
@@ -503,7 +504,7 @@ static void copy_vectors(double *input, double *target, size_t target_start, siz
   }
 }
 
-#if 0
+#if 1
 
 static void enter_mem_section(bfm_plan *plan) {}
 static void exit_mem_section(bfm_plan *plan) {}
@@ -522,6 +523,7 @@ static void enter_mem_section(bfm_plan *plan) {
        reacquire it in order to give CPU-bound threads a chance to take
        over. */
     sem_post(plan->cpu_semaphore);
+    usleep(100);
     while ((r = sem_wait(plan->cpu_semaphore)) == EINTR) {};
     }
   }
@@ -560,10 +562,8 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
     if (is_root) {
       /* Simply stream data straight through */
       assert(!ctx->add_push); /* TODO Do something sane */
-      exit_mem_section(ctx->plan);
       ctx->pull_func(ctx->target, target_start, target_stop, plan->nvecs, payloads[0],
                      payloads[1] - payloads[0], ctx->caller_ctx);
-      enter_mem_section(ctx->plan);
     } else {
       /* TODO: Avoid this copy at leafs, go straight to target in the nblocks=2 case */
       input_block = input_blocks[0];
@@ -600,12 +600,10 @@ static size_t transpose_apply_node(bfm_transpose_apply_context *ctx,
         assert(k <= plan->k_max);
         if (is_root) {
           input_block = acquire_vector_chunk(plan);
-          exit_mem_section(ctx->plan);
           ctx->pull_func(input_block, input_pos, input_pos + k,
                          plan->nvecs, payloads[2 * i + j],
                          payloads[2 * i + j + 1] - payloads[2 * i + j],
                          ctx->caller_ctx);
-          enter_mem_section(ctx->plan);
           input_pos += k;
         } else {
           input_block = input_blocks[2 * i + j];
@@ -644,8 +642,6 @@ int bfm_transpose_apply_d(bfm_plan *plan,
   ctx.plan = plan;
   check((size_t)matrix_data % 16 == 0, "matrix_data not 128-bit aligned");
   
-  enter_mem_section(plan);
-
   /* Read in tree. Shape of the S-matrix forest is determined by the
      start level and stop level. Offsets to each node is stored in a
      heap structure that is present; we translate it to pointers in
@@ -686,7 +682,6 @@ int bfm_transpose_apply_d(bfm_plan *plan,
     ctx.current_root_idx++;
   }
   assert(start == info.ncols);
-  exit_mem_section(plan);
   return 0;
 }
 

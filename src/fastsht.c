@@ -422,6 +422,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       node_plan->m_resources = (void*)buf;
       buf += sizeof(m_resource_t[nm_bound]);
 
+      node_plan->node_id = node_id;
       node_plan->ncpus = 0;      
       node_plan->cpu_plans = malloc(sizeof(fastsht_cpu_plan_t[12])); // TODO
       sem_init(&node_plan->memory_bus_semaphore, 0, CONCURRENT_MEMORY_BUS_USE);
@@ -560,6 +561,41 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   return plan;
 }
 
+static int _dummy;
+
+static void migrate_data(void *startptr, size_t len, int node) {
+  const int CHUNK = 512;
+  void *pages[CHUNK];
+  int nodes[CHUNK];
+  int status[CHUNK];
+
+  char *start = startptr, *end = (char*)startptr + len;
+  start -= ((size_t)start & 0xfff);
+  end -= ((size_t)end & 0xfff);
+
+  /* Apparently the return values and status codes are fairly
+     useless; if the page is already on the node, errors will be given,
+     and the function call itself fails if no pages were moved (for that
+     reason). But things seem to work and we just ignore errors. */
+  int idx = 0;
+  for (char *ptr = start; ptr != end; ptr += 0x1000) {
+    /* touch page */
+    _dummy += *ptr;
+    /* migrate page */
+    pages[idx] = ptr;
+    nodes[idx] = node;
+    status[idx] = 0;
+    idx++;
+    if (idx == CHUNK) {
+      numa_move_pages(0, idx, pages, nodes, status, MPOL_MF_MOVE_ALL);
+      idx = 0;
+    }
+  }
+  if (idx > 0) {
+    //    numa_move_pages(0, idx, pages, nodes, status, MPOL_MF_MOVE);
+  }
+}
+
 static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
                                        int ithread, void *ctx) {
   struct {
@@ -587,11 +623,17 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
     int m = localres->m;
     m_resource_t *fileres = &plan->resources->matrices[m];
     for (int odd = 0; odd != 2; ++odd) {
+#if 0
+      migrate_data(fileres->data[odd], fileres->len[odd], node_plan->node_id);
+      localres->data[odd] = fileres->data[odd];
+      localres->len[odd] = fileres->len[odd];
+#else
       localres->data[odd] = memalign(4096, fileres->len[odd]);
+      localres->len[odd] = fileres->len[odd];
       checkf(localres->data[odd] != NULL, "No memory allocated of size %ld on node %d",
 	     fileres->len[odd], node_plan->node_id);
-      localres->len[odd] = fileres->len[odd];
       memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
+#endif
 
       bfm_matrix_data_info info;
       bfm_query_matrix_data(localres->data[odd], &info);
@@ -746,7 +788,8 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
       
       for (int odd = 0; odd < 2; ++odd) {
         double *target = work_q + (2 * im + odd) * plan->work_q_stride;
-        fastsht_perform_matmul(plan, thread_plan->bfm, m, odd, nrings_half, target,
+        fastsht_perform_matmul(plan, thread_plan->bfm, m_resource->data[odd],
+                               m, odd, nrings_half, target,
                                thread_plan->legendre_transform_work,
                                thread_plan->work_a_l);
       }
@@ -824,13 +867,13 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
   }
 }
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, bfm_index_t m, int odd, size_t ncols,
+void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,
+                            bfm_index_t m, int odd, size_t ncols,
                             double *output, char *legendre_transform_work,
                             double *work_a_l) {
   bfm_index_t nrows, l, lmax = plan->lmax, j;
   size_t nvecs = 2 * plan->nmaps;
   double *input_m = plan->input + nvecs * m * (2 * lmax - m + 3) / 2;
-  char *matrix_data = plan->resources->matrices[m].data[odd];
   nrows = 0;
   for (l = m + odd; l <= lmax; l += 2) {
     for (j = 0; j != nvecs; ++j) {

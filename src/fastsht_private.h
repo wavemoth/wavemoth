@@ -114,7 +114,7 @@ struct _fastsht_plan {
   int Nside;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm,
+void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,
                             bfm_index_t m, int odd, size_t ncols, double *output,
                             char *legendre_transform_work, double *work_a_l);
 void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);

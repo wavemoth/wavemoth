@@ -216,6 +216,9 @@ int main(int argc, char *argv[]) {
   char *resourcename;
   char timestr1[MAXTIME], timestr2[MAXTIME];
 
+  char *stats_filename = NULL;
+  char *stats_mode;
+
   int c;
   int got_threads, miniter;
   double mintime;
@@ -230,13 +233,21 @@ int main(int argc, char *argv[]) {
   sht_nmaps = 1;
   do_ffts = -1;
 
-  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:F")) != -1) {
+  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:a:o:F")) != -1) {
     switch (c) {
     case 'r': sht_resourcefile = optarg; break;
     case 'N': Nside = atoi(optarg);  break;
     case 'j': N_threads = atoi(optarg); break;
     case 'n': miniter = atoi(optarg); break;
     case 't': mintime = atof(optarg); break;
+    case 'a':
+      stats_filename = optarg;
+      stats_mode = "a";
+      break;
+    case 'o':
+      stats_filename = optarg;
+      stats_mode = "w";
+      break;
     case 'S': 
       sht_m_stride = atoi(optarg); 
       do_ffts = 0;
@@ -314,6 +325,22 @@ int main(int argc, char *argv[]) {
   printf("Speedup psht/sht: %f\n", psht_benchmark->min_time / sht_benchmark->min_time);
   double rho = relative_error(psht_output, sht_output, npix * sht_nmaps);
   printf("Relative error: %e\n", rho);
+
+  if (stats_filename != NULL) {
+    /* Write result to file as a line in the format
+       nside lmax nmaps nthreads wavemoth_time psht_time relative_error
+    */
+    FILE *f = fopen(stats_filename, stats_mode);
+    if (!f) {
+      fprintf(stderr, "Could not open %s in mode %s\n", stats_filename, stats_mode);
+    } else {
+      fprintf(f, "%d %d %d %d %.15e %.15e %.15e\n",
+              Nside, lmax, sht_nmaps, N_threads,
+              sht_benchmark->min_time, psht_benchmark->min_time,
+              rho);
+      fclose(f);
+    }
+  }
 
 
   free(psht_output);

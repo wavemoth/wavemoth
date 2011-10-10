@@ -126,7 +126,7 @@ void setup_psht() {
 
   size_t pos = 0;
   for (m = 0; m < lmax + 1; m += 1) {
-    mstart[m] = pos - m;
+    mstart[m] = (pos - m) * sht_nmaps;
     pos += lmax - m + 1; 
     marr[m] = m;
   }

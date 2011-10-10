@@ -9,6 +9,23 @@
 #include <stdlib.h>
 #include <math.h>
 
+static void print_array(char *msg, double* arr, bfm_index_t len) {
+  bfm_index_t i;
+  printf("%s ", msg);
+  for (i = 0; i != len; ++i) {
+    printf("%.2e ", arr[i]);
+  }
+  printf("\n");
+}
+
+static void fprint_array(FILE *f, double* arr, bfm_index_t len) {
+  bfm_index_t i;
+  for (i = 0; i != len; ++i) {
+    fprintf(f, "%e ", arr[i]);
+  }
+  fprintf(f, "\n");
+}
+
 static double *zeros(size_t n) {
   double *buf;
   buf = memalign(16, n * sizeof(double));

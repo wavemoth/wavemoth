@@ -298,6 +298,8 @@ int main(int argc, char * argv[]) {
 
   int cpucount = 0;
   struct bitmask *cpumask = numa_allocate_cpumask();
+  int max_cpus = numa_bitmask_nbytes(cpumask) * 8; /* upper bound */
+
   for (int i = 0; i != nodecount; ++i) {
     long memtotal, memfree;
     memtotal = numa_node_size(i, &memfree);
@@ -308,7 +310,7 @@ int main(int argc, char * argv[]) {
       return 2;
     }
     char *cpus = s3;
-    for (int cpu = 0; cpu < sizeof(long) * 8; ++cpu) {
+    for (int cpu = 0; cpu < max_cpus; ++cpu) {
       if (numa_bitmask_isbitset(cpumask, cpu)) {
 	cpucount++;
 	cpus += snprintf(cpus, SBUFLEN - (cpus - s3), "%d ", cpu);

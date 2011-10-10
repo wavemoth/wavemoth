@@ -424,7 +424,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 
       node_plan->node_id = node_id;
       node_plan->ncpus = 0;      
-      node_plan->cpu_plans = malloc(sizeof(fastsht_cpu_plan_t[12])); // TODO
+      node_plan->cpu_plans = malloc(sizeof(fastsht_cpu_plan_t[16])); // TODO
       sem_init(&node_plan->memory_bus_semaphore, 0, CONCURRENT_MEMORY_BUS_USE);
       pthread_mutex_init(&node_plan->queue_lock, NULL);
       plan->node_plans[inode] = node_plan;
@@ -468,12 +468,13 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   /* Figure out how work should be distributed among nodes. */
   /* First allocate information buffers */
   int ring_block_size = FFT_CHUNK_SIZE;
-  size_t nring_bound = nrings / nthreads + ring_block_size;
+  size_t nring_bound = nrings;
   for (int inode = 0; inode != nnodes; ++inode) {
     for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
       fastsht_cpu_plan_t *td = &plan->node_plans[inode]->cpu_plans[icpu];
       td->buf_size = sizeof(ring_pair_info_t[nring_bound]);
       td->ring_pairs = numa_alloc_onnode(td->buf_size, inode);
+      check(td->ring_pairs != NULL, "Could not allocate");
     }
   }
   /* Distribute rings */
@@ -608,7 +609,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
   size_t nm = node_plan->nm;
   int nmaps = plan->nmaps;
   size_t nrings_half = plan->grid->mid_ring + 1;
-  unsigned flags = FFTW_DESTROY_INPUT | FFTW_ESTIMATE;
+  unsigned flags = FFTW_DESTROY_INPUT | FFTW_MEASURE;
 
   sem_init(&cpu_plan->cpu_lock, 0, 1);
 

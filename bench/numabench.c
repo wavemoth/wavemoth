@@ -40,7 +40,7 @@ static double *zeros(size_t n) {
   return buf;
 }
 
-#define SBUFLEN 40
+#define SBUFLEN 80
 
 #define KB 1024UL
 #define MB KB * KB

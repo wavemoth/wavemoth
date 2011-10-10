@@ -23,7 +23,7 @@ void snprintsize(char *buf, size_t n, size_t size) {
     dsize /= 1024 * 1024 * 1024;
     snprintf(buf, n, "%.1f GB", dsize);
   } else {
-    snprintf(buf, n, "%d bytes", size);
+    snprintf(buf, n, "%ld bytes", size);
   }
 }
 

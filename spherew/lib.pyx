@@ -100,6 +100,9 @@ cdef extern from "legendre_transform.h":
         size_t m, size_t lmin, size_t nk,
         double *auxdata)
 
+    void fastsht_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
+                                         double *output)
+
     cdef size_t LEGENDRE_TRANSFORM_WORK_SIZE
 
 _configured = False
@@ -228,26 +231,33 @@ def legendre_transform(int m, int lmin,
     if not nvecs == y.shape[1]:
         raise ValueError("nonconforming arrays")
 
+    # Copy a into buffer twice as big
+    cdef np.ndarray abig = np.zeros((2 * a.shape[0], a.shape[1]))
+    abig[0::2, :] = a
+
     if auxdata is None:
         auxdata = legendre_transform_auxdata(m, lmin, nk)
     elif auxdata.shape[0] != 3 * (nk - 2):
         raise ValueError("auxdata.shape[0] != 3 * (nk - 2)")
 
     cdef char *work = NULL
-    cdef np.ndarray work_array
+    cdef np.ndarray work_array, a_buf
 
     cdef size_t work_size
 
     if nvecs % 2 != 0:
         raise ValueError("nvecs not divisible by 2")
     if use_sse:
+        a_buf = np.zeros((a.shape[0], a.shape[1])) * np.nan
+        fastsht_legendre_transform_pack(nk, nvecs, <double*>abig.data, <double*>a_buf.data)
+
         work_size = fastsht_legendre_transform_sse_query_work(nvecs);
         work_array = np.ones(work_size, dtype=np.int8) * np.nan
         work = work_array.data
         for i in range(repeat):
             fastsht_legendre_transform_sse(
                 nx, nk, nvecs,
-                <double*>a.data,
+                <double*>a_buf.data,
                 <double*>y.data,
                 <double*>x_squared.data,
                 <double*>auxdata.data,
@@ -258,7 +268,7 @@ def legendre_transform(int m, int lmin,
         for i in range(repeat):
             fastsht_legendre_transform(
                 nx, nk, nvecs,
-                <double*>a.data,
+                <double*>abig.data,
                 <double*>y.data,
                 <double*>x_squared.data,
                 <double*>auxdata.data,

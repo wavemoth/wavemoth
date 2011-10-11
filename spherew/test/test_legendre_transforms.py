@@ -31,6 +31,7 @@ def assert_transforms(nvecs, nx, nk, auxalign, drop_normal=False):
     x_squared = np.cos(nodes)**2
     a = np.sin(ls * 0.001)[:, None] * np.arange(1, nvecs + 1)[None, :].astype(np.double)
     a = np.arange(np.prod(a.shape), dtype=np.double).reshape(a.shape)
+    a_copy = a.copy()
     y0 = np.dot(a.T, P).T
     auxdata = np.zeros(max(3 * (nk - 2), 0) + auxalign)
     assert_aligned(auxdata)
@@ -52,6 +53,7 @@ def assert_transforms(nvecs, nx, nk, auxalign, drop_normal=False):
 
         for j in range(nvecs):
             assert_almost_equal(y0[:, j], y[:, j])
+    ok_(np.all(a_copy == a))
 
 def test_nvec2():
     for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
@@ -61,19 +63,11 @@ def test_nvec2():
 
 def test_multivec():
     from spherew.lib import _LEGENDRE_TRANSFORM_WORK_SIZE
-    nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE / (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
-
-#    yield assert_transforms, 2, 4, 6, 0, True
-#    yield assert_transforms, 2, 5, 6, 0, True
-#    yield assert_transforms, 2, 1, 68, 1, True
-#    yield assert_transforms, 2, 1, 69, 1, True
-#    yield assert_transforms, 4, 1, 2, 0, True # CRASHES
-#    yield assert_transforms, 12, 4, 4, 0, True
-#    return
+    nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE // (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
 
     for nx in [1, 2, 3, 4, 6, 7, 10, 11]:
         for nk in [2, 3, 4, 6, 7, 10, 11, nk_block - 2, nk_block, nk_block + 2]:
-            for nvecs in [2, 4, 6, 10, 12, 22]: # TODO
+            for nvecs in [2, 4, 6, 10, 12, 22]:
                 for auxalign in [0, 1]:
                     yield assert_transforms, nvecs, nx, nk, auxalign, True
     

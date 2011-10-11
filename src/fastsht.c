@@ -815,23 +815,33 @@ void fastsht_execute(fastsht_plan plan) {
 
 
 typedef struct {
-  double *input;
+  double *input, *input_pack_buf;
   char *work;
 } transpose_apply_ctx_t;
+
+static void pack_every_other(size_t nk, size_t nvecs, double *input, double *packed) {
+  for (size_t k = 0; k != nk; ++k) {
+    for (size_t j = 0; j != nvecs; j += 2) {
+      m128d x = _mm_load_pd(input + 2 * k * nvecs + j);
+      _mm_store_pd(packed + k * nvecs + j, x);
+    }
+  }
+}
 
 void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
                                    size_t nvecs, char *payload, size_t payload_len,
                                    void *ctx_) {
   transpose_apply_ctx_t *ctx = ctx_;
-  double *input = ctx->input;
+  double *input = ctx->input, *input_pack_buf = ctx->input_pack_buf;
   skip128(&payload);
   size_t row_start = read_int64(&payload);
   size_t row_stop = read_int64(&payload);
   size_t nk = row_stop - row_start;
-  input += row_start * nvecs;
+  input += 2 * row_start * nvecs;
   if (nk <= 4 || start == stop) {
     double *A = read_aligned_array_d(&payload, (stop - start) * nk);
-    dgemm_ccc(input, A, buf,
+    pack_every_other(nk, nvecs, input, input_pack_buf);
+    dgemm_ccc(input_pack_buf, A, buf,
               nvecs, stop - start, nk, 0.0);
   } else {
     size_t nstrips = read_int64(&payload);
@@ -841,10 +851,12 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
     for (size_t i = 0; i != nstrips; ++i) {
       rstart = read_int64(&payload);
       cstop = read_int64(&payload);
-      size_t nx_strip = cstop - cstart, nk_strip = nk - rstart;
+      size_t nx_strip = cstop - cstart;
+      size_t nk_strip = nk - rstart;
       if (nk - rstart <= 4) {
         double *A = read_aligned_array_d(&payload, nk_strip * nx_strip);
-        dgemm_ccc(input + rstart * nvecs,
+        pack_every_other(nk_strip, nvecs, input + 2 * rstart * nvecs, input_pack_buf);
+        dgemm_ccc(input_pack_buf,
                   A,
                   buf + cstart * nvecs,
                   nvecs,
@@ -854,8 +866,10 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
         double *x_squared = read_aligned_array_d(&payload, nx_strip);
         double *P0 = read_aligned_array_d(&payload, nx_strip);
         double *P1 = read_aligned_array_d(&payload, nx_strip);
+        fastsht_legendre_transform_pack(nk_strip, nvecs, input + 2 * rstart * nvecs,
+                                        input_pack_buf);
         fastsht_legendre_transform_sse(nx_strip, nk_strip, nvecs,
-                                       input + rstart * nvecs,
+                                       input_pack_buf,
                                        buf + cstart * nvecs,
                                        x_squared,
                                        auxdata + 3 * rstart,
@@ -871,17 +885,12 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,
                             bfm_index_t m, int odd, size_t ncols,
                             double *output, char *legendre_transform_work,
                             double *work_a_l) {
-  bfm_index_t nrows, l, lmax = plan->lmax, j;
+  bfm_index_t l, lmax = plan->lmax, j;
   size_t nvecs = 2 * plan->nmaps;
   double *input_m = plan->input + nvecs * m * (2 * lmax - m + 3) / 2;
-  nrows = 0;
-  for (l = m + odd; l <= lmax; l += 2) {
-    for (j = 0; j != nvecs; ++j) {
-      work_a_l[nrows * nvecs + j] = input_m[(l - m) * nvecs + j];
-    }
-    ++nrows;
-  }
-  transpose_apply_ctx_t ctx = { work_a_l, legendre_transform_work };
+  input_m += odd * nvecs;
+
+  transpose_apply_ctx_t ctx = { input_m, work_a_l, legendre_transform_work };
   int ret = bfm_transpose_apply_d(bfm,
                                   matrix_data,
                                   pull_a_through_legendre_block,

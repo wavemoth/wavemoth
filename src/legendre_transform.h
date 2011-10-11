@@ -35,4 +35,7 @@ void fastsht_legendre_transform_sse(size_t nx, size_t nl,
 
 size_t fastsht_legendre_transform_sse_query_work(size_t nvecs);
 
+void fastsht_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
+                                     double *output);
+
 #endif

@@ -21,6 +21,9 @@ typedef struct _fastsht_plan *fastsht_plan;
 
 #define FASTSHT_MMAJOR 0x0
 
+#define FASTSHT_ESTIMATE 0x0
+#define FASTSHT_MEASURE 0x1
+
 /*
 Driver functions. Stable API.
 */
@@ -30,7 +33,8 @@ void fastsht_configure(char *resource_dir);
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads,
                                      double *input, double *output,
-                                     int ordering, char *resource_filename);
+                                     int ordering, unsigned flags,
+                                     char *resource_filename);
 
 void fastsht_destroy_plan(fastsht_plan plan);
 void fastsht_execute(fastsht_plan plan);

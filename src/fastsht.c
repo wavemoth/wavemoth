@@ -360,7 +360,8 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads, double *input, double *output,
-                                     int ordering, char *resource_filename) {
+                                     int ordering, unsigned flags,
+                                     char *resource_filename) {
   fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
   size_t nrings;
   int out_Nside;
@@ -377,6 +378,9 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->Nside = Nside;
   plan->lmax = lmax;
   plan->mmax = mmax;
+
+  plan->fftw_flags = FFTW_DESTROY_INPUT;
+  plan->fftw_flags |= (flags & FASTSHT_MEASURE) ? FFTW_MEASURE : FFTW_ESTIMATE;
 
   /* Figure out how threads should be distributed. We query NUMA for
      the nodes we can run on (intersection of cpubind and membind),
@@ -609,7 +613,6 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
   size_t nm = node_plan->nm;
   int nmaps = plan->nmaps;
   size_t nrings_half = plan->grid->mid_ring + 1;
-  unsigned flags = FFTW_DESTROY_INPUT | FFTW_MEASURE;
 
   sem_init(&cpu_plan->cpu_lock, 0, 1);
 
@@ -704,7 +707,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
     ri->fft_plan = fftw_plan_many_dft_c2r(1, &ringlen, nmaps,
                                           (fftw_complex*)cpu_plan->work_fft, NULL, nmaps, 1,
                                           cpu_plan->work_fft, NULL, nmaps, 1,
-                                          flags);
+                                          plan->fftw_flags);
   }
   pthread_mutex_unlock(&sync->mutex);
 }

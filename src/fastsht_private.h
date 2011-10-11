@@ -112,6 +112,7 @@ struct _fastsht_plan {
 
   int did_allocate_resources;
   int Nside;
+  unsigned fftw_flags;
 };
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,

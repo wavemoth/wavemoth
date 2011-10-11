@@ -44,6 +44,7 @@ double *sht_input, *sht_output, *psht_output;
 fastsht_plan sht_plan;
 int sht_nmaps;
 int sht_m_stride = 1;
+unsigned sht_flags;
 
 void execute_sht(void *ctx) {
   double t_compute, t_load;
@@ -66,7 +67,7 @@ void setup_sht() {
   }
 
   sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, N_threads, sht_input,
-                                     sht_output, FASTSHT_MMAJOR,
+                                     sht_output, FASTSHT_MMAJOR, sht_flags,
                                      sht_resourcefile);
   checkf(sht_plan, "plan not created, nthreads=%d", N_threads);
 
@@ -232,14 +233,16 @@ int main(int argc, char *argv[]) {
   opterr = 0;
   sht_nmaps = 1;
   do_ffts = -1;
+  sht_flags = FASTSHT_MEASURE;
 
-  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:a:o:F")) != -1) {
+  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:a:o:FE")) != -1) {
     switch (c) {
     case 'r': sht_resourcefile = optarg; break;
     case 'N': Nside = atoi(optarg);  break;
     case 'j': N_threads = atoi(optarg); break;
     case 'n': miniter = atoi(optarg); break;
     case 't': mintime = atof(optarg); break;
+    case 'E': sht_flags = FASTSHT_ESTIMATE; break;
     case 'a':
       stats_filename = optarg;
       stats_mode = "a";

@@ -62,12 +62,16 @@ cdef extern from "fastsht.h":
     
     cdef enum:
         FASTSHT_MMAJOR
+        FASTSHT_MEASURE
+        FASTSHT_ESTIMATE
+        
 
     fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax,
                                          int nmaps, int nthreads,
                                          double *input,
                                          double *output,
                                          int ordering,
+                                         unsigned flags,
                                          char *resourcename)
 
     void fastsht_destroy_plan(fastsht_plan plan)
@@ -138,6 +142,7 @@ cdef class ShtPlan:
         self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1], nthreads,
                                             <double*>input.data, <double*>output.data,
                                             flags,
+                                            FASTSHT_ESTIMATE,
                                             NULL if matrix_data_filename is None
                                             else <char*>matrix_data_filename)
         if self.plan == NULL:

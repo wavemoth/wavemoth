@@ -103,7 +103,13 @@ struct _fastsht_plan {
   fastsht_node_plan_t *node_plans[8];
   double **m_to_phase_ring;
 
+  pthread_t *execute_threads;
+  pthread_barrier_t execute_barrier;
+  size_t nthreads;
+
   size_t work_q_stride;
+
+  int destructing;
 
   int type;
   int lmax, mmax;

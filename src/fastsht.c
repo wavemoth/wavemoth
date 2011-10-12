@@ -329,8 +329,8 @@ static void *thread_main_adaptor(void *ctx_) {
   return NULL;
 }
 
-static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, int threads_per_cpu,
-                                   void *ctx) {
+static int fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, int threads_per_cpu,
+                                   void *ctx, pthread_t *out_threads) {
   /* Spawn pthreads on the CPUs designated in the plan, and wait for them
      to finish. Each thread will only allocate memory locally, because
      of numa_set_membind in thread_main_adaptor. */
@@ -355,13 +355,23 @@ static void fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, i
     }
   }
   assert(idx == n);
-  for (idx = 0; idx != n; ++idx) {
-    pthread_join(threads[idx], NULL);
+  if (out_threads == NULL) {
+    for (idx = 0; idx != n; ++idx) {
+      pthread_join(threads[idx], NULL);
+    }
+  } else {
+    for (idx = 0; idx != n; ++idx) {
+      out_threads[idx] = threads[idx];
+    }
   }
+  return n;
 }
 
 static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
                                        int ithread, void *ctx); /* forward decl */
+
+static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
+                                    int ithread, void *ctx);
 
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads, double *input, double *output,
@@ -555,7 +565,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   } sync;
   pthread_mutex_init(&sync.mutex, NULL);
   pthread_barrier_init(&sync.barrier, NULL, nthreads);
-  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync);
+  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync, NULL);
   pthread_barrier_destroy(&sync.barrier);
   pthread_mutex_destroy(&sync.mutex);
 
@@ -568,6 +578,13 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       m_to_phase_ring[np->m_resources[im].m] = np->work_q + (2 * im) * work_stride;
     }
   }
+
+  plan->destructing = 0;
+  plan->nthreads = nthreads;
+  plan->execute_threads = malloc(sizeof(pthread_t[nthreads]));
+  pthread_barrier_init(&plan->execute_barrier, NULL, nthreads + 1);
+  fastsht_run_in_threads(plan, &wait_for_execute_thread, 1, NULL,
+                         plan->execute_threads);
   return plan;
 }
 
@@ -721,6 +738,14 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
 void fastsht_destroy_plan(fastsht_plan plan) {
   int iring;
 
+  plan->destructing = 1;
+  pthread_barrier_wait(&plan->execute_barrier);
+  for (int idx = 0; idx != plan->nthreads; ++idx) {
+    pthread_join(plan->execute_threads[idx], NULL);
+  }
+  pthread_barrier_destroy(&plan->execute_barrier);
+
+
   /* Cleanup for all threads. Do not move to per-thread without a mutex,
      FFTW3 destructor access must be serialized!
    */
@@ -812,16 +837,8 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan) {
     plan->node_plans[inode]->im = 0;
   }
   /* Run threads */
-  fastsht_run_in_threads(plan, &legendre_transforms_thread, THREADS_PER_CPU, NULL);
-}
-
-void fastsht_execute(fastsht_plan plan) {
-  plan->times.legendre_transform_start = walltime();
-  fastsht_perform_legendre_transforms(plan);
-  plan->times.legendre_transform_done = walltime();
-  /* Backward FFTs from plan->work to plan->output */
-  fastsht_perform_backward_ffts(plan);
-  plan->times.fft_done = walltime();
+  fastsht_run_in_threads(plan, &legendre_transforms_thread, THREADS_PER_CPU, NULL,
+                         NULL);
 }
 
 
@@ -1075,7 +1092,7 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int inode, int icpu,
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan) {
-  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL);
+  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL, NULL);
 }
 
 
@@ -1130,3 +1147,35 @@ void fastsht_disable_phase_shifting(fastsht_plan plan) {
     plan->grid->phi0s[iring] = 0;
   }
 }
+
+static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
+                                    int ithread, void *ctx) {
+  while (1) {
+    pthread_barrier_wait(&plan->execute_barrier);
+    if (plan->destructing) return;
+
+    legendre_transforms_thread(plan, inode, icpu, ithread, ctx);
+
+    pthread_barrier_wait(&plan->execute_barrier);
+
+    perform_backward_ffts_thread(plan, inode, icpu, ithread, ctx);
+
+    pthread_barrier_wait(&plan->execute_barrier);
+  }
+  
+}
+
+void fastsht_execute(fastsht_plan plan) {
+  /* Reset queue head for all nodes */
+  for (int inode = 0; inode != plan->nnodes; ++inode) {
+    plan->node_plans[inode]->im = 0;
+  }
+
+  plan->times.legendre_transform_start = walltime();
+  pthread_barrier_wait(&plan->execute_barrier);
+  pthread_barrier_wait(&plan->execute_barrier);
+  plan->times.legendre_transform_done = walltime();
+  pthread_barrier_wait(&plan->execute_barrier);
+  plan->times.fft_done = walltime();
+}
+

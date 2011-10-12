@@ -32,8 +32,6 @@
 #include <sys/times.h>
 #include <time.h>
 
-#include <omp.h>
-
 /* FFTW3 */
 #include <fftw3.h>
 
@@ -113,6 +111,13 @@ static void print_array(char *msg, double* arr, bfm_index_t len) {
     printf("%e ", arr[i]);
   }
   printf("\n");
+}
+
+
+static double walltime() {
+  struct timespec tv;
+  clock_gettime(CLOCK_REALTIME, &tv);
+  return tv.tv_sec + 1e-9 * tv.tv_nsec;
 }
 
 /*
@@ -811,9 +816,12 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan) {
 }
 
 void fastsht_execute(fastsht_plan plan) {
+  plan->times.legendre_transform_start = walltime();
   fastsht_perform_legendre_transforms(plan);
+  plan->times.legendre_transform_done = walltime();
   /* Backward FFTs from plan->work to plan->output */
   fastsht_perform_backward_ffts(plan);
+  plan->times.fft_done = walltime();
 }
 
 

@@ -67,10 +67,9 @@ static double *gauss_array(size_t n) {
 }
 
 static double walltime() {
-  /*  struct timespec tv;
+  struct timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
-  return tv.tv_sec + 1e-9 * tv.tv_nsec;*/
-  return omp_get_wtime();
+  return tv.tv_sec + 1e-9 * tv.tv_nsec;
 }
 
 static void snftime(char *buf, size_t n, double time) {

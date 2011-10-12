@@ -113,6 +113,10 @@ struct _fastsht_plan {
   int did_allocate_resources;
   int Nside;
   unsigned fftw_flags;
+
+  struct {
+    double legendre_transform_start, legendre_transform_done, fft_done;
+  } times;
 };
 
 void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,

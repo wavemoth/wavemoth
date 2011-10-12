@@ -46,10 +46,13 @@ int sht_nmaps;
 int sht_m_stride = 1;
 unsigned sht_flags;
 
+double min_legendre_dt = 1e300;
+
 void execute_sht(void *ctx) {
-  double t_compute, t_load;
   if (do_ffts) {
-    fastsht_execute(sht_plan); 
+    fastsht_execute(sht_plan);
+    double dt = sht_plan->times.legendre_transform_done - sht_plan->times.legendre_transform_start;
+    min_legendre_dt = fmin(min_legendre_dt, dt);
   } else {
     fastsht_perform_legendre_transforms(sht_plan);
   }
@@ -80,11 +83,9 @@ void setup_sht() {
 }
 
 void finish_sht(void) {
-  int64_t flops = 0;
-  int m, odd;
-  double stridefudge;
-  char timestr[MAXTIME];
-
+  char tbuf[20];
+  snftime(tbuf, 20, min_legendre_dt);
+  printf("  Legendre transform time: %s (min)\n", tbuf);
   fastsht_destroy_plan(sht_plan);
 }
 
@@ -335,15 +336,15 @@ int main(int argc, char *argv[]) {
 
   if (stats_filename != NULL) {
     /* Write result to file as a line in the format
-       nside lmax nmaps nthreads wavemoth_time psht_time relative_error
+       nside lmax nmaps nthreads wavemoth_full_time wavemoth_legendre_time psht_time relative_error
     */
     FILE *f = fopen(stats_filename, stats_mode);
     if (!f) {
       fprintf(stderr, "Could not open %s in mode %s\n", stats_filename, stats_mode);
     } else {
-      fprintf(f, "%d %d %d %d %.15e %.15e %.15e\n",
+      fprintf(f, "%d %d %d %d %.15e %.15e %.15e %.15e\n",
               Nside, lmax, sht_nmaps, N_threads,
-              sht_benchmark->min_time, psht_benchmark->min_time,
+              sht_benchmark->min_time, min_legendre_dt, psht_benchmark->min_time,
               rho);
       fclose(f);
     }

@@ -148,12 +148,12 @@ void setup_psht() {
   psht_make_general_alm_info(lmax, lmax + 1, sht_nmaps, marr, mstart,
                              &benchpsht_alm_info);
   /* The rest is standard */
-  psht_make_healpix_geom_info(Nside, sht_nmaps, &benchpsht_geom_info);
+  psht_make_healpix_geom_info(Nside, 1, &benchpsht_geom_info);
   pshtd_make_joblist(&benchpsht_joblist);
 
   for (j = 0; j != sht_nmaps; ++j) {
     pshtd_add_job_alm2map(benchpsht_joblist, (pshtd_cmplx*)sht_input + j,
-                          psht_output + j, 0);
+                          psht_output + j * npix, 0);
   }
 }
 
@@ -168,8 +168,6 @@ void execute_psht(void *ctx) {
   pshtd_execute_jobs(benchpsht_joblist, benchpsht_geom_info, benchpsht_alm_info);
 }
 
-
-
 /*
 Main
 */
@@ -183,14 +181,15 @@ typedef struct {
   double min_time;
 } benchmark_t;
 
-
-double relative_error(double *a, double *b, size_t n) {
-  size_t i;
-  double diffnorm = 0.0, anorm = 0;
-  for (i = 0; i != n; ++i) {
-    diffnorm += (a[i] - b[i]) * (a[i] - b[i]);
-    anorm += a[i] * a[i];
-  }
+static double relative_error(size_t n, double *a, size_t a_stride,
+                             double *b, size_t b_stride) {
+   size_t i;
+   double diffnorm = 0.0, anorm = 0;
+   for (i = 0; i != n; ++i) {
+    double x = a[i * a_stride] - b[i * b_stride];
+    diffnorm += x * x;
+    anorm += a[i * a_stride] * a[i * a_stride];
+   }
   if (diffnorm == 0) {
     return 0.0;
   } else {
@@ -326,7 +325,12 @@ int main(int argc, char *argv[]) {
 
   printf("Runtime sht/psht: %f\n", sht_benchmark->min_time / psht_benchmark->min_time);
   printf("Speedup psht/sht: %f\n", psht_benchmark->min_time / sht_benchmark->min_time);
-  double rho = relative_error(psht_output, sht_output, npix * sht_nmaps);
+
+  double rho = 0;
+  for (j = 0; j != sht_nmaps; ++j) {
+    double z = relative_error(npix, psht_output + j * npix, 1, sht_output + j, sht_nmaps);
+    rho = fmax(z, rho);
+  }
   printf("Relative error: %e\n", rho);
 
   if (stats_filename != NULL) {

@@ -394,9 +394,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->Nside = Nside;
   plan->lmax = lmax;
   plan->mmax = mmax;
-
-  plan->fftw_flags = FFTW_DESTROY_INPUT;
-  plan->fftw_flags |= (flags & FASTSHT_MEASURE) ? FFTW_MEASURE : FFTW_ESTIMATE;
+  plan->flags = flags;
 
   /* Figure out how threads should be distributed. We query NUMA for
      the nodes we can run on (intersection of cpubind and membind),
@@ -648,6 +646,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
      While we're at it, inspect precomputed data to figure out buffer
      sizes (common for all, so synchronize/reduce-max at the end). */
   size_t k_max = 0, nblocks_max = 0;
+  int do_copy = !((plan->flags & FASTSHT_NO_RESOURCE_COPY) == FASTSHT_NO_RESOURCE_COPY);
   for (size_t im = icpu; im < nm; im += node_plan->ncpus) {
     m_resource_t *localres = &node_plan->m_resources[im];
     int m = localres->m;
@@ -658,11 +657,16 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
       localres->data[odd] = fileres->data[odd];
       localres->len[odd] = fileres->len[odd];
 #else
-      localres->data[odd] = memalign(4096, fileres->len[odd]);
-      localres->len[odd] = fileres->len[odd];
-      checkf(localres->data[odd] != NULL, "No memory allocated of size %ld on node %d",
-	     fileres->len[odd], node_plan->node_id);
-      memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
+      if (do_copy) {
+        localres->data[odd] = memalign(4096, fileres->len[odd]);
+        localres->len[odd] = fileres->len[odd];
+        checkf(localres->data[odd] != NULL, "No memory allocated of size %ld on node %d",
+               fileres->len[odd], node_plan->node_id);
+        memcpy(localres->data[odd], fileres->data[odd], fileres->len[odd]);
+      } else {
+        localres->data[odd] = fileres->data[odd];
+        localres->len[odd] = fileres->len[odd];
+      }
 #endif
 
       bfm_matrix_data_info info;
@@ -726,6 +730,10 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
      fftw_execute_... functions *are* thread-safe (as long as used with
      different plans).
   */
+
+  unsigned fftw_flags = FFTW_DESTROY_INPUT;
+  fftw_flags |= (plan->flags & FASTSHT_MEASURE) ? FFTW_MEASURE : FFTW_ESTIMATE;
+
   pthread_mutex_lock(&sync->mutex);
   for (int i = 0; i != cpu_plan->nrings; ++i) {
     ring_pair_info_t *ri = &cpu_plan->ring_pairs[i];
@@ -733,7 +741,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
     ri->fft_plan = fftw_plan_many_dft_c2r(1, &ringlen, nmaps,
                                           (fftw_complex*)cpu_plan->work_fft, NULL, nmaps, 1,
                                           cpu_plan->work_fft, NULL, nmaps, 1,
-                                          plan->fftw_flags);
+                                          fftw_flags);
   }
   pthread_mutex_unlock(&sync->mutex);
 }

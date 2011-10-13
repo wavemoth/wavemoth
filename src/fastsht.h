@@ -24,6 +24,8 @@ typedef struct _fastsht_plan *fastsht_plan;
 #define FASTSHT_ESTIMATE 0x0
 #define FASTSHT_MEASURE 0x1
 
+#define FASTSHT_NO_RESOURCE_COPY 0x10
+
 /*
 Driver functions. Stable API.
 */

@@ -118,7 +118,7 @@ struct _fastsht_plan {
 
   int did_allocate_resources;
   int Nside;
-  unsigned fftw_flags;
+  unsigned flags;
 
   struct {
     double legendre_transform_start, legendre_transform_done, fft_done;

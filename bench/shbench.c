@@ -235,14 +235,16 @@ int main(int argc, char *argv[]) {
   do_ffts = -1;
   sht_flags = FASTSHT_MEASURE;
 
-  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:a:o:FE")) != -1) {
+  while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:a:o:FEC")) != -1) {
     switch (c) {
     case 'r': sht_resourcefile = optarg; break;
     case 'N': Nside = atoi(optarg);  break;
     case 'j': N_threads = atoi(optarg); break;
     case 'n': miniter = atoi(optarg); break;
     case 't': mintime = atof(optarg); break;
-    case 'E': sht_flags = FASTSHT_ESTIMATE; break;
+    case 'E':
+      sht_flags &= ~FASTSHT_MEASURE; break;
+    case 'C': sht_flags |= FASTSHT_NO_RESOURCE_COPY;  break;
     case 'a':
       stats_filename = optarg;
       stats_mode = "a";

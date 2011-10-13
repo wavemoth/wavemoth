@@ -330,13 +330,18 @@ static void *thread_main_adaptor(void *ctx_) {
 }
 
 static int fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, int threads_per_cpu,
-                                   void *ctx, pthread_t *out_threads) {
+                                  void *ctx, pthread_t *threads,
+                                  thread_ctx_t *adaptor_ctx) {
   /* Spawn pthreads on the CPUs designated in the plan, and wait for them
      to finish. Each thread will only allocate memory locally, because
      of numa_set_membind in thread_main_adaptor. */
   int n = plan->ncpus_total * threads_per_cpu;
-  thread_ctx_t adaptor_ctx[n];
-  pthread_t threads[n];
+  thread_ctx_t adaptor_ctx_on_stack[n];
+  pthread_t threads_on_stack[n];
+  if (threads == NULL) {
+    threads = threads_on_stack;
+    adaptor_ctx = adaptor_ctx_on_stack;
+  }
   int idx = 0;
   for (int inode = 0; inode != plan->nnodes; ++inode) {
     for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
@@ -355,13 +360,9 @@ static int fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, in
     }
   }
   assert(idx == n);
-  if (out_threads == NULL) {
+  if (threads == threads_on_stack) {
     for (idx = 0; idx != n; ++idx) {
       pthread_join(threads[idx], NULL);
-    }
-  } else {
-    for (idx = 0; idx != n; ++idx) {
-      out_threads[idx] = threads[idx];
     }
   }
   return n;
@@ -565,7 +566,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   } sync;
   pthread_mutex_init(&sync.mutex, NULL);
   pthread_barrier_init(&sync.barrier, NULL, nthreads);
-  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync, NULL);
+  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync, NULL, NULL);
   pthread_barrier_destroy(&sync.barrier);
   pthread_mutex_destroy(&sync.mutex);
 
@@ -579,12 +580,15 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     }
   }
 
+  thread_ctx_t adaptor_ctx[nthreads];
   plan->destructing = 0;
   plan->nthreads = nthreads;
   plan->execute_threads = malloc(sizeof(pthread_t[nthreads]));
   pthread_barrier_init(&plan->execute_barrier, NULL, nthreads + 1);
   fastsht_run_in_threads(plan, &wait_for_execute_thread, 1, NULL,
-                         plan->execute_threads);
+                         plan->execute_threads, adaptor_ctx);
+  /* Wait until adaptor_ctx is no longer needed */
+  pthread_barrier_wait(&plan->execute_barrier);
   return plan;
 }
 
@@ -838,7 +842,7 @@ void fastsht_perform_legendre_transforms(fastsht_plan plan) {
   }
   /* Run threads */
   fastsht_run_in_threads(plan, &legendre_transforms_thread, THREADS_PER_CPU, NULL,
-                         NULL);
+                         NULL, NULL);
 }
 
 
@@ -1092,7 +1096,7 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int inode, int icpu,
 }
 
 void fastsht_perform_backward_ffts(fastsht_plan plan) {
-  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL, NULL);
+  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL, NULL, NULL);
 }
 
 
@@ -1150,6 +1154,10 @@ void fastsht_disable_phase_shifting(fastsht_plan plan) {
 
 static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
                                     int ithread, void *ctx) {
+  /* First wait for the barrier during plan creation, so that the
+     thread is created before planning returns. */
+  pthread_barrier_wait(&plan->execute_barrier);
+  /* Then, enter loop waiting for executions */
   while (1) {
     pthread_barrier_wait(&plan->execute_barrier);
     if (plan->destructing) return;

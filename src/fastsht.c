@@ -582,12 +582,14 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   
   struct {
     pthread_mutex_t mutex;
-    pthread_barrier_t barrier;
+    pthread_barrier_t barrier, node_barrier;
   } sync;
   pthread_mutex_init(&sync.mutex, NULL);
   pthread_barrier_init(&sync.barrier, NULL, nthreads);
+  pthread_barrier_init(&sync.node_barrier, NULL, nnodes);
   fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync, NULL, NULL);
   pthread_barrier_destroy(&sync.barrier);
+  pthread_barrier_destroy(&sync.node_barrier);
   pthread_mutex_destroy(&sync.mutex);
 
   /* Now that work_q has been allocated, set up m_to_phase_ring */
@@ -612,24 +614,25 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   return plan;
 }
 
-static int _dummy;
+int _dummy = 0;
 
 static void migrate_data(void *startptr, size_t len, int node) {
   const int CHUNK = 512;
+  const size_t PAGESIZE = getpagesize();
   void *pages[CHUNK];
   int nodes[CHUNK];
   int status[CHUNK];
 
   char *start = startptr, *end = (char*)startptr + len;
-  start -= ((size_t)start & 0xfff);
-  end -= ((size_t)end & 0xfff);
+  start -= ((size_t)start & (PAGESIZE - 1));
+  end -= ((size_t)end & (PAGESIZE - 1));
 
   /* Apparently the return values and status codes are fairly
      useless; if the page is already on the node, errors will be given,
      and the function call itself fails if no pages were moved (for that
      reason). But things seem to work and we just ignore errors. */
   int idx = 0;
-  for (char *ptr = start; ptr != end; ptr += 0x1000) {
+  for (char *ptr = start; ptr != end; ptr += PAGESIZE) {
     /* touch page */
     _dummy += *ptr;
     /* migrate page */
@@ -647,12 +650,26 @@ static void migrate_data(void *startptr, size_t len, int node) {
   }
 }
 
+static void* round_down_to(void *addr, size_t size) {
+  char *p = addr;
+  if ((size_t)p % size > 0) p -= ((size_t)p % size);
+  return p;
+}
+
+static void* round_up_to(void *addr, size_t size) {
+  char *p = addr;
+  if ((size_t)p % size > 0) p += size - ((size_t)p % size);
+  return p;
+}
+
 static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
                                        int ithread, void *ctx) {
   struct {
     pthread_mutex_t mutex;
-    pthread_barrier_t barrier;
+    pthread_barrier_t barrier, node_barrier;
   } *sync = ctx;
+
+  const int PAGESIZE = getpagesize();
 
   fastsht_node_plan_t *node_plan = plan->node_plans[inode];
   fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
@@ -662,6 +679,45 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
 
   sem_init(&cpu_plan->cpu_lock, 0, 1);
 
+  /* First, ensure that data is all faulted into memory in a nice,
+     serial order so that we don't have to wait forever for harddisk
+     seeks. However, each page should be faulted by the node that
+     wants the page in its local memory. We assume that im refers to
+     tasks in order of increasing m. */
+  size_t im = 0;
+  if (icpu == 0) {
+    for (int m = 0; m != plan->mmax + 1; ++m) {
+      m_resource_t *m_resources_node = node_plan->m_resources;
+      while (im < nm && m_resources_node[im].m < m) ++im;
+      if (m_resources_node[im].m == m) {
+        m_resource_t *m_resource_mmap = &plan->resources->matrices[m];
+        for (int odd = 0; odd != 2; ++odd) {
+          char *addr = m_resource_mmap->data[odd];
+          size_t size = m_resource_mmap->len[odd];
+          size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
+          char vec[npages];
+
+          addr = round_down_to(addr, PAGESIZE);
+          size = (char*)round_up_to(addr + size, PAGESIZE) - addr;
+          int r = mincore(addr, size, vec);
+          checkf(r == 0, "mincore failed: %x", r);
+          printf("%ld %ld %ld\n", npages, PAGESIZE, size);
+          for (size_t ipage = 0; ipage != npages; ++ipage) {
+            if ((vec[ipage] & 0x1) == 0) {
+              /* fault page */
+              _dummy += *(addr + ipage * PAGESIZE);
+            } else {
+              /* TODO migrate page */
+            }
+          }
+        }
+      }
+      /* All nodes wait in line for harddrive access */
+      pthread_barrier_wait(&sync->node_barrier);
+    }
+  }
+  pthread_barrier_wait(&sync->barrier);
+
   /* Copy matrix data into cpu_plans buffers. Stride by
      our thread-on-node number.
 
@@ -669,7 +725,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
      sizes (common for all, so synchronize/reduce-max at the end). */
   size_t k_max = 0, nblocks_max = 0;
   int do_copy = !((plan->flags & FASTSHT_NO_RESOURCE_COPY) == FASTSHT_NO_RESOURCE_COPY);
-  for (size_t im = icpu; im < nm; im += node_plan->ncpus) {
+  for (im = icpu; im < nm; im += node_plan->ncpus) {
     m_resource_t *localres = &node_plan->m_resources[im];
     int m = localres->m;
     m_resource_t *fileres = &plan->resources->matrices[m];

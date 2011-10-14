@@ -278,8 +278,7 @@ precomputation_t* fastsht_fetch_resource(int Nside) {
   if (precomputed_data[Nside_level].refcount == 0) {
     check(fastsht_mmap_resources(filename, precomputed_data + Nside_level, &got_Nside) == 0,
           "resource load failed");
-    checkf(Nside == got_Nside, "Loading precomputation: Expected Nside=%d but got %d in %s",
-           Nside, got_Nside, filename);
+    checkf(Nside == got_Nside, "Loading precomputation: Expected Nside=%d but got %d in %s",           Nside, got_Nside, filename);
   }
   ++precomputed_data[Nside_level].refcount;
   return &precomputed_data[Nside_level];
@@ -374,6 +373,13 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
 static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
                                     int ithread, void *ctx);
 
+static int next_numa_node(struct bitmask *nodemask, int node_id, int nnodes) {
+  do {
+    node_id = (node_id + 1) % nnodes;
+  } while (!numa_bitmask_isbitset(nodemask, node_id));
+  return node_id;
+}
+
 fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads, double *input, double *output,
                                      int ordering, unsigned flags,
@@ -421,10 +427,10 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   int max_node_id = numa_max_node();
   size_t nm_bound = (mmax + 1);
   size_t inode = 0;
-  int threads_assigned = 0;
-  for (int node_id = 0; node_id <= max_node_id; ++node_id) {
-    if (icpu == nthreads) break;
 
+  /* Set up node-specific structures for all available nodes */
+  inode = 0;
+  for (int node_id = 0; node_id != max_node_id + 1; ++node_id) {
     if (numa_bitmask_isbitset(nodemask, node_id)) {
       size_t bufsize = sizeof(fastsht_node_plan_t) + 
         sizeof(m_resource_t[nm_bound]) + 
@@ -446,29 +452,45 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
       sem_init(&node_plan->memory_bus_semaphore, 0, CONCURRENT_MEMORY_BUS_USE);
       pthread_mutex_init(&node_plan->queue_lock, NULL);
       plan->node_plans[inode] = node_plan;
-      icpu = 0;
-
-      int r = numa_node_to_cpus(node_id, cpumask);
-      check(r >= 0, "numa_node_to_cpus failed");
-      for (int cpuid = 0; cpuid < numa_bitmask_nbytes(cpumask) * 8; ++cpuid) {
-	if (numa_bitmask_isbitset(cpumask, cpuid)) {
-          fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
-	  cpu_plan->cpu_id = cpuid;
-          node_plan->ncpus++;
-	  icpu++;
-          threads_assigned++;
-          if (threads_assigned == nthreads) break;
-	}
-      }
-      plan->ncpus_total += icpu;
       inode++;
-      if (threads_assigned == nthreads) break;
     }
   }
+  int nnodes = plan->nnodes = inode;
+
+  /* Distribute CPUs in round-robin fashion on available nodes. The
+     assumption is that the nodemask really does specify what nodes we
+     can use, and this equal distribution is mainly to enable/disable
+     use of Intel hyperthreading. I.e., for determining program
+     scalability one *must* use numactl! */
+  inode = 0;
+  int cpus_assigned;
+  for (cpus_assigned = 0; cpus_assigned != nthreads; ++cpus_assigned) {
+    fastsht_node_plan_t *node_plan = plan->node_plans[inode];
+    inode = (inode + 1) % nnodes;
+
+    /* Walk through cpuid's and check which is next on this node */
+    int cpu_id = (node_plan->ncpus == 0) ? 0 : 
+      node_plan->cpu_plans[node_plan->ncpus - 1].cpu_id + 1;
+    if (numa_node_to_cpus(node_plan->node_id, cpumask) < 0) {
+      check(0, "numa_node_to_cpus failed");
+    }
+    for (; cpu_id < numa_bitmask_nbytes(cpumask) * 8; ++cpu_id) {
+      if (numa_bitmask_isbitset(cpumask, cpu_id)) {
+        fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[node_plan->ncpus];
+        cpu_plan->cpu_id = cpu_id;
+        node_plan->ncpus++;
+        break;
+      }
+    }
+    if (cpu_id == numa_bitmask_nbytes(cpumask) * 8) {
+      check(0, "Requested number of CPUs not available\n");
+    }
+  }
+  plan->ncpus_total = cpus_assigned;
+
   numa_free_nodemask(nodemask);
   numa_free_cpumask(cpumask);
 
-  int nnodes = plan->nnodes = inode;
 
   /* Distribute Legendre transform tasks to nodes */
   size_t nms[nnodes];

@@ -692,7 +692,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
       m_resource_t *m_resources_node = node_plan->m_resources;
       while (im < nm && m_resources_node[im].m < m) ++im;
       if (m_resources_node[im].m == m) {
-        if (m % 100 == 0) {
+        if (m % 97 == 0) {
           double t = walltime();
           printf("Loading m=%d on node %d (%.1f MB/s)\n", m, node_plan->node_id,
                  faulted_bytes / 1024.0 / 1024.0 / (t - t0));

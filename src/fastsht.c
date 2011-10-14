@@ -704,7 +704,6 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
           size = (char*)round_up_to(addr + size, PAGESIZE) - addr;
           int r = mincore(addr, size, vec);
           checkf(r == 0, "mincore failed: %x", r);
-          printf("%ld %ld %ld\n", npages, PAGESIZE, size);
           for (size_t ipage = 0; ipage != npages; ++ipage) {
             if ((vec[ipage] & 0x1) == 0) {
               /* fault page */

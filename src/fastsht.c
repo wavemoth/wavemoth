@@ -685,13 +685,19 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
      wants the page in its local memory. We assume that im refers to
      tasks in order of increasing m. */
   size_t im = 0;
+  double t0 = walltime();
+  size_t faulted_bytes = 0;
   if (icpu == 0) {
     for (int m = 0; m != plan->mmax + 1; ++m) {
       m_resource_t *m_resources_node = node_plan->m_resources;
       while (im < nm && m_resources_node[im].m < m) ++im;
       if (m_resources_node[im].m == m) {
         if (m % 100 == 0) {
-          printf("Loading m=%d on node %d\n", m, node_plan->node_id);
+          double t = walltime();
+          printf("Loading m=%d on node %d (%.1f MB/s)\n", m, node_plan->node_id,
+                 faulted_bytes / 1024.0 / 1024.0 / (t - t0));
+          faulted_bytes = 0;
+          t0 = t;
         }
         m_resource_t *m_resource_mmap = &plan->resources->matrices[m];
         for (int odd = 0; odd != 2; ++odd) {
@@ -707,6 +713,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
           for (size_t ipage = 0; ipage != npages; ++ipage) {
             if ((vec[ipage] & 0x1) == 0) {
               /* fault page */
+              faulted_bytes += PAGESIZE;
               _dummy += *(addr + ipage * PAGESIZE);
             } else {
               /* TODO migrate page */

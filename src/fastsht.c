@@ -690,6 +690,9 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
       m_resource_t *m_resources_node = node_plan->m_resources;
       while (im < nm && m_resources_node[im].m < m) ++im;
       if (m_resources_node[im].m == m) {
+        if (m % 100 == 0) {
+          printf("Loading m=%d on node %d\n", m, node_plan->node_id);
+        }
         m_resource_t *m_resource_mmap = &plan->resources->matrices[m];
         for (int odd = 0; odd != 2; ++odd) {
           char *addr = m_resource_mmap->data[odd];

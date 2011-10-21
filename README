@@ -1,0 +1,44 @@
+Wavemoth
+========
+
+Please read the paper [1] for more information about this software.
+Note that this code is *experimental*, and has not yet had its first
+release. If you know what you're looking for, go find it. If you are a
+researcher who just want to speed up your SHTs, you are better off
+using libpsht until Wavemoth has its first release.
+
+Notes:
+
+ - I have not yet renamed things, so earlier names abound in the source
+   ("spherew", "fastsht").
+ - Yes, I intend to clean things up a bit. I believe the code is sound enough,
+   but there's some unused cruft around that should be removed to make it
+   easier for others to enter the source code base.
+
+Please, send me an email if you are interested in the software. If
+more than one person comes along I'll set up a mailing list.
+
+
+[1] TODO
+
+Copyright & license
+-------------------
+
+libpshtlight directory:
+  Extract from libpsht: http://sourceforge.net/projects/libpsht/
+  Copyright Martin Reinecke.
+  Licensed under the GNU GPL v.2.
+
+libidlight directory:
+  Extract from ID: http://cims.nyu.edu/~tygert/software.html
+  Copright Per-Gunnar Martinsson, Vladimir Rokhlin, Yoel Shkolnisky, and Mark Tygert
+  Licensed under the three-clause BSD (see above link for full text)
+
+All the rest is copyright (2011) by Dag Sverre Seljebotn,
+licensed under the GNU GPL v. 2 (see COPYING).
+
+Note: I may want to release under the three-clause BSD license in the
+future (which would require getting rid of GPL dependencies, such as
+optionally linking to FFTPACK or MKL instead of FFTW3). If you send
+patches, you should either attribute the copyright to me, or we should
+work out the licensing issue first.

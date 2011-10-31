@@ -7,16 +7,16 @@ import sys
 import os
 import itertools
 
-from spherew import *
-from spherew.healpix import *
-from spherew.fastsht import *
+from wavemoth import *
+from wavemoth.healpix import *
+from wavemoth.fastsht import *
 from cmb import as_matrix
-from spherew.butterfly import *
+from wavemoth.butterfly import *
 from matplotlib import pyplot as plt
-from spherew.lib import stripify
+from wavemoth.lib import stripify
 
 from concurrent.futures import ProcessPoolExecutor#, ThreadPoolExecutor
-from spherew.utils import FakeExecutor
+from wavemoth.utils import FakeExecutor
 
 from numpy.linalg import norm
 def logabs(x): return np.log(np.abs(x))

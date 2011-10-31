@@ -114,26 +114,26 @@ def build(bld):
     # Python wrappers
     #
     
-    bld(source=(['spherew/legendre.pyx'] +
+    bld(source=(['wavemoth/legendre.pyx'] +
                 bld.srcnode.ant_glob(incl=['libpshtlight/*.c'])),
         includes=['libpshtlight'],
         target='legendre',
         use='NUMPY',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/interpolative_decomposition.pyx'] +
+    bld(source=(['wavemoth/interpolative_decomposition.pyx'] +
                 bld.srcnode.ant_glob(incl=['libidlight/*.f'])),
         target='interpolative_decomposition',
         use='fcshlib NUMPY',
         features='fc c pyext cshlib')
 
-    bld(source=(['spherew/butterfly.pyx']),
+    bld(source=(['wavemoth/butterfly.pyx']),
         includes=['src'],
         target='butterfly',
         use='NUMPY fcshlib fastsht',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/butterflylib.pyx']),
+    bld(source=(['wavemoth/butterflylib.pyx']),
         includes=['src'],
         target='butterflylib',
         use='NUMPY fcshlib fastsht',
@@ -143,33 +143,33 @@ def build(bld):
     if bld.env.BUTTERFLY_ONLY:
         return
 
-    bld(source=(['spherew/lib.pyx']),
+    bld(source=(['wavemoth/lib.pyx']),
         includes=['src'],
         target='lib',
         use='NUMPY fastsht',
         features='c fc pyext cshlib')
     for x in ['src/fastsht.h', 'src/butterfly.h.in']:
         bld.add_manual_dependency(
-            bld.path.find_resource('spherew/lib.pyx'),
+            bld.path.find_resource('wavemoth/lib.pyx'),
             bld.path.find_resource(x))
 
-    bld(source=(['spherew/psht.pyx']),
+    bld(source=(['wavemoth/psht.pyx']),
         target='psht',
         use='NUMPY PSHT',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/_openmp.pyx']),
+    bld(source=(['wavemoth/_openmp.pyx']),
         target='_openmp',
         use='OPENMP',
         features='c pyext cshlib')
 
-    bld(source=(['spherew/blas.pyx']),
+    bld(source=(['wavemoth/blas.pyx']),
         includes=['src'],
         target='blas',
         use='NUMPY BLAS',
         features='c pyext cshlib')
     bld.add_manual_dependency(
-        bld.path.find_resource('spherew/blas.pyx'),
+        bld.path.find_resource('wavemoth/blas.pyx'),
         bld.path.find_resource('src/blas.h'))
 
     #

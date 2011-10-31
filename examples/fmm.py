@@ -12,7 +12,7 @@ np.seterr(under='warn')
 Nx = 20
 Ny = 30
 
-from spherew.fmm import fmm1d
+from wavemoth.fmm import fmm1d
 
 x_N = 1
 x_0 = 0

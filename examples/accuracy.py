@@ -8,10 +8,10 @@ from numpy.linalg import norm
 from matplotlib import pyplot as plt
 
 from time import clock
-from spherew.fastsht import ShtPlan
-from spherew.psht import PshtMmajorHealpix
-from spherew.legendre import *
-from spherew.healpix import *
+from wavemoth.fastsht import ShtPlan
+from wavemoth.psht import PshtMmajorHealpix
+from wavemoth.legendre import *
+from wavemoth.healpix import *
 
 import hashlib
 

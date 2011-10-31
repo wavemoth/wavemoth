@@ -122,7 +122,7 @@ def test_healpix_phi0():
 
 def test_accuracy_against_psht():
     "Test modes"
-    from spherew.psht import PshtMmajorHealpix
+    from ..psht import PshtMmajorHealpix
 
     Nside = 32 # needed this much to get numerical errors at all
     lmax = Nside

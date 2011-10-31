@@ -10,10 +10,10 @@ from matplotlib import pyplot as plt
 np.seterr(all='warn')
 
 # Set up data
-from spherew.roots import associated_legendre_roots
-from spherew.legendre import compute_normalized_associated_legendre, Plm_and_dPlm
-from spherew.fmm import fmm1d
-from spherew import healpix
+from wavemoth.roots import associated_legendre_roots
+from wavemoth.legendre import compute_normalized_associated_legendre, Plm_and_dPlm
+from wavemoth.fmm import fmm1d
+from wavemoth import healpix
 
 Nside = 128
 lmax = 256

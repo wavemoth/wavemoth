@@ -2,7 +2,7 @@ import numpy as np
 from numpy import all
 from numpy.testing import assert_almost_equal
 from nose.tools import ok_
-from spherew.blas import *
+from ..blas import *
 
 def ndrange(shape, dtype=np.double, order='C'):
     return np.arange(np.prod(shape), dtype=dtype).reshape(shape).copy(order)

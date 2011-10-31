@@ -62,7 +62,7 @@ def test_nvec2():
                 yield assert_transforms, 2, nx, nk, auxalign
 
 def test_multivec():
-    from spherew.lib import _LEGENDRE_TRANSFORM_WORK_SIZE
+    from ..lib import _LEGENDRE_TRANSFORM_WORK_SIZE
     nk_block = _LEGENDRE_TRANSFORM_WORK_SIZE // (4 * 8 * 2) # X_CHUNKSIZE * sizeof(double) * duplicate
 
     for nx in [1, 2, 3, 4, 6, 7, 10, 11]:

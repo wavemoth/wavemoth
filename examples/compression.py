@@ -7,15 +7,15 @@ import sys
 import os
 import itertools
 
-from spherew import *
-from spherew.healpix import *
-from spherew.roots import *
+from wavemoth import *
+from wavemoth.healpix import *
+from wavemoth.roots import *
 from cmb import as_matrix
-from spherew.butterfly import butterfly_compress, matrix_interpolative_decomposition
+from wavemoth.butterfly import butterfly_compress, matrix_interpolative_decomposition
 from matplotlib import pyplot as plt
 
 from concurrent.futures import ProcessPoolExecutor#, ThreadPoolExecutor
-from spherew.utils import FakeExecutor
+from wavemoth.utils import FakeExecutor
 
 Nside = 2048
 lmax = 3 * Nside

@@ -8,8 +8,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname('__file__'), '..'))
 
 import numpy as np
-from spherew.fmm import *
-from spherew.benchmark_utils import *
+from wavemoth.fmm import *
+from wavemoth.benchmark_utils import *
 
 NQUAD = 28
 Nside = 512

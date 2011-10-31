@@ -11,9 +11,9 @@ import sys
 import os
 import itertools
 
-from spherew import *
-from spherew.healpix import *
-from spherew.roots import *
+from wavemoth import *
+from wavemoth.healpix import *
+from wavemoth.roots import *
 from cmb import as_matrix
 from matplotlib import pyplot as plt
 

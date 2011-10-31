@@ -1,4 +1,4 @@
-from spherew.matvec import *
+from wavemoth.matvec import *
 
 N = 100
 A = np.arange(N * N, dtype=np.double).reshape(N, N)

@@ -4,9 +4,9 @@ from __future__ import division
 import os
 import sys
 import numpy as np
-from spherew.butterflylib import *
-from spherew.benchmark_utils import *
-from spherew.fastsht import *
+from wavemoth.butterflylib import *
+from wavemoth.benchmark_utils import *
+from wavemoth.fastsht import *
 
 def post_projection_scatter():
     nvecs = 2
@@ -68,7 +68,7 @@ def legendre_precompute():
     B = np.ones((k, n), order='C')
     1/0
     C = np.ones((10, 10), order='F')
-    from spherew.blas import dgemm_crc
+    from wavemoth.blas import dgemm_crc
     J = 10
     dgemm_crc(A, P, C, repeat=1)
     with benchmark('dgemm', J):

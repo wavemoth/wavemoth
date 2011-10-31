@@ -3,11 +3,11 @@ from __future__ import division
 # Does it pay off to evaluate at root nodes and then interpolate?
 # Produce a table.
 
-from spherew import *
-from spherew.healpix import *
-from spherew.roots import *
-from spherew.butterfly import butterfly_compress, format_numbytes
-from spherew.roots import associated_legendre_roots
+from wavemoth import *
+from wavemoth.healpix import *
+from wavemoth.roots import *
+from wavemoth.butterfly import butterfly_compress, format_numbytes
+from wavemoth.roots import associated_legendre_roots
 
 
 from concurrent.futures import ProcessPoolExecutor

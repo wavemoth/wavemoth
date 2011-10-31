@@ -4,8 +4,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
-from spherew.roots import *
-from spherew.legendre import *
+from wavemoth.roots import *
+from wavemoth.legendre import *
 
 m = 3
 n = 40

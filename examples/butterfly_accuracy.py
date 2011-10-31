@@ -8,11 +8,11 @@ from numpy.linalg import norm
 from matplotlib import pyplot as plt
 
 from time import clock
-from spherew.fastsht import ShtPlan
-from spherew.psht import PshtMmajorHealpix
-from spherew.healpix import get_ring_thetas
-from spherew.legendre import *
-from spherew.butterfly import *
+from wavemoth.fastsht import ShtPlan
+from wavemoth.psht import PshtMmajorHealpix
+from wavemoth.healpix import get_ring_thetas
+from wavemoth.legendre import *
+from wavemoth.butterfly import *
 
 def plot_map(m):
     from cmb.maps import pixel_sphere_map

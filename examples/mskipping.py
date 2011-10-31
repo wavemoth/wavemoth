@@ -13,7 +13,7 @@ sys.path.insert(0, '..')
 
 import numpy as np
 from time import clock
-from spherew.fastsht import ShtPlan
+from wavemoth.fastsht import ShtPlan
 
 Nside = 512
 lmax = 2 * Nside

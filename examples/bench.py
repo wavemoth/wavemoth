@@ -6,12 +6,12 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from spherew.butterfly import *
-from spherew.healpix import *
-from spherew.benchmark_utils import *
-from spherew.fastsht import ShtPlan
-from spherew.psht import PshtMmajorHealpix
-from spherew import *
+from wavemoth.butterfly import *
+from wavemoth.healpix import *
+from wavemoth.benchmark_utils import *
+from wavemoth.fastsht import ShtPlan
+from wavemoth.psht import PshtMmajorHealpix
+from wavemoth import *
 from cPickle import dumps, loads
 
 assert os.environ['OMP_NUM_THREADS'] == '1'

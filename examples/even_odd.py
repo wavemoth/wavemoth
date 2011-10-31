@@ -3,12 +3,12 @@ from __future__ import division
 # Investigate the behaviour of stopping the compression at various
 # points -- how much does the residual matrix compress in each step?
 
-from spherew import *
-from spherew.healpix import *
+from wavemoth import *
+from wavemoth.healpix import *
 from cmb import as_matrix
-from spherew.butterfly import butterfly_compress, format_numbytes, InnerNode, IdentityNode
-from spherew.butterfly import permutations_to_filter
-from spherew.interpolative_decomposition import sparse_interpolative_decomposition, lssolve
+from wavemoth.butterfly import butterfly_compress, format_numbytes, InnerNode, IdentityNode
+from wavemoth.butterfly import permutations_to_filter
+from wavemoth.interpolative_decomposition import sparse_interpolative_decomposition, lssolve
 
 from concurrent.futures import ProcessPoolExecutor
 from matplotlib import pyplot as plt

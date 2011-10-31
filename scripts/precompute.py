@@ -17,13 +17,13 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import tables
 
-from spherew.butterfly import *
-from spherew.healpix import *
-from spherew.lib import *
-from spherew.benchmark_utils import *
-from spherew import *
+from wavemoth.butterfly import *
+from wavemoth.healpix import *
+from wavemoth.lib import *
+from wavemoth.benchmark_utils import *
+from wavemoth import *
 from io import BytesIO
-from spherew.utils import FakeExecutor
+from wavemoth.utils import FakeExecutor
 
 np.seterr(all='raise')
 

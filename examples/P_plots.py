@@ -6,8 +6,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 
-from spherew import *
-from spherew.healpix import *
+from wavemoth import *
+from wavemoth.healpix import *
 from cmb import as_matrix
 
 lmax = 400

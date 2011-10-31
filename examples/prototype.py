@@ -6,10 +6,10 @@ import os
 sys.path.insert(0,'..')
 #sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
                 
-from spherew import *
-from spherew.healpix import *
-from spherew.butterfly import butterfly_compress, serialize_butterfly_matrix
-from spherew.roots import *
+from wavemoth import *
+from wavemoth.healpix import *
+from wavemoth.butterfly import butterfly_compress, serialize_butterfly_matrix
+from wavemoth.roots import *
 import numpy as np
 from numpy import pi, prod
 from cmb.oomatrix import as_matrix
@@ -103,7 +103,7 @@ def alm2map(m, a_l, Nside):
 #    plt.plot(g.real)
     g_m_theta[:, m] = g
 
-    from spherew.fastsht import ShtPlan
+    from wavemoth.fastsht import ShtPlan
     fake_input = np.zeros(1, dtype=np.cdouble)
     plan = ShtPlan(Nside, lmax, lmax, fake_input, map, 'mmajor')
     plan.perform_backward_ffts(0, 4 * Nside - 1)

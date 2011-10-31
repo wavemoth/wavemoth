@@ -8,7 +8,7 @@ from io import BytesIO
 import numpy as np
 cimport numpy as np
 
-from spherew cimport blas
+from wavemoth cimport blas
 
 from interpolative_decomposition import sparse_interpolative_decomposition
 from collections import namedtuple

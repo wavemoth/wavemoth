@@ -22,18 +22,18 @@ def assert_aligned(np.ndarray x):
 cdef extern from "complex.h":
     pass
 
-cdef extern from "fastsht_private.h":
+cdef extern from "wavemoth_private.h":
 
     ctypedef struct m_resource_t:
         int m
     
-    ctypedef struct fastsht_node_plan_t:
+    ctypedef struct wavemoth_node_plan_t:
         double *work_q
         int nm
         m_resource_t *m_resources
         
 
-    cdef struct _fastsht_plan:
+    cdef struct _wavemoth_plan:
         int type_ "type"
         int lmax, mmax
         int nthreads
@@ -42,31 +42,31 @@ cdef extern from "fastsht_private.h":
         double complex *output, *input
         double *work
         int Nside
-        fastsht_node_plan_t **node_plans
+        wavemoth_node_plan_t **node_plans
 
-    ctypedef _fastsht_plan *fastsht_plan
+    ctypedef _wavemoth_plan *wavemoth_plan
 
     ctypedef int bfm_index_t
     
-    ctypedef struct fastsht_grid_info:
+    ctypedef struct wavemoth_grid_info:
         double *phi0s
         bfm_index_t *ring_offsets
         bfm_index_t nrings
 
-    void fastsht_perform_backward_ffts(fastsht_plan plan)
-    fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside)
-    void fastsht_free_grid_info(fastsht_grid_info *info)
+    void wavemoth_perform_backward_ffts(wavemoth_plan plan)
+    wavemoth_grid_info* wavemoth_create_healpix_grid_info(int Nside)
+    void wavemoth_free_grid_info(wavemoth_grid_info *info)
 
-cdef extern from "fastsht.h":
+cdef extern from "wavemoth.h":
     ctypedef int int64_t
     
     cdef enum:
-        FASTSHT_MMAJOR
-        FASTSHT_MEASURE
-        FASTSHT_ESTIMATE
+        WAVEMOTH_MMAJOR
+        WAVEMOTH_MEASURE
+        WAVEMOTH_ESTIMATE
         
 
-    fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax,
+    wavemoth_plan wavemoth_plan_to_healpix(int Nside, int lmax, int mmax,
                                          int nmaps, int nthreads,
                                          double *input,
                                          double *output,
@@ -74,22 +74,22 @@ cdef extern from "fastsht.h":
                                          unsigned flags,
                                          char *resourcename)
 
-    void fastsht_destroy_plan(fastsht_plan plan)
-    void fastsht_execute(fastsht_plan plan)
-    void fastsht_configure(char *resource_dir)
-    void fastsht_perform_matmul(fastsht_plan plan, bfm_index_t m, int odd)
-    void fastsht_perform_legendre_transforms(fastsht_plan plan)
-    void fastsht_disable_phase_shifting(fastsht_plan plan)
+    void wavemoth_destroy_plan(wavemoth_plan plan)
+    void wavemoth_execute(wavemoth_plan plan)
+    void wavemoth_configure(char *resource_dir)
+    void wavemoth_perform_matmul(wavemoth_plan plan, bfm_index_t m, int odd)
+    void wavemoth_perform_legendre_transforms(wavemoth_plan plan)
+    void wavemoth_disable_phase_shifting(wavemoth_plan plan)
 
 cdef extern from "legendre_transform.h":
-    void fastsht_legendre_transform(size_t nx, size_t nl,
+    void wavemoth_legendre_transform(size_t nx, size_t nl,
                                     size_t nvecs,
                                     double *a_l,
                                     double *y,
                                     double *x_squared, 
                                     double *c_and_cinv_and_d,
                                     double *P, double *Pp1)
-    void fastsht_legendre_transform_sse(size_t nx, size_t nl,
+    void wavemoth_legendre_transform_sse(size_t nx, size_t nl,
                                         size_t nvecs,
                                         double *a_l,
                                         double *y,
@@ -98,13 +98,13 @@ cdef extern from "legendre_transform.h":
                                         double *P, double *Pp1,
                                         char *work)
     
-    size_t fastsht_legendre_transform_sse_query_work(size_t nvecs)
+    size_t wavemoth_legendre_transform_sse_query_work(size_t nvecs)
     
-    void fastsht_legendre_transform_auxdata(
+    void wavemoth_legendre_transform_auxdata(
         size_t m, size_t lmin, size_t nk,
         double *auxdata)
 
-    void fastsht_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
+    void wavemoth_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
                                          double *output)
 
     cdef size_t LEGENDRE_TRANSFORM_WORK_SIZE
@@ -112,7 +112,7 @@ cdef extern from "legendre_transform.h":
 _configured = False
 
 cdef class ShtPlan:
-    cdef fastsht_plan plan
+    cdef wavemoth_plan plan
     cdef readonly object input, output
     cdef public int Nside, lmax
     
@@ -124,7 +124,7 @@ cdef class ShtPlan:
         global _configured
         cdef int flags
         if ordering == 'mmajor':
-            flags = FASTSHT_MMAJOR
+            flags = WAVEMOTH_MMAJOR
         else:
             raise ValueError("Invalid ordering: %s" % ordering)
         self.input = input
@@ -136,13 +136,13 @@ cdef class ShtPlan:
                              (<object>output).shape)
 
         if not _configured and matrix_data_filename is None:
-            fastsht_configure(os.environ['SHTRESOURCES'])
+            wavemoth_configure(os.environ['SHTRESOURCES'])
             _configured = True
         
-        self.plan = fastsht_plan_to_healpix(Nside, lmax, mmax, input.shape[1], nthreads,
+        self.plan = wavemoth_plan_to_healpix(Nside, lmax, mmax, input.shape[1], nthreads,
                                             <double*>input.data, <double*>output.data,
                                             flags,
-                                            FASTSHT_ESTIMATE,
+                                            WAVEMOTH_ESTIMATE,
                                             NULL if matrix_data_filename is None
                                             else <char*>matrix_data_filename)
         if self.plan == NULL:
@@ -150,11 +150,11 @@ cdef class ShtPlan:
         self.Nside = Nside
         self.lmax = lmax
         if not phase_shifts:
-            fastsht_disable_phase_shifting(self.plan)
+            wavemoth_disable_phase_shifting(self.plan)
 
     def __dealloc__(self):
         if self.plan != NULL:
-            fastsht_destroy_plan(self.plan)
+            wavemoth_destroy_plan(self.plan)
 
     def get_work(self):
         """
@@ -182,35 +182,35 @@ cdef class ShtPlan:
 
     def execute(self, int repeat=1):
         for i in range(repeat):
-            fastsht_execute(self.plan)
+            wavemoth_execute(self.plan)
         return self.output
 
     def perform_backward_ffts(self):
-        fastsht_perform_backward_ffts(self.plan)
+        wavemoth_perform_backward_ffts(self.plan)
 
     def perform_legendre_transform(self, repeat=1):
         cdef int k
         for k in range(repeat):
-            fastsht_perform_legendre_transforms(self.plan)
+            wavemoth_perform_legendre_transforms(self.plan)
 
         
 
 #    def perform_matmul(self, bfm_index_t m, int odd):
 #        cdef int n = (self.plan.lmax - m) / 2, i
 #        cdef np.ndarray[double complex] out = np.zeros(n, np.complex128)
-#        fastsht_perform_matmul(self.plan, m, odd)
+#        wavemoth_perform_matmul(self.plan, m, odd)
 #        return out
 
 def _get_healpix_phi0s(Nside):
-    " Expose fastsht_create_healpix_grid_info for unit tests. "
+    " Expose wavemoth_create_healpix_grid_info for unit tests. "
 
-    cdef fastsht_grid_info *info = fastsht_create_healpix_grid_info(Nside)
+    cdef wavemoth_grid_info *info = wavemoth_create_healpix_grid_info(Nside)
     try:
         phi0s = np.zeros(info.nrings)
         for i in range(info.nrings):
             phi0s[i] = info.phi0s[i]
     finally:
-        fastsht_free_grid_info(info)
+        wavemoth_free_grid_info(info)
     return phi0s
     
 
@@ -254,13 +254,13 @@ def legendre_transform(int m, int lmin,
         raise ValueError("nvecs not divisible by 2")
     if use_sse:
         a_buf = np.zeros((a.shape[0], a.shape[1])) * np.nan
-        fastsht_legendre_transform_pack(nk, nvecs, <double*>abig.data, <double*>a_buf.data)
+        wavemoth_legendre_transform_pack(nk, nvecs, <double*>abig.data, <double*>a_buf.data)
 
-        work_size = fastsht_legendre_transform_sse_query_work(nvecs);
+        work_size = wavemoth_legendre_transform_sse_query_work(nvecs);
         work_array = np.ones(work_size, dtype=np.int8) * np.nan
         work = work_array.data
         for i in range(repeat):
-            fastsht_legendre_transform_sse(
+            wavemoth_legendre_transform_sse(
                 nx, nk, nvecs,
                 <double*>a_buf.data,
                 <double*>y.data,
@@ -271,7 +271,7 @@ def legendre_transform(int m, int lmin,
                 work)
     else:
         for i in range(repeat):
-            fastsht_legendre_transform(
+            wavemoth_legendre_transform(
                 nx, nk, nvecs,
                 <double*>abig.data,
                 <double*>y.data,
@@ -286,7 +286,7 @@ def legendre_transform_auxdata(size_t m, size_t lmin, size_t nk):
         return np.zeros(0)
     else:
         out = np.empty(3 * (nk - 2))
-        fastsht_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
+        wavemoth_legendre_transform_auxdata(m, lmin, nk, <double*>out.data)
         return out
 
 def first_true(x):

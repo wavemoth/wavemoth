@@ -3,7 +3,7 @@ cimport cython
 import numpy as np
 
 cdef extern from "fmm1d.h":
-    void fastsht_fmm1d(double *x_grid,  double *gamma,
+    void wavemoth_fmm1d(double *x_grid,  double *gamma,
                        double *q, size_t nx,
                        double *y_grid,  double *omega,
                        double *phi, size_t ny, size_t nvecs)
@@ -40,7 +40,7 @@ def fmm1d(np.ndarray[double, mode='c'] x_grid,
         or q.shape[1] != out.shape[1]):
         raise ValueError("Shapes do not conform")
     for i in range(repeat):
-        fastsht_fmm1d(<double*>x_grid.data, <double*>gamma.data, <double*>q.data, x_grid.shape[0],
+        wavemoth_fmm1d(<double*>x_grid.data, <double*>gamma.data, <double*>q.data, x_grid.shape[0],
                       <double*>y_grid.data, <double*>omega.data, <double*>out.data, y_grid.shape[0],
                       q.shape[1])
     return out

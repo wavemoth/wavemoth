@@ -6,11 +6,11 @@ probably
 The API is unstable and may change at any point.
 */
 
-#ifndef _FASTSHT_PRIVATE_H_
-#define _FASTSHT_PRIVATE_H_
+#ifndef _WAVEMOTH_PRIVATE_H_
+#define _WAVEMOTH_PRIVATE_H_
 
 #include "butterfly.h"
-#include "fastsht.h"
+#include "wavemoth.h"
 #include "complex.h"
 #include <fftw3.h>
 
@@ -58,13 +58,13 @@ typedef struct {
   bfm_index_t nrings, mid_ring;
   bfm_index_t npix;
   int has_equator;
-} fastsht_grid_info;
+} wavemoth_grid_info;
 
 typedef struct {
   bfm_plan *bfm;
   char *legendre_transform_work;
   double *work_a_l;  
-} fastsht_legendre_worker_t;
+} wavemoth_legendre_worker_t;
 
 typedef struct {
   size_t buf_size;
@@ -74,8 +74,8 @@ typedef struct {
   int threadnum_on_node;
   int cpu_id;
   sem_t cpu_lock;
-  fastsht_legendre_worker_t *legendre_workers;
-} fastsht_cpu_plan_t;
+  wavemoth_legendre_worker_t *legendre_workers;
+} wavemoth_cpu_plan_t;
 
 
 typedef struct {
@@ -89,18 +89,18 @@ typedef struct {
   sem_t memory_bus_semaphore;
   pthread_mutex_t queue_lock;
   size_t k_max, nblocks_max;
-  fastsht_cpu_plan_t *cpu_plans;
+  wavemoth_cpu_plan_t *cpu_plans;
   int ncpus;
   int node_id;
-} fastsht_node_plan_t;
+} wavemoth_node_plan_t;
 
 
-struct _fastsht_plan {
+struct _wavemoth_plan {
   double *output, *input;
-  fastsht_grid_info *grid;
+  wavemoth_grid_info *grid;
   fftw_plan *fft_plans;
   precomputation_t *resources;
-  fastsht_node_plan_t *node_plans[8];
+  wavemoth_node_plan_t *node_plans[8];
   double **m_to_phase_ring;
 
   pthread_t *execute_threads;
@@ -125,19 +125,19 @@ struct _fastsht_plan {
   } times;
 };
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,
+void wavemoth_perform_matmul(wavemoth_plan plan, bfm_plan *bfm, char *matrix_data,
                             bfm_index_t m, int odd, size_t ncols, double *output,
                             char *legendre_transform_work, double *work_a_l);
-void fastsht_perform_interpolation(fastsht_plan plan, bfm_index_t m, int odd);
-void fastsht_perform_legendre_transforms(fastsht_plan plan);
+void wavemoth_perform_interpolation(wavemoth_plan plan, bfm_index_t m, int odd);
+void wavemoth_perform_legendre_transforms(wavemoth_plan plan);
 
-void fastsht_perform_backward_ffts(fastsht_plan plan);
+void wavemoth_perform_backward_ffts(wavemoth_plan plan);
 
-fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside);
-void fastsht_free_grid_info(fastsht_grid_info *info);
-void fastsht_disable_phase_shifting(fastsht_plan plan);
+wavemoth_grid_info* wavemoth_create_healpix_grid_info(int Nside);
+void wavemoth_free_grid_info(wavemoth_grid_info *info);
+void wavemoth_disable_phase_shifting(wavemoth_plan plan);
 
-void fastsht_execute_out_of_core(fastsht_plan plan,
+void wavemoth_execute_out_of_core(wavemoth_plan plan,
                                  double *out_compute_time,
                                  double *out_load_time);
 

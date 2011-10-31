@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include "butterfly.h"
 #include "blas.h"
-#include "fastsht_error.h"
+#include "wavemoth_error.h"
 #include "butterfly_utils.h"
 
 /* Common page size on AMD64 */

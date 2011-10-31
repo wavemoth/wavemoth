@@ -13,10 +13,10 @@ even or odd l's.
 #define LEGENDRE_TRANSFORM_WORK_SIZE (1024 * 4)
 
 
-void fastsht_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
+void wavemoth_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
                                         double *auxdata);
 
-void fastsht_legendre_transform(size_t nx, size_t nl,
+void wavemoth_legendre_transform(size_t nx, size_t nl,
                                 size_t nvecs,
                                 double *a_l,
                                 double *y,
@@ -24,7 +24,7 @@ void fastsht_legendre_transform(size_t nx, size_t nl,
                                 double *auxdata,
                                 double *P, double *Pp1);
 
-void fastsht_legendre_transform_sse(size_t nx, size_t nl,
+void wavemoth_legendre_transform_sse(size_t nx, size_t nl,
                                     size_t nvecs,
                                     double *a_l,
                                     double *y,
@@ -33,9 +33,9 @@ void fastsht_legendre_transform_sse(size_t nx, size_t nl,
                                     double *P, double *Pp1,
                                     char *work);
 
-size_t fastsht_legendre_transform_sse_query_work(size_t nvecs);
+size_t wavemoth_legendre_transform_sse_query_work(size_t nvecs);
 
-void fastsht_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
+void wavemoth_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
                                      double *output);
 
 #endif

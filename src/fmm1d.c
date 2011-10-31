@@ -5,32 +5,32 @@
 #include "malloc.h"
 #include "assert.h"
 #include "unistd.h"
-#include "fastsht_error.h"
+#include "wavemoth_error.h"
 
 #define NQUAD 28
 
 static double QUAD_POINTS[28] SSE_ALIGNED;
 static double QUAD_WEIGHTS[28] SSE_ALIGNED;
 
-/* struct _fastsht_fmm1d { */
+/* struct _wavemoth_fmm1d { */
 /*   double *dx; */
 
 /* }; */
 
-/* fastsht_fmm1d* fastsht_initialize_fmm1d(double *in_grid, double *out_grid, */
+/* wavemoth_fmm1d* wavemoth_initialize_fmm1d(double *in_grid, double *out_grid, */
 /*                                         size_t N_in, size_t N_out) { */
-/*   fastsht_fmm1d *ctx = malloc(sizeof(fastsht_fmm1d)); */
+/*   wavemoth_fmm1d *ctx = malloc(sizeof(wavemoth_fmm1d)); */
 /*   size_t i; */
 /*   for (i = 0; i != N_in; ++i) { */
 /*   } */
 /*   return ctx; */
 /* } */
                              
-/* void fastsht_destruct_fmm1d(fastsht_fmm1d *ctx) { */
+/* void wavemoth_destruct_fmm1d(wavemoth_fmm1d *ctx) { */
 /*   free(info); */
 /* } */
 
-void fastsht_fmm1d(const double *restrict x_grid, const double *restrict gamma,
+void wavemoth_fmm1d(const double *restrict x_grid, const double *restrict gamma,
                    const double *restrict q, size_t nx,
                    const double *restrict y_grid, const double *restrict omega,
                    double *restrict phi, size_t ny, size_t nvecs) {

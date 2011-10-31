@@ -19,9 +19,9 @@ C program to benchmark spherical harmonic transforms
 #include <psht.h>
 #include <psht_geomhelpers.h>
 
-#include "fastsht.h"
-#include "fastsht_private.h"
-#include "fastsht_error.h"
+#include "wavemoth.h"
+#include "wavemoth_private.h"
+#include "wavemoth_error.h"
 #include "blas.h"
 #include "benchutils.h"
 
@@ -41,7 +41,7 @@ Butterfly SHT benchmark
 */
 
 double *sht_input, *sht_output, *psht_output;
-fastsht_plan sht_plan;
+wavemoth_plan sht_plan;
 int sht_nmaps;
 int sht_m_stride = 1;
 unsigned sht_flags;
@@ -50,11 +50,11 @@ double min_legendre_dt = 1e300;
 
 void execute_sht(void *ctx) {
   if (do_ffts) {
-    fastsht_execute(sht_plan);
+    wavemoth_execute(sht_plan);
     double dt = sht_plan->times.legendre_transform_done - sht_plan->times.legendre_transform_start;
     min_legendre_dt = fmin(min_legendre_dt, dt);
   } else {
-    fastsht_perform_legendre_transforms(sht_plan);
+    wavemoth_perform_legendre_transforms(sht_plan);
   }
 }
 
@@ -69,8 +69,8 @@ void setup_sht() {
     fclose(fd);
   }
 
-  sht_plan = fastsht_plan_to_healpix(Nside, lmax, lmax, nmaps, N_threads, sht_input,
-                                     sht_output, FASTSHT_MMAJOR, sht_flags,
+  sht_plan = wavemoth_plan_to_healpix(Nside, lmax, lmax, nmaps, N_threads, sht_input,
+                                     sht_output, WAVEMOTH_MMAJOR, sht_flags,
                                      sht_resourcefile);
   checkf(sht_plan, "plan not created, nthreads=%d", N_threads);
 
@@ -86,7 +86,7 @@ void finish_sht(void) {
   char tbuf[20];
   snftime(tbuf, 20, min_legendre_dt);
   printf("  Legendre transform time: %s (min)\n", tbuf);
-  fastsht_destroy_plan(sht_plan);
+  wavemoth_destroy_plan(sht_plan);
 }
 
 
@@ -233,7 +233,7 @@ int main(int argc, char *argv[]) {
   opterr = 0;
   sht_nmaps = 1;
   do_ffts = -1;
-  sht_flags = FASTSHT_MEASURE;
+  sht_flags = WAVEMOTH_MEASURE;
 
   while ((c = getopt (argc, argv, "r:N:j:n:t:S:k:a:o:FEC")) != -1) {
     switch (c) {
@@ -243,8 +243,8 @@ int main(int argc, char *argv[]) {
     case 'n': miniter = atoi(optarg); break;
     case 't': mintime = atof(optarg); break;
     case 'E':
-      sht_flags &= ~FASTSHT_MEASURE; break;
-    case 'C': sht_flags |= FASTSHT_NO_RESOURCE_COPY;  break;
+      sht_flags &= ~WAVEMOTH_MEASURE; break;
+    case 'C': sht_flags |= WAVEMOTH_NO_RESOURCE_COPY;  break;
     case 'a':
       stats_filename = optarg;
       stats_mode = "a";
@@ -281,11 +281,11 @@ int main(int argc, char *argv[]) {
   /* Resource configuration */
   resource_path = getenv("SHTRESOURCES");
   if (sht_resourcefile != NULL) {
-    fastsht_configure("");
-    fastsht_query_resourcefile(sht_resourcefile, &Nside, &lmax);
+    wavemoth_configure("");
+    wavemoth_query_resourcefile(sht_resourcefile, &Nside, &lmax);
   } else {
     check(resource_path != NULL, "Please define SHTRESOURCES or use -r switch");
-    fastsht_configure(resource_path);
+    wavemoth_configure(resource_path);
     lmax = 2 * Nside;
   }
 

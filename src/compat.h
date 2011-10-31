@@ -1,5 +1,5 @@
-#ifndef _FASTSHT_COMPAT_H_
-#define _FASTSHT_COMPAT_H_
+#ifndef _WAVEMOTH_COMPAT_H_
+#define _WAVEMOTH_COMPAT_H_
 
 #if defined(_MSC_VER)
 #define SSE_ALIGNED __declspec(align(16))

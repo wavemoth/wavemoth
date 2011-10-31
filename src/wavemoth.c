@@ -37,8 +37,8 @@
 
 /* Wavemoth */
 
-#include "fastsht_private.h"
-#include "fastsht_error.h"
+#include "wavemoth_private.h"
+#include "wavemoth_error.h"
 #include "fmm1d.h"
 #include "blas.h"
 #include "butterfly_utils.h"
@@ -126,7 +126,7 @@ Public
 
 static int configured = 0;
 
-void fastsht_configure(char *resource_path) {
+void wavemoth_configure(char *resource_path) {
   /*check(!configured, "Already configured");*/
   configured = 1;
   strncpy(global_resource_path, resource_path, MAX_RESOURCE_PATH);
@@ -134,14 +134,14 @@ void fastsht_configure(char *resource_path) {
   memset(precomputed_data, 0, sizeof(precomputed_data));
 }
 
-static void fastsht_get_resources_filename(char *filename, size_t buflen, int Nside) {
+static void wavemoth_get_resources_filename(char *filename, size_t buflen, int Nside) {
   snprintf(filename, buflen, "%s/rev%d/%d.dat",
            global_resource_path, RESOURCE_FORMAT_VERSION,
            Nside);
   filename[buflen - 1] = '\0';
 }
 
-int fastsht_query_resourcefile(char *filename, int *out_Nside, int *out_lmax) {
+int wavemoth_query_resourcefile(char *filename, int *out_Nside, int *out_lmax) {
   FILE *fd;
   int64_t fields[3];
 
@@ -197,10 +197,10 @@ static void migrate_pages_numa(void *start, size_t len, int node) {
   }
   }*/
 
-//int fastsht_copy_resources(precomputation_t *data
+//int wavemoth_copy_resources(precomputation_t *data
 
 
-int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nside) {
+int wavemoth_mmap_resources(char *filename, precomputation_t *data, int *out_Nside) {
   int fd;
   struct stat fileinfo;
   int64_t mmax, lmax, m, n, odd, Nside;
@@ -263,20 +263,20 @@ int fastsht_mmap_resources(char *filename, precomputation_t *data, int *out_Nsid
   return retcode;
 }
 
-precomputation_t* fastsht_fetch_resource(int Nside) {
+precomputation_t* wavemoth_fetch_resource(int Nside) {
   int Nside_level = 0, tmp, got_Nside;
   char filename[MAX_RESOURCE_PATH];
 
   if (!configured) {
     return NULL;
   }
-  fastsht_get_resources_filename(filename, MAX_RESOURCE_PATH, Nside);
+  wavemoth_get_resources_filename(filename, MAX_RESOURCE_PATH, Nside);
   tmp = Nside;
   while (tmp /= 2) ++Nside_level;
   checkf(Nside_level < MAX_NSIDE_LEVEL + 1, "Nside=2**%d but maximum value is 2**%d",
          Nside_level, MAX_NSIDE_LEVEL);
   if (precomputed_data[Nside_level].refcount == 0) {
-    check(fastsht_mmap_resources(filename, precomputed_data + Nside_level, &got_Nside) == 0,
+    check(wavemoth_mmap_resources(filename, precomputed_data + Nside_level, &got_Nside) == 0,
           "resource load failed");
     checkf(Nside == got_Nside, "Loading precomputation: Expected Nside=%d but got %d in %s",           Nside, got_Nside, filename);
   }
@@ -284,7 +284,7 @@ precomputation_t* fastsht_fetch_resource(int Nside) {
   return &precomputed_data[Nside_level];
 }
 
-void fastsht_release_resource(precomputation_t *data) {
+void wavemoth_release_resource(precomputation_t *data) {
   return;
   --data->refcount;
   if (data->refcount == 0) {
@@ -305,12 +305,12 @@ static void bitmask_or(struct bitmask *a, struct bitmask *b, struct bitmask *out
   }
 }
 
-typedef void (*thread_main_func_t)(fastsht_plan, int, int, int, void*);
+typedef void (*thread_main_func_t)(wavemoth_plan, int, int, int, void*);
 
 typedef struct {
   void *ctx;
   thread_main_func_t func;
-  fastsht_plan plan;
+  wavemoth_plan plan;
   int inode, icpu, ithread;
 } thread_ctx_t;
 
@@ -328,7 +328,7 @@ static void *thread_main_adaptor(void *ctx_) {
   return NULL;
 }
 
-static int fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, int threads_per_cpu,
+static int wavemoth_run_in_threads(wavemoth_plan plan, thread_main_func_t func, int threads_per_cpu,
                                   void *ctx, pthread_t *threads,
                                   thread_ctx_t *adaptor_ctx) {
   /* Spawn pthreads on the CPUs designated in the plan, and wait for them
@@ -367,10 +367,10 @@ static int fastsht_run_in_threads(fastsht_plan plan, thread_main_func_t func, in
   return n;
 }
 
-static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
+static void wavemoth_create_plan_thread(wavemoth_plan plan, int inode, int icpu,
                                        int ithread, void *ctx); /* forward decl */
 
-static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
+static void wait_for_execute_thread(wavemoth_plan plan, int inode, int icpu,
                                     int ithread, void *ctx);
 
 static int next_numa_node(struct bitmask *nodemask, int node_id, int nnodes) {
@@ -380,14 +380,14 @@ static int next_numa_node(struct bitmask *nodemask, int node_id, int nnodes) {
   return node_id;
 }
 
-fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
+wavemoth_plan wavemoth_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads, double *input, double *output,
                                      int ordering, unsigned flags,
                                      char *resource_filename) {
-  fastsht_plan plan = malloc(sizeof(struct _fastsht_plan));
+  wavemoth_plan plan = malloc(sizeof(struct _wavemoth_plan));
   size_t nrings;
   int out_Nside;
-  fastsht_grid_info *grid;
+  wavemoth_grid_info *grid;
   bfm_index_t start, stop;
 
   /* Simple attribute assignment */
@@ -395,7 +395,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->type = PLANTYPE_HEALPIX;
   plan->input = input;
   plan->output = output;
-  plan->grid = grid = fastsht_create_healpix_grid_info(Nside);
+  plan->grid = grid = wavemoth_create_healpix_grid_info(Nside);
   plan->nmaps = nmaps;
   plan->Nside = Nside;
   plan->lmax = lmax;
@@ -432,12 +432,12 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   inode = 0;
   for (int node_id = 0; node_id != max_node_id + 1; ++node_id) {
     if (numa_bitmask_isbitset(nodemask, node_id)) {
-      size_t bufsize = sizeof(fastsht_node_plan_t) + 
+      size_t bufsize = sizeof(wavemoth_node_plan_t) + 
         sizeof(m_resource_t[nm_bound]) + 
         sizeof(double*[mmax + 1]);
       char *buf = numa_alloc_onnode(bufsize, node_id);
-      fastsht_node_plan_t *node_plan = (void*)buf;
-      buf += sizeof(fastsht_node_plan_t);
+      wavemoth_node_plan_t *node_plan = (void*)buf;
+      buf += sizeof(wavemoth_node_plan_t);
       if ((size_t)buf % sizeof(void*) != 0) {
         buf += sizeof(void*) - (size_t)buf % sizeof(void*);
       }
@@ -448,7 +448,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 
       node_plan->node_id = node_id;
       node_plan->ncpus = 0;      
-      node_plan->cpu_plans = malloc(sizeof(fastsht_cpu_plan_t[16])); // TODO
+      node_plan->cpu_plans = malloc(sizeof(wavemoth_cpu_plan_t[16])); // TODO
       sem_init(&node_plan->memory_bus_semaphore, 0, CONCURRENT_MEMORY_BUS_USE);
       pthread_mutex_init(&node_plan->queue_lock, NULL);
       plan->node_plans[inode] = node_plan;
@@ -465,7 +465,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   inode = 0;
   int cpus_assigned;
   for (cpus_assigned = 0; cpus_assigned != nthreads; ++cpus_assigned) {
-    fastsht_node_plan_t *node_plan = plan->node_plans[inode];
+    wavemoth_node_plan_t *node_plan = plan->node_plans[inode];
     inode = (inode + 1) % nnodes;
 
     /* Walk through cpuid's and check which is next on this node */
@@ -476,7 +476,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     }
     for (; cpu_id < numa_bitmask_nbytes(cpumask) * 8; ++cpu_id) {
       if (numa_bitmask_isbitset(cpumask, cpu_id)) {
-        fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[node_plan->ncpus];
+        wavemoth_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[node_plan->ncpus];
         cpu_plan->cpu_id = cpu_id;
         node_plan->ncpus++;
         break;
@@ -511,7 +511,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   size_t nring_bound = nrings;
   for (int inode = 0; inode != nnodes; ++inode) {
     for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
-      fastsht_cpu_plan_t *td = &plan->node_plans[inode]->cpu_plans[icpu];
+      wavemoth_cpu_plan_t *td = &plan->node_plans[inode]->cpu_plans[icpu];
       td->buf_size = sizeof(ring_pair_info_t[nring_bound]);
       td->ring_pairs = numa_alloc_onnode(td->buf_size, inode);
       check(td->ring_pairs != NULL, "Could not allocate");
@@ -523,7 +523,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   size_t iring = 0;
   for (int inode = 0; inode != nnodes; ++inode) {
     for (int icpu = 0; icpu != plan->node_plans[inode]->ncpus; ++icpu) {
-      fastsht_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
+      wavemoth_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
       cpu_plan->nrings = 0;
     }
   }
@@ -533,7 +533,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
         size_t stop = imin(nrings_half, iring + ring_block_size);
         size_t rings_in_block = stop - iring;
 
-        fastsht_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
+        wavemoth_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
         ring_pair_info_t *ring_pairs = cpu_plan->ring_pairs;
         for (size_t j = 0; j != rings_in_block; ++j) {
           ring_pair_info_t *ri = &ring_pairs[cpu_plan->nrings + j];
@@ -555,14 +555,14 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     /* Used in debugging/benchmarking */
     plan->resources = malloc(sizeof(precomputation_t));
     plan->did_allocate_resources = 1;
-    checkf(fastsht_mmap_resources(resource_filename, plan->resources, &out_Nside) == 0,
+    checkf(wavemoth_mmap_resources(resource_filename, plan->resources, &out_Nside) == 0,
            "Error in loading resource %s", resource_filename);
     check(Nside < 0 || out_Nside == Nside, "Incompatible Nside");
     Nside = out_Nside;
   } else {
     check(Nside >= 0, "Invalid Nside");
     plan->did_allocate_resources = 0;
-    plan->resources = fastsht_fetch_resource(Nside);
+    plan->resources = wavemoth_fetch_resource(Nside);
   }
   check(mmax == plan->resources->mmax, "Incompatible mmax");
   check(lmax == plan->resources->lmax, "Incompatible lmax");
@@ -587,7 +587,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   pthread_mutex_init(&sync.mutex, NULL);
   pthread_barrier_init(&sync.barrier, NULL, nthreads);
   pthread_barrier_init(&sync.node_barrier, NULL, nnodes);
-  fastsht_run_in_threads(plan, &fastsht_create_plan_thread, 1, &sync, NULL, NULL);
+  wavemoth_run_in_threads(plan, &wavemoth_create_plan_thread, 1, &sync, NULL, NULL);
   pthread_barrier_destroy(&sync.barrier);
   pthread_barrier_destroy(&sync.node_barrier);
   pthread_mutex_destroy(&sync.mutex);
@@ -596,7 +596,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   double **m_to_phase_ring = plan->m_to_phase_ring = malloc(sizeof(double[mmax + 1]));
   size_t work_stride = plan->work_q_stride;
   for (inode = 0; inode != nnodes; ++inode) {
-    fastsht_node_plan_t *np = plan->node_plans[inode];
+    wavemoth_node_plan_t *np = plan->node_plans[inode];
     for (size_t im = 0; im != np->nm; ++im) {
       m_to_phase_ring[np->m_resources[im].m] = np->work_q + (2 * im) * work_stride;
     }
@@ -607,7 +607,7 @@ fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->nthreads = nthreads;
   plan->execute_threads = malloc(sizeof(pthread_t[nthreads]));
   pthread_barrier_init(&plan->execute_barrier, NULL, nthreads + 1);
-  fastsht_run_in_threads(plan, &wait_for_execute_thread, 1, NULL,
+  wavemoth_run_in_threads(plan, &wait_for_execute_thread, 1, NULL,
                          plan->execute_threads, adaptor_ctx);
   /* Wait until adaptor_ctx is no longer needed */
   pthread_barrier_wait(&plan->execute_barrier);
@@ -662,7 +662,7 @@ static void* round_up_to(void *addr, size_t size) {
   return p;
 }
 
-static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
+static void wavemoth_create_plan_thread(wavemoth_plan plan, int inode, int icpu,
                                        int ithread, void *ctx) {
   struct {
     pthread_mutex_t mutex;
@@ -671,8 +671,8 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
 
   const int PAGESIZE = getpagesize();
 
-  fastsht_node_plan_t *node_plan = plan->node_plans[inode];
-  fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
+  wavemoth_node_plan_t *node_plan = plan->node_plans[inode];
+  wavemoth_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
   size_t nm = node_plan->nm;
   int nmaps = plan->nmaps;
   size_t nrings_half = plan->grid->mid_ring + 1;
@@ -733,7 +733,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
      While we're at it, inspect precomputed data to figure out buffer
      sizes (common for all, so synchronize/reduce-max at the end). */
   size_t k_max = 0, nblocks_max = 0;
-  int do_copy = !((plan->flags & FASTSHT_NO_RESOURCE_COPY) == FASTSHT_NO_RESOURCE_COPY);
+  int do_copy = !((plan->flags & WAVEMOTH_NO_RESOURCE_COPY) == WAVEMOTH_NO_RESOURCE_COPY);
   for (im = icpu; im < nm; im += node_plan->ncpus) {
     m_resource_t *localres = &node_plan->m_resources[im];
     int m = localres->m;
@@ -783,13 +783,13 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
   nblocks_max = node_plan->nblocks_max;
 
   /* Allocate legendre-worker plans (>1 per cpu) */
-  size_t legendre_work_size = fastsht_legendre_transform_sse_query_work(2 * nmaps);
+  size_t legendre_work_size = wavemoth_legendre_transform_sse_query_work(2 * nmaps);
   size_t nvecs = 2 * plan->nmaps;
   size_t nmats = 2 * nm;
 
-  cpu_plan->legendre_workers = malloc(sizeof(fastsht_legendre_worker_t[THREADS_PER_CPU]));
+  cpu_plan->legendre_workers = malloc(sizeof(wavemoth_legendre_worker_t[THREADS_PER_CPU]));
   for (int w = 0; w != THREADS_PER_CPU; ++w) {
-    fastsht_legendre_worker_t *worker_plan = &cpu_plan->legendre_workers[w];
+    wavemoth_legendre_worker_t *worker_plan = &cpu_plan->legendre_workers[w];
     worker_plan->bfm = bfm_create_plan(k_max, nblocks_max, 2 * nmaps,
                                        &node_plan->memory_bus_semaphore,
                                        &cpu_plan->cpu_lock);
@@ -819,7 +819,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
   */
 
   unsigned fftw_flags = FFTW_DESTROY_INPUT;
-  fftw_flags |= (plan->flags & FASTSHT_MEASURE) ? FFTW_MEASURE : FFTW_ESTIMATE;
+  fftw_flags |= (plan->flags & WAVEMOTH_MEASURE) ? FFTW_MEASURE : FFTW_ESTIMATE;
 
   pthread_mutex_lock(&sync->mutex);
   for (int i = 0; i != cpu_plan->nrings; ++i) {
@@ -834,7 +834,7 @@ static void fastsht_create_plan_thread(fastsht_plan plan, int inode, int icpu,
 }
 
 
-void fastsht_destroy_plan(fastsht_plan plan) {
+void wavemoth_destroy_plan(wavemoth_plan plan) {
   int iring;
 
   plan->destructing = 1;
@@ -849,7 +849,7 @@ void fastsht_destroy_plan(fastsht_plan plan) {
      FFTW3 destructor access must be serialized!
    */
   /*  for (int ithread = 0; ithread != plan->nthreads; ++ithread) {
-    fastsht_cpu_plan_t *lp = &plan->cpu_plans[ithread];
+    wavemoth_cpu_plan_t *lp = &plan->cpu_plans[ithread];
     for (size_t iring = 0; iring != lp->nrings; ++iring) {
       fftw_destroy_plan(lp->ring_pairs[iring].fft_plan);
     }
@@ -867,13 +867,13 @@ void fastsht_destroy_plan(fastsht_plan plan) {
   //    numa_free(lp->buf, lp->buf_size);
   //}
 
-  fastsht_free_grid_info(plan->grid);
-  fastsht_release_resource(plan->resources);
+  wavemoth_free_grid_info(plan->grid);
+  wavemoth_release_resource(plan->resources);
   if (plan->did_allocate_resources) free(plan->resources);
   free(plan);
 }
 
-int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
+int64_t wavemoth_get_legendre_flops(wavemoth_plan plan, int m, int odd) {
   int64_t N, nvecs;
   bfm_matrix_data_info info;
   bfm_query_matrix_data(plan->resources->matrices[m].data[odd],
@@ -885,10 +885,10 @@ int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd) {
 }
 
 
-static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
+static void legendre_transforms_thread(wavemoth_plan plan, int inode, int icpu,
                                        int ithread, void *ctx) {
-  fastsht_node_plan_t *node_plan = plan->node_plans[inode];
-  fastsht_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
+  wavemoth_node_plan_t *node_plan = plan->node_plans[inode];
+  wavemoth_cpu_plan_t *cpu_plan = &node_plan->cpu_plans[icpu];
   size_t nrings_half = plan->grid->mid_ring + 1;
   double *work_q = node_plan->work_q;
   int nvecs = 2 * plan->nmaps;
@@ -896,7 +896,7 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
   size_t nm = node_plan->nm;
   size_t work_q_stride = plan->work_q_stride;
 
-  fastsht_legendre_worker_t *thread_plan = &cpu_plan->legendre_workers[ithread];
+  wavemoth_legendre_worker_t *thread_plan = &cpu_plan->legendre_workers[ithread];
   assert(ithread == 0);
 
   size_t im;
@@ -920,7 +920,7 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
       
       for (int odd = 0; odd < 2; ++odd) {
         double *target = work_q + (2 * im + odd) * plan->work_q_stride;
-        fastsht_perform_matmul(plan, thread_plan->bfm, m_resource->data[odd],
+        wavemoth_perform_matmul(plan, thread_plan->bfm, m_resource->data[odd],
                                m, odd, nrings_half, target,
                                thread_plan->legendre_transform_work,
                                thread_plan->work_a_l);
@@ -930,13 +930,13 @@ static void legendre_transforms_thread(fastsht_plan plan, int inode, int icpu,
   } while (im != nm);
 }
 
-void fastsht_perform_legendre_transforms(fastsht_plan plan) {
+void wavemoth_perform_legendre_transforms(wavemoth_plan plan) {
   /* Reset queue head for all nodes */
   for (int inode = 0; inode != plan->nnodes; ++inode) {
     plan->node_plans[inode]->im = 0;
   }
   /* Run threads */
-  fastsht_run_in_threads(plan, &legendre_transforms_thread, THREADS_PER_CPU, NULL,
+  wavemoth_run_in_threads(plan, &legendre_transforms_thread, THREADS_PER_CPU, NULL,
                          NULL, NULL);
 }
 
@@ -993,9 +993,9 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
         double *x_squared = read_aligned_array_d(&payload, nx_strip);
         double *P0 = read_aligned_array_d(&payload, nx_strip);
         double *P1 = read_aligned_array_d(&payload, nx_strip);
-        fastsht_legendre_transform_pack(nk_strip, nvecs, input + 2 * rstart * nvecs,
+        wavemoth_legendre_transform_pack(nk_strip, nvecs, input + 2 * rstart * nvecs,
                                         input_pack_buf);
-        fastsht_legendre_transform_sse(nx_strip, nk_strip, nvecs,
+        wavemoth_legendre_transform_sse(nx_strip, nk_strip, nvecs,
                                        input_pack_buf,
                                        buf + cstart * nvecs,
                                        x_squared,
@@ -1008,7 +1008,7 @@ void pull_a_through_legendre_block(double *buf, size_t start, size_t stop,
   }
 }
 
-void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,
+void wavemoth_perform_matmul(wavemoth_plan plan, bfm_plan *bfm, char *matrix_data,
                             bfm_index_t m, int odd, size_t ncols,
                             double *output, char *legendre_transform_work,
                             double *work_a_l) {
@@ -1027,7 +1027,7 @@ void fastsht_perform_matmul(fastsht_plan plan, bfm_plan *bfm, char *matrix_data,
   checkf(ret == 0, "bfm_transpose_apply_d retcode %d", ret);
 }
 
-void fastsht_cossin(double *out, size_t n, double x0, double delta) {
+void wavemoth_cossin(double *out, size_t n, double x0, double delta) {
   /* Computes cos(x0 + i * delta) and sin(x0 + i * delta) */
   double a = sin(.5 * delta);
   a = 2.0 * a * a;
@@ -1049,7 +1049,7 @@ void fastsht_cossin(double *out, size_t n, double x0, double delta) {
   }
 }
 
-/*static void fetch_and_wrap_ring(fastsht_plan plan, ring_pair_info_t info) {
+/*static void fetch_and_wrap_ring(wavemoth_plan plan, ring_pair_info_t info) {
   size_t mmax = plan->mmax;
   int *m_to_phase_ring = plan->m_to_phase_ring;
 
@@ -1080,7 +1080,7 @@ static void _printreg(char *msg, m128d r) {
 }
 #define printreg(x) _printreg(#x, x)
 
-static void perform_backward_ffts_thread(fastsht_plan plan, int inode, int icpu,
+static void perform_backward_ffts_thread(wavemoth_plan plan, int inode, int icpu,
                                          int ithread, void *ctx) {
   /*
     a) Phase shift all coefficients according to their phi0
@@ -1102,7 +1102,7 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int inode, int icpu,
   double phi0;
   double *map, *ring;
 
-  fastsht_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
+  wavemoth_cpu_plan_t *cpu_plan = &plan->node_plans[inode]->cpu_plans[icpu];
   ring_pair_info_t *ring_pairs = cpu_plan->ring_pairs;
 
   double **m_to_phase_ring = plan->m_to_phase_ring;
@@ -1190,21 +1190,21 @@ static void perform_backward_ffts_thread(fastsht_plan plan, int inode, int icpu,
   }
 }
 
-void fastsht_perform_backward_ffts(fastsht_plan plan) {
-  fastsht_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL, NULL, NULL);
+void wavemoth_perform_backward_ffts(wavemoth_plan plan) {
+  wavemoth_run_in_threads(plan, &perform_backward_ffts_thread, 1, NULL, NULL, NULL);
 }
 
 
 
-fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside) {
+wavemoth_grid_info* wavemoth_create_healpix_grid_info(int Nside) {
   int iring, ring_npix, ipix;
   int nrings = 4 * Nside - 1;
   /* Allocate all memory for the ring info in a single blob and just
      set up internal pointers. */
-  char *buf = (char*)malloc(sizeof(fastsht_grid_info) + sizeof(double[nrings]) +
+  char *buf = (char*)malloc(sizeof(wavemoth_grid_info) + sizeof(double[nrings]) +
                             sizeof(bfm_index_t[nrings + 1]));
-  fastsht_grid_info *result = (fastsht_grid_info*)buf;
-  buf += sizeof(fastsht_grid_info);
+  wavemoth_grid_info *result = (wavemoth_grid_info*)buf;
+  buf += sizeof(wavemoth_grid_info);
   result->phi0s = (double*)buf;
   buf += sizeof(double[nrings]);
   result->ring_offsets = (bfm_index_t*)buf;
@@ -1231,13 +1231,13 @@ fastsht_grid_info* fastsht_create_healpix_grid_info(int Nside) {
   return result;
 }
 
-void fastsht_free_grid_info(fastsht_grid_info *info) {
+void wavemoth_free_grid_info(wavemoth_grid_info *info) {
   /* In the constructor we allocate the internal arrays as part of the
      same blob. */
   free((char*)info);
 }
 
-void fastsht_disable_phase_shifting(fastsht_plan plan) {
+void wavemoth_disable_phase_shifting(wavemoth_plan plan) {
   int iring;
   /* Used for debug purposes.
      TODO: If the grid starts to get shared across plans we need to think
@@ -1247,7 +1247,7 @@ void fastsht_disable_phase_shifting(fastsht_plan plan) {
   }
 }
 
-static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
+static void wait_for_execute_thread(wavemoth_plan plan, int inode, int icpu,
                                     int ithread, void *ctx) {
   /* First wait for the barrier during plan creation, so that the
      thread is created before planning returns. */
@@ -1268,7 +1268,7 @@ static void wait_for_execute_thread(fastsht_plan plan, int inode, int icpu,
   
 }
 
-void fastsht_execute(fastsht_plan plan) {
+void wavemoth_execute(wavemoth_plan plan) {
   /* Reset queue head for all nodes */
   for (int inode = 0; inode != plan->nnodes; ++inode) {
     plan->node_plans[inode]->im = 0;

@@ -94,14 +94,14 @@ def build(bld):
         rule=run_tempita)
 
     if bld.env.BUTTERFLY_ONLY:
-        bld(target='fastsht',
+        bld(target='wavemoth',
             source=['src/butterfly.c.in'],
             includes=['src'],
             use='C99',
             features='c cshlib')
     else:
-        bld(target='fastsht',
-            source=['src/fastsht.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
+        bld(target='wavemoth',
+            source=['src/wavemoth.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
             includes=['src'],
             use='C99 BLAS FFTW3 OPENMP NUMA',
             features='c cshlib')
@@ -130,13 +130,13 @@ def build(bld):
     bld(source=(['wavemoth/butterfly.pyx']),
         includes=['src'],
         target='butterfly',
-        use='NUMPY fcshlib fastsht',
+        use='NUMPY fcshlib wavemoth',
         features='c pyext cshlib')
 
     bld(source=(['wavemoth/butterflylib.pyx']),
         includes=['src'],
         target='butterflylib',
-        use='NUMPY fcshlib fastsht',
+        use='NUMPY fcshlib wavemoth',
         features='c pyext cshlib')
 
     # NOTE: BUTTERFLY_ONLY RETURNS HERE
@@ -146,9 +146,9 @@ def build(bld):
     bld(source=(['wavemoth/lib.pyx']),
         includes=['src'],
         target='lib',
-        use='NUMPY fastsht',
+        use='NUMPY wavemoth',
         features='c fc pyext cshlib')
-    for x in ['src/fastsht.h', 'src/butterfly.h.in']:
+    for x in ['src/wavemoth.h', 'src/butterfly.h.in']:
         bld.add_manual_dependency(
             bld.path.find_resource('wavemoth/lib.pyx'),
             bld.path.find_resource(x))
@@ -191,7 +191,7 @@ def build(bld):
     bld(source=['bench/shbench.c'],
         includes=['src'],
         target='shbench',
-        use='C99 RT PSHT OPENMP NUMA fastsht',
+        use='C99 RT PSHT OPENMP NUMA wavemoth',
         features='cprogram c')
 
     bld(source=['bench/fftbench.c'],
@@ -205,7 +205,7 @@ def build(bld):
             includes=['src'],
             install_path='bin',
             target='shbench-prof',
-            use='C99 RT PSHT OPENMP PERFTOOLS fastsht',
+            use='C99 RT PSHT OPENMP PERFTOOLS wavemoth',
             features='cprogram c')
 
 from waflib.Configure import conf

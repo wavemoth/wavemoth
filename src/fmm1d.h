@@ -1,5 +1,5 @@
-#ifndef _FASTSHT_FMM1D_H_
-#define _FASTSHT_FMM1D_H_
+#ifndef _WAVEMOTH_FMM1D_H_
+#define _WAVEMOTH_FMM1D_H_
 
 #include <stdlib.h>
 
@@ -20,7 +20,7 @@ to x_i. Some mechanism for transitioning to a limiting expression
 should be added.
 */
 
-void fastsht_fmm1d(const double *restrict x_grid, const double *restrict gamma,
+void wavemoth_fmm1d(const double *restrict x_grid, const double *restrict gamma,
                    const double *restrict q, size_t nx,
                    const double *restrict y_grid, const double *restrict omega,
                    double *restrict phi, size_t ny, size_t nvecs);

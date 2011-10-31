@@ -6,7 +6,7 @@
 #include <math.h>
 #include <stdint.h>
 
-#include "fastsht_error.h"
+#include "wavemoth_error.h"
 #include "legendre_transform.h"
 
 #ifndef INLINE
@@ -362,7 +362,7 @@ static void legendre_transform_packer(size_t nk, size_t nvecs, double *input,
   }
 }
 
-void fastsht_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
+void wavemoth_legendre_transform_pack(size_t nk, size_t nvecs, double *input,
                                      double *output) {
   assert(nk >= 2);
   assert(nvecs % 2 == 0);
@@ -622,7 +622,7 @@ static void legendre_transform_chunk{{xchunksize}}(size_t ix_start, size_t ix_st
 
 
 
-size_t fastsht_legendre_transform_sse_query_work(size_t nvecs) {
+size_t wavemoth_legendre_transform_sse_query_work(size_t nvecs) {
   size_t P_block_size = LEGENDRE_TRANSFORM_WORK_SIZE;
   size_t a_packed_size = nvecs * K_CHUNK_SIZE * sizeof(double);
   if (nvecs == 2) {
@@ -637,7 +637,7 @@ Alignment requirements:
 
 auxdata need only be 64-bit aligned, the other arrays should be 128-bit aligned
 */
-void fastsht_legendre_transform_sse(size_t nx, size_t nk,
+void wavemoth_legendre_transform_sse(size_t nx, size_t nk,
                                     size_t nvecs,
                                     double *a,
                                     double *y,
@@ -677,7 +677,7 @@ void fastsht_legendre_transform_sse(size_t nx, size_t nk,
   }
 }
 
-void fastsht_legendre_transform(size_t nx, size_t nk,
+void wavemoth_legendre_transform(size_t nx, size_t nk,
                                 size_t nvecs,
                                 double *a,
                                 double *y,
@@ -720,7 +720,7 @@ void fastsht_legendre_transform(size_t nx, size_t nk,
   of the output 'auxdata' buffer should be at least 3 * (nk - 2).
   The first chunk of auxiliary data is for computing P_{lmin + 4}^m.
 */
-void fastsht_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
+void wavemoth_legendre_transform_auxdata(size_t m, size_t lmin, size_t nk,
                                         double *auxdata) {
   size_t k, l;
   double c, cp, cpp, d, dp, x, y;

@@ -1,5 +1,5 @@
-#ifndef _FASTSHT_ERROR_H_
-#define _FASTSHT_ERROR_H_
+#ifndef _WAVEMOTH_ERROR_H_
+#define _WAVEMOTH_ERROR_H_
 
 #define ERRMAXLEN 2048
 static char error_buf[ERRMAXLEN];

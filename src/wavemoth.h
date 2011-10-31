@@ -11,38 +11,38 @@ The data is a compressed butterfly matrix, as documented in butterfly.h.
 
 */
 
-#ifndef _FASTSHT_H_
-#define _FASTSHT_H_
+#ifndef _WAVEMOTH_H_
+#define _WAVEMOTH_H_
 
 #include <stdint.h>
 #include "butterfly.h"
 
-typedef struct _fastsht_plan *fastsht_plan;
+typedef struct _wavemoth_plan *wavemoth_plan;
 
-#define FASTSHT_MMAJOR 0x0
+#define WAVEMOTH_MMAJOR 0x0
 
-#define FASTSHT_ESTIMATE 0x0
-#define FASTSHT_MEASURE 0x1
+#define WAVEMOTH_ESTIMATE 0x0
+#define WAVEMOTH_MEASURE 0x1
 
-#define FASTSHT_NO_RESOURCE_COPY 0x10
+#define WAVEMOTH_NO_RESOURCE_COPY 0x10
 
 /*
 Driver functions. Stable API.
 */
 
-void fastsht_configure(char *resource_dir);
+void wavemoth_configure(char *resource_dir);
 
-fastsht_plan fastsht_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
+wavemoth_plan wavemoth_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
                                      int nthreads,
                                      double *input, double *output,
                                      int ordering, unsigned flags,
                                      char *resource_filename);
 
-void fastsht_destroy_plan(fastsht_plan plan);
-void fastsht_execute(fastsht_plan plan);
+void wavemoth_destroy_plan(wavemoth_plan plan);
+void wavemoth_execute(wavemoth_plan plan);
 
-int64_t fastsht_get_legendre_flops(fastsht_plan plan, int m, int odd);
+int64_t wavemoth_get_legendre_flops(wavemoth_plan plan, int m, int odd);
 
-int fastsht_query_resourcefile(char *filename, int *out_Nside, int *out_lmax);
+int wavemoth_query_resourcefile(char *filename, int *out_Nside, int *out_lmax);
 
 #endif

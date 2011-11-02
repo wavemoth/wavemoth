@@ -1,3 +1,11 @@
+#define NVECS {{nvecs}}
+#define LOCAL_SIZE {{local_size}}
+#define tidx get_local_id(0)
+
+/*****
+ * Utilities
+ *****/
+
 
 /* Multiply four 16-bit ints and produce 64-bit result safely. */
 inline unsigned long prod4_16(unsigned short a, unsigned short b,
@@ -19,16 +27,29 @@ double get_d(unsigned short m, unsigned short l) {
   return num / den;
 }
 
-__kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
-                                           __global const double *x_squared,
-                                           __global const double *Lambda_0,
-                                           __global const double *Lambda_1,
-                                           __global const double *a,
-                                           __global double *out) {
-  int ix = get_global_id(0);
+
+/*****
+ * Kernels
+ *****/
+
+kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
+                                         global const double *x_squared,
+                                         global const double *Lambda_0,
+                                         global const double *Lambda_1,
+                                         global const double *q,
+                                         global double *out) {
+  /* Local scratch */
+  local double out_work[NVECS * LOCAL_SIZE]; /* shape=(NVECS, LOCAL_SIZE) */
+  
+  int ix = get_local_id(0);
   double c, cp, cpp, d, dp, x, y;
   double Pval, Pval_prev, Pval_prevprev;
   double xsq_val = x_squared[ix];
+
+  for (int i = 0; i != NVECS * LOCAL_SIZE; ++i) {
+    out_work[i] = -1;
+  }
+  barrier(CLK_LOCAL_MEM_FENCE);
       
   cpp = get_c(m, lmin);
   cp = get_c(m, lmin + 2);
@@ -37,7 +58,46 @@ __kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
   Pval_prevprev = Lambda_0[ix];
   Pval_prev = Lambda_1[ix];
   Pval = Pval_prev;
-      
+
+  int k;
+  /* Handle matvec of first two rows */
+
+  /* Matvec row 0  */
+  k = 0;
+  for (int j = 0; j != NVECS; ++j) {
+    out_work[j * LOCAL_SIZE + tidx] = Pval_prevprev * q[j * nx + ix];
+  }    
+  /* Then a very stupid reduction */
+  barrier(CLK_LOCAL_MEM_FENCE);
+  if (tidx == 0) {
+    for (int j = 0; j != NVECS; ++j) {
+      double s = 0;
+      for (int t = 0; t != LOCAL_SIZE; ++t) {
+        s += out_work[j * LOCAL_SIZE + t];
+      }
+      out[j * nk + k] = s;
+    }
+  }
+
+  k = 1;
+  for (int j = 0; j != NVECS; ++j) {
+    out_work[j * LOCAL_SIZE + tidx] = Pval_prev * q[j * nx + ix];
+  }    
+  /* Then a very stupid reduction */
+  barrier(CLK_LOCAL_MEM_FENCE);
+  if (tidx == 0) {
+    for (int j = 0; j != NVECS; ++j) {
+      double s = 0;
+      for (int t = 0; t != LOCAL_SIZE; ++t) {
+        s += out_work[j * LOCAL_SIZE + t];
+      }
+      out[j * nk + k] = s;
+    }
+  }
+
+
+  /* Recurrence */
+
   for (int k = 2; k != nk; ++k) {
     /* Compute auxiliary scalars */
     c = get_c(m, lmin + 2 * k);
@@ -55,6 +115,39 @@ __kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
     Pval = (xsq_val + alpha) * beta * Pval_prev + gamma * Pval_prevprev;
     Pval_prevprev = Pval_prev;
     Pval_prev = Pval;
+
+    /* Do matvec: First compute our contribution... */
+    for (int j = 0; j != NVECS; ++j) {
+      out_work[j * LOCAL_SIZE + tidx] = Pval * q[j * nx + ix];
+    }    
+    /* Then a very stupid reduction */
+    barrier(CLK_LOCAL_MEM_FENCE);
+    if (tidx == 0) {
+      for (int j = 0; j != NVECS; ++j) {
+        double s = 0;
+        for (int t = 0; t != LOCAL_SIZE; ++t) {
+          s += out_work[j * LOCAL_SIZE + t];
+        }
+        out[j * nk + k] = s;
+      }
+    }
+
+    /*unsigned int stride = 2;
+    unsigned int stop = LOCAL_SIZE;
+    while (stride <= stop) {
+      if (tidx % stride == 0) {
+        for (int j = 0; j != NVECS; ++j) {
+          out_work[j * LOCAL_SIZE + tidx] += out_work[j * LOCAL_SIZE + tidx + (stride / 2)];
+        }
+      }
+      stride *= 2;
+      barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    if (tidx == 0) {
+      for (int j = 0; j != NVECS; ++j) {
+        out[j * nx + ix] = out_work[j * LOCAL_SIZE];
+      }
+      }*/
   }
-  out[ix] = Pval;
+
 }

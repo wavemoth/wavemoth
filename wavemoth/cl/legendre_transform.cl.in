@@ -1,0 +1,60 @@
+
+/* Multiply four 16-bit ints and produce 64-bit result safely. */
+inline unsigned long prod4_16(unsigned short a, unsigned short b,
+                              unsigned short c, unsigned short d) {
+  return (unsigned long)((unsigned int)a * b) * ((unsigned int)c * d);
+}
+
+double get_c(unsigned short m, unsigned short l) {
+  double num = prod4_16(l - m + 1, l - m + 2,
+                                 l + m + 1, l + m + 2);
+  double den = prod4_16(2 * l + 1, 2 * l + 3,
+                        2 * l + 3, 2 * l + 5);
+  return sqrt(num / den);
+}
+
+double get_d(unsigned short m, unsigned short l) {
+  double num = 2 * l * (l + 1) - 2 * m * m - 1;
+  double den = (2 * l - 1) * (2 * l + 3);
+  return num / den;
+}
+
+__kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
+                                           __global const double *x_squared,
+                                           __global const double *Lambda_0,
+                                           __global const double *Lambda_1,
+                                           __global const double *a,
+                                           __global double *out) {
+  int ix = get_global_id(0);
+  double c, cp, cpp, d, dp, x, y;
+  double Pval, Pval_prev, Pval_prevprev;
+  double xsq_val = x_squared[ix];
+      
+  cpp = get_c(m, lmin);
+  cp = get_c(m, lmin + 2);
+  dp = get_d(m, lmin + 2);
+
+  Pval_prevprev = Lambda_0[ix];
+  Pval_prev = Lambda_1[ix];
+  Pval = Pval_prev;
+      
+  for (int k = 2; k != nk; ++k) {
+    /* Compute auxiliary scalars */
+    c = get_c(m, lmin + 2 * k);
+    d = get_d(m, lmin + 2 * k);
+    
+    double alpha = -dp;
+    double beta = 1 / cp;
+    double gamma = -cpp / cp;
+
+    cpp = cp;
+    cp = c;
+    dp = d;
+
+    /* Do recurrence */
+    Pval = (xsq_val + alpha) * beta * Pval_prev + gamma * Pval_prevprev;
+    Pval_prevprev = Pval_prev;
+    Pval_prev = Pval;
+  }
+  out[ix] = Pval;
+}

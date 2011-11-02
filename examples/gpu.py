@@ -11,9 +11,14 @@ from wavemoth import healpix
 from wavemoth.cl import ClLegendreKernel
 import wavemoth.cl.flatpyopencl as cl
 
+import socket
 
 for platform in cl.get_platforms():
-    if 'Intel' in platform.name:
+    if socket.gethostname() == 'dagss-laptop':
+        wanted = 'Intel'
+    else:
+        wanted = 'NVIDIA'
+    if wanted in platform.name:
         ctx = cl.Context(platform.get_devices())
 
 queue = cl.CommandQueue(ctx, 
@@ -26,7 +31,8 @@ m = 0
 lmax = 2 * nside
 odd = 0
 nvecs = 2
-nblocks = 10000
+nblocks = 1000
+repeat = 5
 
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
@@ -45,11 +51,14 @@ Lambda_1_cl = cl.to_device(queue, hrepeat(Lambda[1, :], nblocks))
 x_squared_cl = cl.to_device(queue, hrepeat(np.cos(thetas)**2, nblocks))
 out_cl = cl.zeros(queue, (Lambda.shape[0], nvecs, nblocks), dtype=np.double, order='F')
 
-kernel = ClLegendreKernel(ctx, nvecs=nvecs)
-e = kernel.transpose_legendre_transform(queue, m, m + odd, x_squared_cl, 
-                                        Lambda_0_cl, Lambda_1_cl, q_cl, out_cl)
-e.wait()
-dt = (e.profile.end - e.profile.start) * 1e-9
+times = []
+for rep in range(repeat):
+    kernel = ClLegendreKernel(ctx, nvecs=nvecs)
+    e = kernel.transpose_legendre_transform(queue, m, m + odd, x_squared_cl, 
+                                            Lambda_0_cl, Lambda_1_cl, q_cl, out_cl)
+    e.wait()
+    times.append((e.profile.end - e.profile.start) * 1e-9)
+dt = min(times)
 nk, nx = Lambda.shape
 matrix_elements = nblocks * nx * nk
 UOP = matrix_elements * (6 + 2 * nvecs)

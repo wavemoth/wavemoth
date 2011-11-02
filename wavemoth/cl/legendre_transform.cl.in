@@ -1,3 +1,5 @@
+#pragma OPENCL EXTENSION cl_khr_fp64: enable
+
 #define NVECS {{nvecs}}
 #define LOCAL_SIZE {{local_size}}
 #define tidx get_local_id(0)
@@ -15,7 +17,7 @@ inline unsigned long prod4_16(unsigned short a, unsigned short b,
 
 double get_c(unsigned short m, unsigned short l) {
   double num = prod4_16(l - m + 1, l - m + 2,
-                                 l + m + 1, l + m + 2);
+                        l + m + 1, l + m + 2);
   double den = prod4_16(2 * l + 1, 2 * l + 3,
                         2 * l + 3, 2 * l + 5);
   return sqrt(num / den);
@@ -29,7 +31,15 @@ double get_d(unsigned short m, unsigned short l) {
 
 
 /*****
- * Kernels
+ * Main code
+ *****/
+
+
+
+
+
+/*****
+ * Kernel entry points
  *****/
 
 kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
@@ -87,6 +97,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
       out[j * nk + k] = s;
     }
   }
+  barrier(CLK_LOCAL_MEM_FENCE);
 
   k = 1;
   for (int j = 0; j != NVECS; ++j) {
@@ -103,6 +114,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
       out[j * nk + k] = s;
     }
   }
+  barrier(CLK_LOCAL_MEM_FENCE);
 
 
   /* Recurrence */
@@ -140,23 +152,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
         out[j * nk + k] = s;
       }
     }
-
-    /*unsigned int stride = 2;
-    unsigned int stop = LOCAL_SIZE;
-    while (stride <= stop) {
-      if (tidx % stride == 0) {
-        for (int j = 0; j != NVECS; ++j) {
-          out_work[j * LOCAL_SIZE + tidx] += out_work[j * LOCAL_SIZE + tidx + (stride / 2)];
-        }
-      }
-      stride *= 2;
-      barrier(CLK_LOCAL_MEM_FENCE);
-    }
-    if (tidx == 0) {
-      for (int j = 0; j != NVECS; ++j) {
-        out[j * nx + ix] = out_work[j * LOCAL_SIZE];
-      }
-      }*/
+    barrier(CLK_LOCAL_MEM_FENCE);
   }
 
 }

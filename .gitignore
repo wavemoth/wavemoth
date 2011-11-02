@@ -47,3 +47,6 @@ c/legendre_transform.c
 
 # Common debug files
 *.s
+
+
+/wavemoth/cl/legendre_transform.cl

@@ -40,10 +40,19 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
                                          global double *out) {
   /* Local scratch */
   local double out_work[NVECS * LOCAL_SIZE]; /* shape=(NVECS, LOCAL_SIZE) */
-  
+
+  int iblock = get_global_id(0) / LOCAL_SIZE;
   int ix = get_local_id(0);
   double c, cp, cpp, d, dp, x, y;
   double Pval, Pval_prev, Pval_prevprev;
+  
+  /* Shift to our block */
+  x_squared += iblock * nx;
+  Lambda_0 += iblock * nx;
+  Lambda_1 += iblock * nx;
+  q += iblock * nx * NVECS;
+  out += iblock * nk * NVECS;
+
   double xsq_val = x_squared[ix];
 
   for (int i = 0; i != NVECS * LOCAL_SIZE; ++i) {

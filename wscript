@@ -26,6 +26,7 @@ def options(opt):
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
     opt.add_option('--no-openmp', action='store_true')
+    opt.add_option('--no-fftw3', action='store_true')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -200,11 +201,12 @@ def build(bld):
                 use='C99 RT PSHT OPENMP PERFTOOLS wavemoth',
                 features='cprogram c')
 
-    bld(source=['bench/fftbench.c'],
-        includes=['src'],
-        target='fftbench',
-        use='C99 RT FFTW3 OPENMP',
-        features='cprogram c')
+    if bld.env.USE_FFTW3:
+        bld(source=['bench/fftbench.c'],
+            includes=['src'],
+            target='fftbench',
+            use='C99 RT FFTW3 OPENMP',
+            features='cprogram c')
 
 from waflib.Configure import conf
 from os.path import join as pjoin
@@ -256,6 +258,9 @@ def check_fftw3(conf):
     """
     Settings for FFTW3
     """
+    conf.env.USE_FFTW3 = not conf.options.no_fftw3
+    if not conf.env.USE_FFTW3:
+        return
     conf.start_msg("Checking for FFTW3")
     conf.env.LIB_FFTW3 = ['fftw3', 'm']
     prefix = conf.options.with_fftw3

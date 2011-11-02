@@ -11,6 +11,7 @@ def options(opt):
     opt.load('compiler_fc')
     opt.load('python')
     opt.load('inplace', tooldir='tools')
+    opt.add_option('--no-butterfly', action='store_true', default=False)
     opt.add_option('--with-libpsht', help='path to libpsht to use for benchmark comparison '
                    '(NOTE: must be built with -fPIC)')
     opt.add_option('--with-fftw3', help='path to FFTW3 to use '
@@ -25,7 +26,6 @@ def options(opt):
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
     opt.add_option('--no-openmp', action='store_true')
-    opt.add_option('--butterfly-only', action='store_true')
 
 def configure(conf):
     conf.add_os_flags('PATH')
@@ -58,13 +58,14 @@ def configure(conf):
     conf.check_tool('inplace', tooldir='tools')
 
     # Libraries
-    if not conf.options.butterfly_only:
-        conf.check_libpsht()
-        conf.check_fftw3()
+    conf.env.BUILD_BUTTERFLY = not conf.options.no_butterfly
+    if conf.env.BUILD_BUTTERFLY:
         conf.check_google_perftools()
         conf.check_blas()
-        conf.check_numa()
-    conf.env.BUTTERFLY_ONLY = conf.options.butterfly_only
+
+    conf.check_libpsht()
+    conf.check_fftw3()
+    conf.check_numa()
 
     conf.env.LIB_RT = ['rt']
     conf.env.LIB_MATH = ['m']
@@ -86,29 +87,25 @@ def configure(conf):
 #    conf.env.INCLUDES_MKL = ['/opt/intel/mkl/include']
 
 def build(bld):
+    BUILD_BUTTERFLY = bld.env.BUILD_BUTTERFLY
     #
     # Main shared library
     #
-    bld(target='src/butterfly.h',
-        source=['src/butterfly.h.in'],
-        rule=run_tempita)
 
-    if bld.env.BUTTERFLY_ONLY:
-        bld(target='wavemoth',
-            source=['src/butterfly.c.in'],
-            includes=['src'],
-            use='C99',
-            features='c cshlib')
-    else:
+    if BUILD_BUTTERFLY:
+        bld(target='src/butterfly.h',
+            source=['src/butterfly.h.in'],
+            rule=run_tempita)
+        
         bld(target='wavemoth',
             source=['src/wavemoth.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
             includes=['src'],
             use='C99 BLAS FFTW3 OPENMP NUMA',
             features='c cshlib')
 
-    bld.add_manual_dependency(
-        bld.path.find_resource('src/butterfly.c.in'),
-        bld.path.find_resource('src/butterfly.h.in'))
+        bld.add_manual_dependency(
+            bld.path.find_resource('src/butterfly.c.in'),
+            bld.path.find_resource('src/butterfly.h.in'))
 
     #
     # Python wrappers
@@ -127,60 +124,60 @@ def build(bld):
         use='fcshlib NUMPY',
         features='fc c pyext cshlib')
 
-    bld(source=(['wavemoth/butterfly.pyx']),
-        includes=['src'],
-        target='butterfly',
-        use='NUMPY fcshlib wavemoth',
-        features='c pyext cshlib')
-
-    bld(source=(['wavemoth/butterflylib.pyx']),
-        includes=['src'],
-        target='butterflylib',
-        use='NUMPY fcshlib wavemoth',
-        features='c pyext cshlib')
-
-    # NOTE: BUTTERFLY_ONLY RETURNS HERE
-    if bld.env.BUTTERFLY_ONLY:
-        return
-
-    bld(source=(['wavemoth/lib.pyx']),
-        includes=['src'],
-        target='lib',
-        use='NUMPY wavemoth',
-        features='c fc pyext cshlib')
-    for x in ['src/wavemoth.h', 'src/butterfly.h.in']:
-        bld.add_manual_dependency(
-            bld.path.find_resource('wavemoth/lib.pyx'),
-            bld.path.find_resource(x))
-
-    bld(source=(['wavemoth/psht.pyx']),
-        target='psht',
-        use='NUMPY PSHT',
-        features='c pyext cshlib')
-
     bld(source=(['wavemoth/_openmp.pyx']),
         target='_openmp',
         use='OPENMP',
         features='c pyext cshlib')
 
-    bld(source=(['wavemoth/blas.pyx']),
-        includes=['src'],
-        target='blas',
-        use='NUMPY BLAS',
-        features='c pyext cshlib')
-    bld.add_manual_dependency(
-        bld.path.find_resource('wavemoth/blas.pyx'),
-        bld.path.find_resource('src/blas.h'))
+    if bld.env.USE_PSHT:
+        bld(source=(['wavemoth/psht.pyx']),
+            target='psht',
+            use='NUMPY PSHT',
+            features='c pyext cshlib')
+
+    if BUILD_BUTTERFLY:
+        bld(source=(['wavemoth/butterfly.pyx']),
+            includes=['src'],
+            target='butterfly',
+            use='NUMPY fcshlib wavemoth',
+            features='c pyext cshlib')
+
+        bld(source=(['wavemoth/butterflylib.pyx']),
+            includes=['src'],
+            target='butterflylib',
+            use='NUMPY fcshlib wavemoth',
+            features='c pyext cshlib')
+
+        bld(source=(['wavemoth/lib.pyx']),
+            includes=['src'],
+            target='lib',
+            use='NUMPY wavemoth',
+            features='c fc pyext cshlib')
+        for x in ['src/wavemoth.h', 'src/butterfly.h.in']:
+            bld.add_manual_dependency(
+                bld.path.find_resource('wavemoth/lib.pyx'),
+                bld.path.find_resource(x))
+
+    if bld.env.USE_BLAS:
+        bld(source=(['wavemoth/blas.pyx']),
+            includes=['src'],
+            target='blas',
+            use='NUMPY BLAS',
+            features='c pyext cshlib')
+        bld.add_manual_dependency(
+            bld.path.find_resource('wavemoth/blas.pyx'),
+            bld.path.find_resource('src/blas.h'))
 
     #
     # Standalone C programs
     #
 
-    bld(source=['bench/cpubench.c'],
-        includes=['src'],
-        target='cpubench',
-        use='C99 BLAS OPENMP',
-        features='cprogram c')
+    if bld.env.USE_BLAS:
+        bld(source=['bench/cpubench.c'],
+            includes=['src'],
+            target='cpubench',
+            use='C99 BLAS OPENMP',
+            features='cprogram c')
 
     bld(source=['bench/numabench.c'],
         includes=['src', 'bench'],
@@ -188,25 +185,26 @@ def build(bld):
         use='C99 RT MATH NUMA',
         features='cprogram c')
 
-    bld(source=['bench/shbench.c'],
-        includes=['src'],
-        target='shbench',
-        use='C99 RT PSHT OPENMP NUMA wavemoth',
-        features='cprogram c')
+    if BUILD_BUTTERFLY:
+        bld(source=['bench/shbench.c'],
+            includes=['src'],
+            target='shbench',
+            use='C99 RT PSHT OPENMP NUMA wavemoth',
+            features='cprogram c')
+
+        if bld.env.HAS_PERFTOOLS:
+            bld(source=(['bench/shbench.c']),
+                includes=['src'],
+                install_path='bin',
+                target='shbench-prof',
+                use='C99 RT PSHT OPENMP PERFTOOLS wavemoth',
+                features='cprogram c')
 
     bld(source=['bench/fftbench.c'],
         includes=['src'],
         target='fftbench',
         use='C99 RT FFTW3 OPENMP',
         features='cprogram c')
-
-    if bld.env.HAS_PERFTOOLS:
-        bld(source=(['bench/shbench.c']),
-            includes=['src'],
-            install_path='bin',
-            target='shbench-prof',
-            use='C99 RT PSHT OPENMP PERFTOOLS wavemoth',
-            features='cprogram c')
 
 from waflib.Configure import conf
 from os.path import join as pjoin
@@ -219,13 +217,16 @@ def check_libpsht(conf):
     conf.start_msg("Checking for libpsht")
     prefix = conf.options.with_libpsht
     if not prefix:
-        conf.fatal("--with-libpsht not used (FIXME)")
+        conf.env.USE_PSHT = False
+        conf.end_msg("(not present, building without)")
+        return
     conf.env.LIB_PSHT = ['psht', 'fftpack', 'c_utils']
     conf.env.LINKFLAGS_PSHT = ['-fopenmp']
     conf.env.LIBPATH_PSHT = [pjoin(prefix, 'lib')]
     conf.env.INCLUDES_PSHT = [pjoin(prefix, 'include')]
+    conf.env.CFLAGS_PSHT = ['-DWITH_LIBPSHT']
     if conf.options.patched_libpsht:
-        conf.env.CFLAGS_PSHT = ['-DPATCHED_LIBPSHT=1']
+        conf.env.CFLAGS_PSHT += ['-DPATCHED_LIBPSHT=1']
     # Check presence of libpsht in general
     cfrag = dedent('''\
     #include <psht.h>
@@ -283,6 +284,7 @@ def check_blas(conf):
     """
     Settings for BLAS
     """
+    conf.env.USE_BLAS = True
     conf.start_msg("Checking for BLAS")
     path = []
     if conf.options.with_acml_lib:

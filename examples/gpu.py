@@ -16,8 +16,11 @@ import socket
 for platform in cl.get_platforms():
     if socket.gethostname() == 'dagss-laptop':
         wanted = 'Intel'
+        nblocks = 500
     else:
         wanted = 'NVIDIA'
+        nblocks = 5000
+
     if wanted in platform.name:
         ctx = cl.Context(platform.get_devices())
 
@@ -31,8 +34,7 @@ m = 0
 lmax = 2 * nside
 odd = 0
 nvecs = 2
-nblocks = 1000
-repeat = 5
+repeat = 10
 
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
@@ -58,11 +60,13 @@ for rep in range(repeat):
                                             Lambda_0_cl, Lambda_1_cl, q_cl, out_cl)
     e.wait()
     times.append((e.profile.end - e.profile.start) * 1e-9)
+
 dt = min(times)
+
 nk, nx = Lambda.shape
 matrix_elements = nblocks * nx * nk
 UOP = matrix_elements * (6 + 2 * nvecs)
-print UOP / dt / 1e9, 'GUOP/s'
+print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
 
 a = out_cl.get()
 assert np.all(a[:, :, 0:1] == a)

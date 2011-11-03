@@ -2,7 +2,8 @@
 
 #define NVECS {{nvecs}}
 #define LOCAL_SIZE {{local_size}}
-#define tidx get_local_id(0)
+#define APPROXIMATE_AUX 1
+#define ithread get_local_id(0)
 
 /*****
  * Utilities
@@ -15,12 +16,32 @@ inline unsigned long prod4_16(unsigned short a, unsigned short b,
   return (unsigned long)((unsigned int)a * b) * ((unsigned int)c * d);
 }
 
+double get_c_squared_num(unsigned short m, unsigned short l) {
+  return prod4_16(l - m + 1, l - m + 2,
+                  l + m + 1, l + m + 2);
+}
+
+double get_c_squared_den(unsigned short m, unsigned short l) {
+  return prod4_16(2 * l + 1, 2 * l + 3,
+                  2 * l + 3, 2 * l + 5);
+}
+
 double get_c(unsigned short m, unsigned short l) {
-  double num = prod4_16(l - m + 1, l - m + 2,
-                        l + m + 1, l + m + 2);
-  double den = prod4_16(2 * l + 1, 2 * l + 3,
-                        2 * l + 3, 2 * l + 5);
-  return sqrt(num / den);
+  /* A reciprocial square-root of the inverse whould be faster,
+     but cost 1 ulp precision, and this step is very amortized. */
+#if APPROXIMATE_AUX
+  return rsqrt(get_c_squared_den(m, l) / get_c_squared_num(m, l));
+#else
+  return sqrt(get_c_squared_num(m, l) / get_c_squared_den(m, l));
+#endif
+}
+
+double get_c_inv(unsigned short m, unsigned short l) {
+#if APPROXIMATE_AUX
+  return rsqrt(get_c_squared_num(m, l) / get_c_squared_den(m, l));
+#else
+  return sqrt(get_c_squared_den(m, l) / get_c_squared_num(m, l));
+#endif
 }
 
 double get_d(unsigned short m, unsigned short l) {
@@ -34,7 +55,20 @@ double get_d(unsigned short m, unsigned short l) {
  * Main code
  *****/
 
+void compute_recurrence_auxiliaries(int m, int lmin, int nk,
+                                    local double *alpha,
+                                    local double *beta,
+                                    local double *gamma) {
+  if (ithread >= nk) return;
+  int l = lmin + 2 * ithread;
 
+  alpha[ithread] = -get_d(m, l - 2);
+
+  double cpp = get_c(m, l - 4);
+  double cp_inv = get_c_inv(m, l - 2);
+  beta[ithread] = cp_inv;
+  gamma[ithread] = -cpp * cp_inv;
+}
 
 
 
@@ -50,10 +84,10 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
                                          global double *out) {
   /* Local scratch */
   local double out_work[NVECS * LOCAL_SIZE]; /* shape=(NVECS, LOCAL_SIZE) */
+  local double alpha[LOCAL_SIZE], beta[LOCAL_SIZE], gamma[LOCAL_SIZE];
 
   int iblock = get_global_id(0) / LOCAL_SIZE;
   int ix = get_local_id(0);
-  double c, cp, cpp, d, dp, x, y;
   double Pval, Pval_prev, Pval_prevprev;
   
   /* Shift to our block */
@@ -63,6 +97,10 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
   q += iblock * nx * NVECS;
   out += iblock * nk * NVECS;
 
+  /* Compute auxiliaries */
+  compute_recurrence_auxiliaries(m, lmin, nk, alpha, beta, gamma);
+  barrier(CLK_LOCAL_MEM_FENCE);
+
   double xsq_val = x_squared[ix];
 
   for (int i = 0; i != NVECS * LOCAL_SIZE; ++i) {
@@ -70,10 +108,6 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
   }
   barrier(CLK_LOCAL_MEM_FENCE);
       
-  cpp = get_c(m, lmin);
-  cp = get_c(m, lmin + 2);
-  dp = get_d(m, lmin + 2);
-
   Pval_prevprev = Lambda_0[ix];
   Pval_prev = Lambda_1[ix];
   Pval = Pval_prev;
@@ -84,11 +118,11 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
   /* Matvec row 0  */
   k = 0;
   for (int j = 0; j != NVECS; ++j) {
-    out_work[j * LOCAL_SIZE + tidx] = Pval_prevprev * q[j * nx + ix];
+    out_work[j * LOCAL_SIZE + ithread] = Pval_prevprev * q[j * nx + ix];
   }    
   /* Then a very stupid reduction */
   barrier(CLK_LOCAL_MEM_FENCE);
-  if (tidx == 0) {
+  if (ithread == 0) {
     for (int j = 0; j != NVECS; ++j) {
       double s = 0;
       for (int t = 0; t != LOCAL_SIZE; ++t) {
@@ -101,11 +135,11 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
 
   k = 1;
   for (int j = 0; j != NVECS; ++j) {
-    out_work[j * LOCAL_SIZE + tidx] = Pval_prev * q[j * nx + ix];
+    out_work[j * LOCAL_SIZE + ithread] = Pval_prev * q[j * nx + ix];
   }    
   /* Then a very stupid reduction */
   barrier(CLK_LOCAL_MEM_FENCE);
-  if (tidx == 0) {
+  if (ithread == 0) {
     for (int j = 0; j != NVECS; ++j) {
       double s = 0;
       for (int t = 0; t != LOCAL_SIZE; ++t) {
@@ -120,30 +154,18 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
   /* Recurrence */
 
   for (int k = 2; k != nk; ++k) {
-    /* Compute auxiliary scalars */
-    c = get_c(m, lmin + 2 * k);
-    d = get_d(m, lmin + 2 * k);
-    
-    double alpha = -dp;
-    double beta = 1 / cp;
-    double gamma = -cpp / cp;
-
-    cpp = cp;
-    cp = c;
-    dp = d;
-
     /* Do recurrence */
-    Pval = (xsq_val + alpha) * beta * Pval_prev + gamma * Pval_prevprev;
+    Pval = (xsq_val + alpha[k]) * beta[k] * Pval_prev + gamma[k] * Pval_prevprev;
     Pval_prevprev = Pval_prev;
     Pval_prev = Pval;
 
     /* Do matvec: First compute our contribution... */
     for (int j = 0; j != NVECS; ++j) {
-      out_work[j * LOCAL_SIZE + tidx] = Pval * q[j * nx + ix];
+      out_work[j * LOCAL_SIZE + ithread] = Pval * q[j * nx + ix];
     }    
     /* Then a very stupid reduction */
     barrier(CLK_LOCAL_MEM_FENCE);
-    if (tidx == 0) {
+    if (ithread == 0) {
       for (int j = 0; j != NVECS; ++j) {
         double s = 0;
         for (int t = 0; t != LOCAL_SIZE; ++t) {

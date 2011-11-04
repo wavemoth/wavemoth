@@ -1,13 +1,46 @@
+{{py:
+def log2(x):
+    r = -1
+    while x != 0:
+        x //= 2
+        r += 1
+    return r
+}}
+
 #pragma OPENCL EXTENSION cl_khr_fp64: enable
 
 #define NVECS {{nvecs}}
-#define LOCAL_SIZE {{local_size}}
+#define NTHREADS {{local_size}}
 #define APPROXIMATE_AUX 1
-#define ithread get_local_id(0)
+#define MAX_NI 128
+#define WARP_SIZE {{warp_size}}
+#define NWARPS {{local_size // warp_size}}
+
+/* Cast get_local_id(0) to int to make it easier to printf, as all
+   our integers are then 32-bit. */
+#define ithread ((int)get_local_id(0))
+#define iwarp (ithread / WARP_SIZE)
+
+{{if has_warps}}
+#define WARP_BARRIER() 
+{{else}}
+#define WARP_BARRIER() barrier(CLK_LOCAL_MEM_FENCE)
+{{endif}}
+
+
 
 /*****
  * Utilities
  *****/
+
+void print_array(constant const char *msg, local double* arr, int len) {
+  int i;
+  printf("%s ", msg);
+  for (i = 0; i != len; ++i) {
+    printf("%e ", arr[i]);
+  }
+  printf("\n");
+}
 
 
 /* Multiply four 16-bit ints and produce 64-bit result safely. */
@@ -15,6 +48,11 @@ inline unsigned long prod4_16(unsigned short a, unsigned short b,
                               unsigned short c, unsigned short d) {
   return (unsigned long)((unsigned int)a * b) * ((unsigned int)c * d);
 }
+
+
+/*****
+ * Auxiliary value computation
+ *****/
 
 double get_c_squared_num(unsigned short m, unsigned short l) {
   return prod4_16(l - m + 1, l - m + 2,
@@ -50,11 +88,6 @@ double get_d(unsigned short m, unsigned short l) {
   return num / den;
 }
 
-
-/*****
- * Main code
- *****/
-
 void compute_recurrence_auxiliaries(int m, int lmin, int nk,
                                     local double *alpha,
                                     local double *beta,
@@ -70,111 +103,182 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
   gamma[ithread] = -cpp * cp_inv;
 }
 
+/*****
+ * Main code
+ *****/
 
+/* Do a dot product of the 1D vector P with NVECS vectors
+   stored in q, and simultaneously copy P into local memory
+   P_local. */
+{{for spec, suffix, scope in [('kernel', '_kernel', 'global'),
+                              ('', '', 'local')]}}
+{{spec}} void dot_and_copy{{suffix}}(global const double *P,
+                                     global const double *q,
+                                     {{scope}} double *P_local,
+                                     {{scope}} double *work_sum,
+                                     int ni) {
+  double s[NVECS];
+  for (int j = 0; j != NVECS; ++j) {
+    s[j] = 0;
+  }
+  for (int i = ithread; i < ni; i += NTHREADS) {
+    double Pval = P[i];
+    P_local[i] = Pval;
+    for (int j = 0; j != NVECS; ++j) {
+      s[j] += Pval * q[j * ni + i];
+    }
+  }
+  for (int j = 0; j != NVECS; ++j) {
+    work_sum[j * NTHREADS + ithread] = s[j];
+  }
+}
+{{endfor}}
+
+/* values is a buffer of size NVECS * NTHREADS. After the return,
+   the sum of the values is in `values[j * NTHREADS + w * WARP_SIZE]`
+   for j = 0..NVECS-1, w = 0..WARP_SIZE-1. */
+void warp_sum_reduce(local double *values) {
+  WARP_BARRIER();
+  {{for p in range(log2(warp_size))}}
+  {{py:stride = 2**p}}
+  if (ithread % {{2 * stride}} == 0) {
+    /* TODO: Use parallelism to work on multiple vectors in parallel... */
+    for (int j = 0; j != NVECS; ++j) {
+      values[j * NTHREADS + ithread] += 
+        values[j * NTHREADS + ithread + {{stride}}];
+    }
+  }
+  WARP_BARRIER();
+  {{endfor}}
+}
 
 /*****
  * Kernel entry points
  *****/
 
-kernel void transpose_legendre_transform(int m, int lmin, int nk, int nx,
+kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                          global const double *x_squared,
                                          global const double *Lambda_0,
                                          global const double *Lambda_1,
                                          global const double *q,
                                          global double *out) {
-  /* Local scratch */
-  local double out_work[NVECS * LOCAL_SIZE]; /* shape=(NVECS, LOCAL_SIZE) */
-  local double alpha[LOCAL_SIZE], beta[LOCAL_SIZE], gamma[LOCAL_SIZE];
+  /* Local scratch. We process NTHREADS rows for each batch (and then
+     start again to reuse the scratch buffers). */
 
-  int iblock = get_global_id(0) / LOCAL_SIZE;
+  /* Buffer for temporarily storing Legendre function values */
+  local double work_P_a[MAX_NI], work_P_b[MAX_NI];
+
+  /* Simple scratch for auxiliary values */
+  local double alpha[NTHREADS], beta[NTHREADS], gamma[NTHREADS];
+
+  /* Buffer for sum-reduction. We use the one column padding trick to avoid
+     memory bank conflicts. See work_sum_idx for indexing.
+  */
+
+  local double work_local_sum[NWARPS * (NTHREADS + 1) * NVECS];
+  local double work_warp_sum[NTHREADS * NVECS];
+
+  if (get_local_size(0) != NTHREADS) {
+    printf("Assertion get_local_size(0) == NTHREADS failed\n");
+    printf("FAIL %d", *(int*)0);
+  }
+
+  int iblock = get_global_id(0) / NTHREADS;
   int ix = get_local_id(0);
   double Pval, Pval_prev, Pval_prevprev;
-  
+
+  local double *Lambda_prev, *Lambda_prevprev;
+
+  /* ni_thread is the number of x's this thread should deal with */
+  int ni_thread = ni / NTHREADS;
+  if (ithread < (ni % NTHREADS)) {
+    ni_thread++;
+  }
+
   /* Shift to our block */
-  x_squared += iblock * nx;
-  Lambda_0 += iblock * nx;
-  Lambda_1 += iblock * nx;
-  q += iblock * nx * NVECS;
+  x_squared += iblock * ni;
+  Lambda_0 += iblock * ni;
+  Lambda_1 += iblock * ni;
+  q += iblock * ni * NVECS;
   out += iblock * nk * NVECS;
 
   /* Compute auxiliaries */
   compute_recurrence_auxiliaries(m, lmin, nk, alpha, beta, gamma);
   barrier(CLK_LOCAL_MEM_FENCE);
 
-  double xsq_val = x_squared[ix];
 
-  for (int i = 0; i != NVECS * LOCAL_SIZE; ++i) {
-    out_work[i] = -1;
-  }
-  barrier(CLK_LOCAL_MEM_FENCE);
-      
-  Pval_prevprev = Lambda_0[ix];
-  Pval_prev = Lambda_1[ix];
-  Pval = Pval_prev;
-
-  int k;
-  /* Handle matvec of first two rows */
-
-  /* Matvec row 0  */
-  k = 0;
-  for (int j = 0; j != NVECS; ++j) {
-    out_work[j * LOCAL_SIZE + ithread] = Pval_prevprev * q[j * nx + ix];
-  }    
-  /* Then a very stupid reduction */
-  barrier(CLK_LOCAL_MEM_FENCE);
-  if (ithread == 0) {
+  /* First two rows are special as they are dot products. Each thread
+     only stores values for its own local consumption, so no need for
+     barrier. */
+  dot_and_copy(Lambda_0, q, work_P_a, work_warp_sum, ni);
+  warp_sum_reduce(work_warp_sum);
+  if (ithread % WARP_SIZE == 0) {
     for (int j = 0; j != NVECS; ++j) {
-      double s = 0;
-      for (int t = 0; t != LOCAL_SIZE; ++t) {
-        s += out_work[j * LOCAL_SIZE + t];
-      }
-      out[j * nk + k] = s;
+      work_local_sum[j * NWARPS * (NTHREADS + 1) + iwarp * (NTHREADS + 1) + 0] =
+        work_warp_sum[j * NTHREADS + ithread];
     }
   }
-  barrier(CLK_LOCAL_MEM_FENCE);
-
-  k = 1;
-  for (int j = 0; j != NVECS; ++j) {
-    out_work[j * LOCAL_SIZE + ithread] = Pval_prev * q[j * nx + ix];
-  }    
-  /* Then a very stupid reduction */
-  barrier(CLK_LOCAL_MEM_FENCE);
-  if (ithread == 0) {
+  dot_and_copy(Lambda_1, q, work_P_b, work_warp_sum, ni);
+  warp_sum_reduce(work_warp_sum);
+  if (ithread % WARP_SIZE == 0) {
     for (int j = 0; j != NVECS; ++j) {
-      double s = 0;
-      for (int t = 0; t != LOCAL_SIZE; ++t) {
-        s += out_work[j * LOCAL_SIZE + t];
-      }
-      out[j * nk + k] = s;
+      work_local_sum[j * NWARPS * (NTHREADS + 1) + iwarp * (NTHREADS + 1) + 1] =
+        work_warp_sum[j * NTHREADS + ithread];
     }
   }
-  barrier(CLK_LOCAL_MEM_FENCE);
 
+  Lambda_prevprev = work_P_a;
+  Lambda_prev = work_P_b;
+  /* TODO: Support something besides square matrices */
 
-  /* Recurrence */
-
+  double acc[NVECS];
+  for (int j = 0; j != NVECS; ++j) {
+    acc[j] = 0;
+  }
   for (int k = 2; k != nk; ++k) {
-    /* Do recurrence */
-    Pval = (xsq_val + alpha[k]) * beta[k] * Pval_prev + gamma[k] * Pval_prevprev;
+    /* recurrence */
+    Pval = (x_squared[ithread] + alpha[k]) * beta[k] * Pval_prev + gamma[k] * Pval_prevprev;
     Pval_prevprev = Pval_prev;
     Pval_prev = Pval;
 
-    /* Do matvec: First compute our contribution... */
+    /* matvec */
     for (int j = 0; j != NVECS; ++j) {
-      out_work[j * LOCAL_SIZE + ithread] = Pval * q[j * nx + ix];
+      acc[j] += Pval * q[j * ni + ix];
     }    
-    /* Then a very stupid reduction */
-    barrier(CLK_LOCAL_MEM_FENCE);
-    if (ithread == 0) {
+
+    /* Before heading to the next row, we do a within-warp reduction. This
+       in necesarry lest work_local_sum becomes too big. */
+    for (int j = 0; j != NVECS; ++j) {
+      work_warp_sum[j * NTHREADS + ithread] = acc[j];
+    }
+    warp_sum_reduce(work_warp_sum);
+    if (ithread % WARP_SIZE == 0) {
       for (int j = 0; j != NVECS; ++j) {
-        double s = 0;
-        for (int t = 0; t != LOCAL_SIZE; ++t) {
-          s += out_work[j * LOCAL_SIZE + t];
-        }
-        out[j * nk + k] = s;
+        work_local_sum[j * NWARPS * (NTHREADS + 1) + iwarp * (NTHREADS + 1) + k] =
+          work_warp_sum[j * NTHREADS + ithread];
       }
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
+  }
+
+  /* Reduce across work_local_sum. Let k=ithread,
+     and have each thread iterate over the iwarp index in work_local_sum
+  */
+  barrier(CLK_LOCAL_MEM_FENCE);
+  /*  if (ithread == 0 && iblock == 0) {
+    print_array("work_local_sum", work_local_sum, NWARPS * (NTHREADS + 1) * NVECS);
+    }*/
+  for (int j = 0; j != NVECS; ++j) {
+    double s = 0;
+    for (int t = 0; t != NWARPS; ++t) {
+      //      printf(":: %d %d\n", (int)(j * NWARPS * (NTHREADS + 1) + t * (NTHREADS + 1) + ithread),
+      //     (int)(NWARPS * (NTHREADS + 1) * NVECS));
+      /*      printf("%d of %d - %d %d %d %d @%d@\n",
+             j * NWARPS * (NTHREADS + 1) + t * (NTHREADS + 1) + ithread,
+             NWARPS * (NTHREADS + 1) * NVECS, NWARPS, NTHREADS, WARP_SIZE, NVECS,
+             NWARPS * (NTHREADS + 1) * NVECS);*/
+      s += work_local_sum[j * NWARPS * (NTHREADS + 1) + t * (NTHREADS + 1) + ithread];
+    }
+    out[j * nk + ithread] = s;
   }
 
 }

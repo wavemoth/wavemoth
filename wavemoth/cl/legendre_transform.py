@@ -7,7 +7,7 @@ from . import core
 
 def check_arrays(args):
     for array, ndim in args:
-        if not isinstance(array, cl.array.Array):
+        if not isinstance(array, cl.Array):
             raise TypeError('pyopencl.array.Array expected')
         if len(array.shape) != ndim:
             raise ValueError('array has wrong number of dimensions')
@@ -84,7 +84,7 @@ class ClLegendreKernel(object):
         if not (nx == Lambda_0.shape[0] == Lambda_1.shape[0] == x_squared.shape[0]):
             raise ValueError('Lambda_0 and/or Lambda_1 and/or x_squared has wrong shape')
 
-        assert self.nx == self.nk == self.nthreads
+        assert nx == nk == self.nthreads
 
         return self._transpose_legendre_transform(
             queue, (nblocks * self.nthreads,), (self.nthreads,),

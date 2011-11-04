@@ -42,6 +42,15 @@ void print_array(constant const char *msg, local double* arr, int len) {
   printf("\n");
 }
 
+void print_array_glob(constant const char *msg, global double* arr, int len) {
+  int i;
+  printf("%s ", msg);
+  for (i = 0; i != len; ++i) {
+    printf("%e ", arr[i]);
+  }
+  printf("\n");
+}
+
 
 /* Multiply four 16-bit ints and produce 64-bit result safely. */
 inline unsigned long prod4_16(unsigned short a, unsigned short b,
@@ -184,7 +193,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
      memory bank conflicts. See work_sum_idx for indexing.
   */
 
-  local double work_local_sum[NWARPS * (NTHREADS + 1) * NVECS];
+  local double work_local_sum[NWARPS * NTHREADS * NVECS];
   local double work_warp_sum[NTHREADS * NVECS];
 
   if (get_local_size(0) != NTHREADS) {
@@ -215,7 +224,6 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   compute_recurrence_auxiliaries(m, lmin, nk, alpha, beta, gamma);
   barrier(CLK_LOCAL_MEM_FENCE);
 
-
   /* First two rows are special as they are dot products. Each thread
      only stores values for its own local consumption, so no need for
      barrier. */
@@ -226,13 +234,18 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
 
   Lambda_prevprev = work_P_a;
   Lambda_prev = work_P_b;
+
+  Pval_prevprev = Lambda_0[ithread];
+  Pval_prev = Lambda_1[ithread];
+
   /* TODO: Support something besides square matrices */
 
   double acc[NVECS];
-  for (int j = 0; j != NVECS; ++j) {
-    acc[j] = 0;
-  }
   for (int k = 2; k != nk; ++k) {
+    for (int j = 0; j != NVECS; ++j) {
+      acc[j] = 0;
+    }
+
     /* recurrence */
     Pval = (x_squared[ithread] + alpha[k]) * beta[k] * Pval_prev + gamma[k] * Pval_prevprev;
     Pval_prevprev = Pval_prev;
@@ -255,19 +268,16 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
      and have each thread iterate over the iwarp index in work_local_sum
   */
   barrier(CLK_LOCAL_MEM_FENCE);
-  /*  if (ithread == 0 && iblock == 0) {
-    print_array("work_local_sum", work_local_sum, NWARPS * (NTHREADS + 1) * NVECS);
-    }*/
+
+  local double *sum_per_warp_for_k = work_local_sum + ithread * (NWARPS * NVECS);
+
+  if (ithread == 2 && iblock == 0) {
+    print_array("work_local_sum", sum_per_warp_for_k, NWARPS * NVECS);
+  }
   for (int j = 0; j != NVECS; ++j) {
     double s = 0;
     for (int t = 0; t != NWARPS; ++t) {
-      //      printf(":: %d %d\n", (int)(j * NWARPS * (NTHREADS + 1) + t * (NTHREADS + 1) + ithread),
-      //     (int)(NWARPS * (NTHREADS + 1) * NVECS));
-      /*      printf("%d of %d - %d %d %d %d @%d@\n",
-             j * NWARPS * (NTHREADS + 1) + t * (NTHREADS + 1) + ithread,
-             NWARPS * (NTHREADS + 1) * NVECS, NWARPS, NTHREADS, WARP_SIZE, NVECS,
-             NWARPS * (NTHREADS + 1) * NVECS);*/
-      s += work_local_sum[j * NWARPS * (NTHREADS + 1) + t * (NTHREADS + 1) + ithread];
+      s += sum_per_warp_for_k[j * NWARPS + t];
     }
     out[j * nk + ithread] = s;
   }

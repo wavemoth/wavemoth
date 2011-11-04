@@ -31,7 +31,7 @@ queue = cl.CommandQueue(ctx,
 
 
 # Compute Lambda
-nside = 128
+nside = 32
 m = 0
 lmax = 2 * nside
 odd = 0
@@ -40,7 +40,7 @@ repeat = 1
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
-Lambda = Lambda[:, :Lambda.shape[0]]
+Lambda = Lambda[:nside,:nside]#print Lambda.shape
 
 for nvecs in [2]:
     def hrepeat(x, n):
@@ -53,7 +53,7 @@ for nvecs in [2]:
     Lambda_0_cl = cl.to_device(queue, hrepeat(Lambda[0, :], nblocks))
     Lambda_1_cl = cl.to_device(queue, hrepeat(Lambda[1, :], nblocks))
     x_squared_cl = cl.to_device(queue,
-                                hrepeat(np.cos(thetas)**2, nblocks)[:Lambda.shape[1], :].copy('C'))
+                                hrepeat(np.cos(thetas)**2, nblocks)[:Lambda.shape[1], :].copy('F'))
     out_cl = cl.zeros(queue, (Lambda.shape[0], nvecs, nblocks), dtype=np.double, order='F')
 
     times = []
@@ -75,13 +75,12 @@ for nvecs in [2]:
 
 a = out_cl.get()
 if not np.all(a[:, :, 0:1] == a):
-    print 'NOT ALL j EQUAL!'
+    print 'NOT ALL j EQUAL!:', np.linalg.norm(a[:, :, 0:1] - a)
 a = a[:, :, 0]
 
 a0 = np.dot(Lambda, q[:, :, 0])
 
-print np.hstack([a, a0])
-
+#print np.hstack([a, a0])
 print la.norm(a - a0)
 
 #plt.clf()

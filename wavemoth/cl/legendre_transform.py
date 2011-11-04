@@ -52,14 +52,16 @@ class ClLegendreKernel(object):
         each round through global memory
     
     """
-    def __init__(self, ctx, nvecs, nthreads, **args):
+    
+    def __init__(self, ctx, nvecs, nthreads, warp_size=32, **args):
         self.nthreads = nthreads
         self.nvecs = nvecs
+        self.warp_size = 32
 
         code = core.instantiate_template('legendre_transform.cl.in',
                                          nvecs=nvecs,
                                          local_size=nthreads,
-                                         warp_size=32,
+                                         warp_size=self.warp_size,
                                          **args)
         self.prg = cl.Program(ctx, code).build()
         self._transpose_legendre_transform = self.prg.transpose_legendre_transform
@@ -94,3 +96,7 @@ class ClLegendreKernel(object):
         self.prg.dot_and_copy_kernel(queue, (self.nthreads,), (self.nthreads,),
                                      P.data, q.data, P_local.data, work_sum.data,
                                      np.int32(P.shape[0]))
+    @convertargs()
+    def warp_sum_reduce(self, queue, thread_sum, warp_sum):
+        self.prg.warp_sum_reduce_kernel(queue, (self.nthreads,), (self.nthreads,),
+                                        thread_sum.data, warp_sum.data)

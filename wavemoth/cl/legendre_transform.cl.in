@@ -134,24 +134,33 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
 }
 {{endfor}}
 
-/* values is a buffer of size NVECS * NTHREADS. After the return,
-   the sum of the values is in `values[j * NTHREADS + w * WARP_SIZE]`
-   for j = 0..NVECS-1, w = 0..WARP_SIZE-1. */
-void warp_sum_reduce(local double *values) {
+/* thread_sums[j, ithread] is summed over the threads in each warp and
+   result placed in warp_sums[j, iwarp].
+   Contents of thread_sums is destructed in the process. */
+{{for spec, suffix, scope in [('kernel', '_kernel', 'global'),
+                              ('', '', 'local')]}}
+{{spec}} void warp_sum_reduce{{suffix}}({{scope}} double *thread_sums,
+                                        {{scope}} double *warp_sums) {
+    /* TODO: Use parallelism to work on multiple vectors in parallel... */
   WARP_BARRIER();
   {{for p in range(log2(warp_size))}}
   {{py:stride = 2**p}}
   if (ithread % {{2 * stride}} == 0) {
-    /* TODO: Use parallelism to work on multiple vectors in parallel... */
     for (int j = 0; j != NVECS; ++j) {
-      values[j * NTHREADS + ithread] += 
-        values[j * NTHREADS + ithread + {{stride}}];
+      {{if 2 * stride == warp_size}}
+      {{# Write to warp_sums }}
+      warp_sums[j * NWARPS + iwarp] = (thread_sums[j * NTHREADS + ithread] +
+                                       thread_sums[j * NTHREADS + ithread + {{stride}}]);
+      {{else}}
+      {{# Write temporary result to thread_sums}}
+      thread_sums[j * NTHREADS + ithread] += thread_sums[j * NTHREADS + ithread + {{stride}}];
+    {{endif}}
     }
   }
   WARP_BARRIER();
   {{endfor}}
 }
-
+{{endfor}}
 /*****
  * Kernel entry points
  *****/
@@ -211,21 +220,9 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
      only stores values for its own local consumption, so no need for
      barrier. */
   dot_and_copy(Lambda_0, q, work_P_a, work_warp_sum, ni);
-  warp_sum_reduce(work_warp_sum);
-  if (ithread % WARP_SIZE == 0) {
-    for (int j = 0; j != NVECS; ++j) {
-      work_local_sum[j * NWARPS * (NTHREADS + 1) + iwarp * (NTHREADS + 1) + 0] =
-        work_warp_sum[j * NTHREADS + ithread];
-    }
-  }
+  warp_sum_reduce(work_warp_sum, work_local_sum + 0 * (NWARPS * NVECS));
   dot_and_copy(Lambda_1, q, work_P_b, work_warp_sum, ni);
-  warp_sum_reduce(work_warp_sum);
-  if (ithread % WARP_SIZE == 0) {
-    for (int j = 0; j != NVECS; ++j) {
-      work_local_sum[j * NWARPS * (NTHREADS + 1) + iwarp * (NTHREADS + 1) + 1] =
-        work_warp_sum[j * NTHREADS + ithread];
-    }
-  }
+  warp_sum_reduce(work_warp_sum, work_local_sum + 1 * (NWARPS * NVECS));
 
   Lambda_prevprev = work_P_a;
   Lambda_prev = work_P_b;
@@ -251,13 +248,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     for (int j = 0; j != NVECS; ++j) {
       work_warp_sum[j * NTHREADS + ithread] = acc[j];
     }
-    warp_sum_reduce(work_warp_sum);
-    if (ithread % WARP_SIZE == 0) {
-      for (int j = 0; j != NVECS; ++j) {
-        work_local_sum[j * NWARPS * (NTHREADS + 1) + iwarp * (NTHREADS + 1) + k] =
-          work_warp_sum[j * NTHREADS + ithread];
-      }
-    }
+    warp_sum_reduce(work_warp_sum, work_local_sum + k * (NWARPS * NVECS));
   }
 
   /* Reduce across work_local_sum. Let k=ithread,

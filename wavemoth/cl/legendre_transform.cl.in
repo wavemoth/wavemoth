@@ -219,13 +219,13 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   /* First two rows are special as they are dot products. Each thread
      only stores values for its own local consumption, so no need for
      barrier. */
-  dot_and_copy(Lambda_0, q, work_Lambda_a, work_warp_sum, ni);
-  warp_sum_reduce(work_warp_sum, work_local_sum + 0 * (NWARPS * NVECS));
-  dot_and_copy(Lambda_1, q, work_Lambda_b, work_warp_sum, ni);
-  warp_sum_reduce(work_warp_sum, work_local_sum + 1 * (NWARPS * NVECS));
-
   Lambda_prevprev = work_Lambda_a;
   Lambda_prev = work_Lambda_b;
+  dot_and_copy(Lambda_0, q, Lambda_prevprev, work_warp_sum, ni);
+  warp_sum_reduce(work_warp_sum, work_local_sum + 0 * (NWARPS * NVECS));
+  dot_and_copy(Lambda_1, q, Lambda_prev, work_warp_sum, ni);
+  warp_sum_reduce(work_warp_sum, work_local_sum + 1 * (NWARPS * NVECS));
+
 
   /* TODO: Support something besides square matrices */
 

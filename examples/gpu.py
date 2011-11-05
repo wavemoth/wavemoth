@@ -40,25 +40,28 @@ repeat = 1
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
-Lambda = Lambda[:nside,:nside]#print Lambda.shape
+Lambda = Lambda[:nside,:]
 
 for nvecs in [2]:
     def hrepeat(x, n):
         return np.repeat(x[:, None], n, axis=1).copy('F')
 
     # Mock input vector
-    q = hrepeat(np.sin(np.arange(Lambda.shape[1]) * 0.4), nvecs * nblocks).reshape(
+    nk, nx = Lambda.shape
+    
+    q = hrepeat(np.sin(np.arange(nx) * 0.4), nvecs * nblocks).reshape(
         (Lambda.shape[1], nvecs, nblocks), order='F')
     q_cl = cl.to_device(queue, q)
     Lambda_0_cl = cl.to_device(queue, hrepeat(Lambda[0, :], nblocks))
     Lambda_1_cl = cl.to_device(queue, hrepeat(Lambda[1, :], nblocks))
     x_squared_cl = cl.to_device(queue,
-                                hrepeat(np.cos(thetas)**2, nblocks)[:Lambda.shape[1], :].copy('F'))
-    out_cl = cl.zeros(queue, (Lambda.shape[0], nvecs, nblocks), dtype=np.double, order='F')
+                                hrepeat(np.cos(thetas[:nx])**2, nblocks).copy('F'))
+    out_cl = cl.zeros(queue, (nk, nvecs, nblocks), dtype=np.double, order='F')
 
+    nthreads = nk
     times = []
     for rep in range(repeat):
-        kernel = ClLegendreKernel(ctx, nthreads=Lambda_0_cl.shape[0], nvecs=nvecs,
+        kernel = ClLegendreKernel(ctx, nthreads=nthreads, nvecs=nvecs,
                                   has_warps=has_warps)
         e = kernel.transpose_legendre_transform(queue, m, m + odd,
                                                 x_squared_cl, Lambda_0_cl, Lambda_1_cl,
@@ -80,7 +83,7 @@ a = a[:, :, 0]
 
 a0 = np.dot(Lambda, q[:, :, 0])
 
-#print np.hstack([a, a0])
+print np.hstack([a, a0])
 print la.norm(a - a0)
 
 #plt.clf()

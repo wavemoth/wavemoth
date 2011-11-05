@@ -12,7 +12,7 @@ def log2(x):
 #define NVECS {{nvecs}}
 #define NTHREADS {{local_size}}
 #define APPROXIMATE_AUX 1
-#define MAX_NI 128
+#define MAX_NI {{max_ni}}
 #define WARP_SIZE {{warp_size}}
 #define NWARPS {{local_size // warp_size}}
 
@@ -184,7 +184,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
      start again to reuse the scratch buffers). */
 
   /* Buffer for temporarily storing Legendre function values */
-  local double work_P_a[MAX_NI], work_P_b[MAX_NI];
+  local double work_Lambda_a[MAX_NI], work_Lambda_b[MAX_NI];
 
   /* Simple scratch for auxiliary values */
   local double alpha[NTHREADS], beta[NTHREADS], gamma[NTHREADS];
@@ -202,16 +202,8 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   }
 
   int iblock = get_global_id(0) / NTHREADS;
-  int ix = get_local_id(0);
-  double Pval, Pval_prev, Pval_prevprev;
 
   local double *Lambda_prev, *Lambda_prevprev;
-
-  /* ni_thread is the number of x's this thread should deal with */
-  int ni_thread = ni / NTHREADS;
-  if (ithread < (ni % NTHREADS)) {
-    ni_thread++;
-  }
 
   /* Shift to our block */
   x_squared += iblock * ni;
@@ -227,41 +219,54 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   /* First two rows are special as they are dot products. Each thread
      only stores values for its own local consumption, so no need for
      barrier. */
-  dot_and_copy(Lambda_0, q, work_P_a, work_warp_sum, ni);
+  dot_and_copy(Lambda_0, q, work_Lambda_a, work_warp_sum, ni);
   warp_sum_reduce(work_warp_sum, work_local_sum + 0 * (NWARPS * NVECS));
-  dot_and_copy(Lambda_1, q, work_P_b, work_warp_sum, ni);
+  dot_and_copy(Lambda_1, q, work_Lambda_b, work_warp_sum, ni);
   warp_sum_reduce(work_warp_sum, work_local_sum + 1 * (NWARPS * NVECS));
 
-  Lambda_prevprev = work_P_a;
-  Lambda_prev = work_P_b;
-
-  Pval_prevprev = Lambda_0[ithread];
-  Pval_prev = Lambda_1[ithread];
+  Lambda_prevprev = work_Lambda_a;
+  Lambda_prev = work_Lambda_b;
 
   /* TODO: Support something besides square matrices */
 
-  double acc[NVECS];
   for (int k = 2; k != nk; ++k) {
+    /* Row initialization*/
+    double acc[NVECS];
     for (int j = 0; j != NVECS; ++j) {
       acc[j] = 0;
     }
 
-    /* recurrence */
-    Pval = (x_squared[ithread] + alpha[k]) * beta[k] * Pval_prev + gamma[k] * Pval_prevprev;
-    Pval_prevprev = Pval_prev;
-    Pval_prev = Pval;
+    /* Process row. There may be less threads than columns, so for
+       each row, let the threads stride across so that all columns are
+       considered. */
+    for (int i = ithread; i < ni; i += NTHREADS) {
+      /* Recurrence */
+      double Lambda_val = ((x_squared[i] + alpha[k]) * beta[k] * Lambda_prev[i] +
+                           gamma[k] * Lambda_prevprev[i]);
+      /* Save Lambda_cur in Lambda_prevprev; then we shuffle the
+         buffer pointers after processing the row. */
+      Lambda_prevprev[i] = Lambda_val;
 
-    /* matvec */
-    for (int j = 0; j != NVECS; ++j) {
-      acc[j] += Pval * q[j * ni + ix];
-    }    
+      /* matvec */
+      for (int j = 0; j != NVECS; ++j) {
+        acc[j] += Lambda_val * q[j * ni + i];
+      }
+    }
 
-    /* Before heading to the next row, we do a within-warp reduction. This
-       in necesarry lest work_local_sum becomes too big. */
+    /* Done with row -- shuffle buffers */
+    local double *tmp = Lambda_prevprev;
+    Lambda_prevprev = Lambda_prev;
+    Lambda_prev = tmp;
+
+    /* Before heading to the next row, we do a within-warp reduction
+       of the accumulators. This in necesarry lest work_local_sum
+       becomes too big, and we do not need any thread
+       synchronization. */
     for (int j = 0; j != NVECS; ++j) {
       work_warp_sum[j * NTHREADS + ithread] = acc[j];
     }
     warp_sum_reduce(work_warp_sum, work_local_sum + k * (NWARPS * NVECS));
+
   }
 
   /* Reduce across work_local_sum. Let k=ithread,
@@ -271,9 +276,6 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
 
   local double *sum_per_warp_for_k = work_local_sum + ithread * (NWARPS * NVECS);
 
-  if (ithread == 2 && iblock == 0) {
-    print_array("work_local_sum", sum_per_warp_for_k, NWARPS * NVECS);
-  }
   for (int j = 0; j != NVECS; ++j) {
     double s = 0;
     for (int t = 0; t != NWARPS; ++t) {

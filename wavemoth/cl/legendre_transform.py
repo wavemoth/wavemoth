@@ -62,6 +62,7 @@ class ClLegendreKernel(object):
                                          nvecs=nvecs,
                                          local_size=nthreads,
                                          warp_size=self.warp_size,
+                                         max_ni=1024,
                                          **args)
         self.prg = cl.Program(ctx, code).build()
         self._transpose_legendre_transform = self.prg.transpose_legendre_transform
@@ -84,7 +85,7 @@ class ClLegendreKernel(object):
         if not (nx == Lambda_0.shape[0] == Lambda_1.shape[0] == x_squared.shape[0]):
             raise ValueError('Lambda_0 and/or Lambda_1 and/or x_squared has wrong shape')
 
-        assert nx == nk == self.nthreads
+        assert nk == self.nthreads
 
         return self._transpose_legendre_transform(
             queue, (nblocks * self.nthreads,), (self.nthreads,),

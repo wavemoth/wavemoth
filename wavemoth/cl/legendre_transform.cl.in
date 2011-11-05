@@ -29,10 +29,11 @@ def log2(x):
 
 
 
+
 /*****
  * Utilities
  *****/
-
+/*
 void print_array(constant const char *msg, local double* arr, int len) {
   int i;
   printf("%s ", msg);
@@ -50,7 +51,7 @@ void print_array_glob(constant const char *msg, global double* arr, int len) {
   }
   printf("\n");
 }
-
+*/
 
 /* Multiply four 16-bit ints and produce 64-bit result safely. */
 inline unsigned long prod4_16(unsigned short a, unsigned short b,
@@ -170,6 +171,26 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
   {{endfor}}
 }
 {{endfor}}
+
+
+void inter_warp_sum(int k_start, int nk, int out_stride,
+                    local double *work_local_sum,
+                    global double *out) {
+  int k = k_start + ithread;
+  if (k >= nk) return;
+
+  local double *sum_per_warp_for_k =
+    work_local_sum + ithread * (NWARPS * NVECS);
+
+  for (int j = 0; j != NVECS; ++j) {
+    double s = 0;
+    for (int t = 0; t != NWARPS; ++t) {
+      s += sum_per_warp_for_k[j * NWARPS + t];
+    }
+    out[j * out_stride + k] = s;
+  }
+}
+
 /*****
  * Kernel entry points
  *****/
@@ -196,10 +217,10 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   local double work_local_sum[NWARPS * NTHREADS * NVECS];
   local double work_warp_sum[NTHREADS * NVECS];
 
-  if (get_local_size(0) != NTHREADS) {
+  /*  if (get_local_size(0) != NTHREADS) {
     printf("Assertion get_local_size(0) == NTHREADS failed\n");
     printf("FAIL %d", *(int*)0);
-  }
+    }*/
 
   int iblock = get_global_id(0) / NTHREADS;
 
@@ -212,10 +233,6 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   q += iblock * ni * NVECS;
   out += iblock * nk * NVECS;
 
-  /* Compute auxiliaries */
-  compute_recurrence_auxiliaries(m, lmin, nk, alpha, beta, gamma);
-  barrier(CLK_LOCAL_MEM_FENCE);
-
   /* First two rows are special as they are dot products. Each thread
      only stores values for its own local consumption, so no need for
      barrier. */
@@ -225,63 +242,66 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   warp_sum_reduce(work_warp_sum, work_local_sum + 0 * (NWARPS * NVECS));
   dot_and_copy(Lambda_1, q, Lambda_prev, work_warp_sum, ni);
   warp_sum_reduce(work_warp_sum, work_local_sum + 1 * (NWARPS * NVECS));
-
-
-  /* TODO: Support something besides square matrices */
-
-  for (int k = 2; k != nk; ++k) {
-    /* Row initialization*/
-    double acc[NVECS];
-    for (int j = 0; j != NVECS; ++j) {
-      acc[j] = 0;
-    }
-
-    /* Process row. There may be less threads than columns, so for
-       each row, let the threads stride across so that all columns are
-       considered. */
-    for (int i = ithread; i < ni; i += NTHREADS) {
-      /* Recurrence */
-      double Lambda_val = ((x_squared[i] + alpha[k]) * beta[k] * Lambda_prev[i] +
-                           gamma[k] * Lambda_prevprev[i]);
-      /* Save Lambda_cur in Lambda_prevprev; then we shuffle the
-         buffer pointers after processing the row. */
-      Lambda_prevprev[i] = Lambda_val;
-
-      /* matvec */
-      for (int j = 0; j != NVECS; ++j) {
-        acc[j] += Lambda_val * q[j * ni + i];
-      }
-    }
-
-    /* Done with row -- shuffle buffers */
-    local double *tmp = Lambda_prevprev;
-    Lambda_prevprev = Lambda_prev;
-    Lambda_prev = tmp;
-
-    /* Before heading to the next row, we do a within-warp reduction
-       of the accumulators. This in necesarry lest work_local_sum
-       becomes too big, and we do not need any thread
-       synchronization. */
-    for (int j = 0; j != NVECS; ++j) {
-      work_warp_sum[j * NTHREADS + ithread] = acc[j];
-    }
-    warp_sum_reduce(work_warp_sum, work_local_sum + k * (NWARPS * NVECS));
-
-  }
-
-  /* Reduce across work_local_sum. Let k=ithread,
-     and have each thread iterate over the iwarp index in work_local_sum
-  */
   barrier(CLK_LOCAL_MEM_FENCE);
+  inter_warp_sum(0, 2, nk, work_local_sum, out);
+  /* Will hit barrier below before work_local_sum gets overwritten */
 
-  local double *sum_per_warp_for_k = work_local_sum + ithread * (NWARPS * NVECS);
+  for (int k_block_start = 2; k_block_start < nk; k_block_start += NTHREADS) {
+    int k_block_len = min(NTHREADS, nk - k_block_start);
+    /* Compute auxiliaries for this row-block */
+    compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, NTHREADS,
+                                   alpha, beta, gamma);
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-  for (int j = 0; j != NVECS; ++j) {
-    double s = 0;
-    for (int t = 0; t != NWARPS; ++t) {
-      s += sum_per_warp_for_k[j * NWARPS + t];
+    for (int k_offset = 0; k_offset != k_block_len; ++k_offset) {
+      /* Row initialization*/
+      double acc[NVECS];
+      for (int j = 0; j != NVECS; ++j) {
+        acc[j] = 0;
+      }
+
+      /* Process row. There may be less threads than columns, so for
+         each row, let the threads stride across so that all columns are
+         considered. */
+      for (int i = ithread; i < ni; i += NTHREADS) {
+        /* Recurrence */
+        double Lambda_val =
+          ((x_squared[i] + alpha[k_offset]) * beta[k_offset] * Lambda_prev[i] +
+           gamma[k_offset] * Lambda_prevprev[i]);
+        /* Save Lambda_cur in Lambda_prevprev; then we shuffle the
+           buffer pointers after processing the entire row. */
+        Lambda_prevprev[i] = Lambda_val;
+
+        /* matvec */
+        for (int j = 0; j != NVECS; ++j) {
+          acc[j] += Lambda_val * q[j * ni + i];
+        }
+      }
+
+      /* Done with row -- shuffle buffers */
+      local double *tmp = Lambda_prevprev;
+      Lambda_prevprev = Lambda_prev;
+      Lambda_prev = tmp;
+
+      /* Before heading to the next row, we do a within-warp reduction
+         of the accumulators. This is necesarry lest work_local_sum
+         becomes too big, and cheap enough as we do not need any
+         thread synchronization. */
+      for (int j = 0; j != NVECS; ++j) {
+        work_warp_sum[j * NTHREADS + ithread] = acc[j];
+      }
+      warp_sum_reduce(work_warp_sum, work_local_sum + k_offset * (NWARPS * NVECS));
     }
-    out[j * nk + ithread] = s;
+
+    /* Done with row block. Do inter-warp accumulation and write to output
+       before heading on to the next block. We let k=ithread, and have
+       each thread sum over iwarp. */
+    barrier(CLK_LOCAL_MEM_FENCE);
+    inter_warp_sum(k_block_start, k_block_start + k_block_len,
+                   nk, work_local_sum, out);
+    /* Do not need another barrier here because the next iteration will
+       hit the barrier after computing auxiliary values before it
+       gets a chance to overwrite work_local_sum. */
   }
 
 }

@@ -16,11 +16,11 @@ import socket
 for platform in cl.get_platforms():
     if socket.gethostname() == 'dagss-laptop':
         wanted = 'Intel'
-        nblocks = 5
+        nblocks = 10
         has_warps = False
     else:
         wanted = 'NVIDIA'
-        nblocks = 5000
+        nblocks = 1000
         has_warps = True
 
     if wanted in platform.name:
@@ -31,18 +31,24 @@ queue = cl.CommandQueue(ctx,
 
 
 # Compute Lambda
-nside = 32
+nside = 512
 m = 0
 lmax = 2 * nside
 odd = 0
 repeat = 1
+nvecs = 8
 
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
-Lambda = Lambda[:nside,:]
 
-for nvecs in [2]:
+for nwarps in range(1, 6):
+    nthreads = 32 * nwarps
+
+    print
+    print
+    print '=== nthreads=%d, nvecs=%d ===' % (nthreads, nvecs)
+
     def hrepeat(x, n):
         return np.repeat(x[:, None], n, axis=1).copy('F')
 
@@ -58,10 +64,10 @@ for nvecs in [2]:
                                 hrepeat(np.cos(thetas[:nx])**2, nblocks).copy('F'))
     out_cl = cl.zeros(queue, (nk, nvecs, nblocks), dtype=np.double, order='F')
 
-    nthreads = nk
     times = []
     for rep in range(repeat):
-        kernel = ClLegendreKernel(ctx, nthreads=nthreads, nvecs=nvecs,
+        kernel = ClLegendreKernel(ctx, max_ni=nx,
+                                  nthreads=nthreads, nvecs=nvecs,
                                   has_warps=has_warps)
         e = kernel.transpose_legendre_transform(queue, m, m + odd,
                                                 x_squared_cl, Lambda_0_cl, Lambda_1_cl,

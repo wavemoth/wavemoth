@@ -18,7 +18,7 @@ for platform in cl.get_platforms():
         wanted = 'Intel'
         nblocks = 10
         has_warps = False
-        nside = 32
+        nside = 64
     else:
         wanted = 'NVIDIA'
         nblocks = 1000
@@ -32,8 +32,11 @@ queue = cl.CommandQueue(ctx,
                         properties=cl.command_queue_properties.PROFILING_ENABLE)
 
 
+nside = 512
+
 # Compute Lambda
-k_chunk = 4
+k_chunk = 32
+i_chunk = 4
 nvecs = 2
 
 m = 0
@@ -72,7 +75,8 @@ for nwarps in [1]:#range(1, 6):
         kernel = ClLegendreKernel(ctx, max_ni=nx,
                                   nthreads=nthreads, nvecs=nvecs,
                                   has_warps=has_warps,
-                                  k_chunk=k_chunk)
+                                  k_chunk=k_chunk,
+                                  i_chunk=i_chunk)
         e = kernel.transpose_legendre_transform(queue, m, m + odd,
                                                 x_squared_cl, Lambda_0_cl, Lambda_1_cl,
                                                 q_cl, out_cl)

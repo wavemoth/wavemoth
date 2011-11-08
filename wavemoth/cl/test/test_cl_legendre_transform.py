@@ -29,7 +29,7 @@ queue = cl.CommandQueue(ctx,
 
 
 k_chunk = 32
-kopts = dict(max_ni=256, has_warps=has_warps, k_chunk=k_chunk)
+kopts = dict(max_ni=256, has_warps=has_warps, k_chunk=k_chunk, i_chunk=2)
 
 def ndrange(shape, dtype=np.double):
     return np.arange(np.prod(shape), dtype=dtype).reshape(shape)
@@ -67,13 +67,14 @@ def test_warp_sum_reduce():
     nthreads = 128
     
     thread_sum = ndrange((nvecs, nthreads))
-    warp_sum = np.ones((nthreads // WARP_SIZE, k_chunk, nvecs)) * np.nan
+    warp_sum = np.ones((nthreads // WARP_SIZE, k_chunk, nvecs))
     
     kernel = ClLegendreKernel(ctx, nvecs=nvecs, nthreads=nthreads, **kopts)
     kernel.warp_sum_reduce(queue, 0, thread_sum.copy(), warp_sum)
 
     for iwarp in range(nthreads // WARP_SIZE):
         warp_sum0 = thread_sum[:, iwarp * WARP_SIZE:(iwarp + 1) * WARP_SIZE].sum(axis=1)
+        warp_sum0 += 1 # as all(warp_sum == 1) prior to the call
         assert_almost_equal(warp_sum[iwarp, 0, :], warp_sum0)
 
 def test_inter_warp_sum():
@@ -92,7 +93,8 @@ def test_inter_warp_sum():
 
         kernel = ClLegendreKernel(ctx, **opts)
         kernel.inter_warp_sum(queue, 0, nk, work_local_sum, out)
-        assert_almost_equal(work_local_sum.sum(axis=0).T[:, :nk], out[:, :nk])
+        expected = work_local_sum.sum(axis=0).T[:, :nk]
+        assert_almost_equal(expected, out[:, :nk])
         ok_(np.isnan(out[0, nk]))
 
     yield test, 2, 32

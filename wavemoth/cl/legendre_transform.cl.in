@@ -17,6 +17,7 @@ def log2(x):
 #define NWARPS {{local_size // warp_size}}
 {{default memory_bank_count = warp_size}}
 #define K_CHUNK {{k_chunk}}
+#define I_CHUNK {{i_chunk}}
 
 /* Cast get_local_id(0) to int to make it easier to printf, as all
    our integers are then 32-bit. */
@@ -165,7 +166,7 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
     for (int j = 0; j != NVECS; ++j) {
       {{if 2 * stride == warp_size}}
       {{# Write to warp_sums }}
-      warp_sums[iwarp * K_CHUNK * NVECS + k_offset * NVECS + j] = 
+      warp_sums[iwarp * K_CHUNK * NVECS + k_offset * NVECS + j] += 
         (thread_sums[j * NTHREADS + ithread] +
         thread_sums[j * NTHREADS + ithread + {{stride}}]);
       {{else}}
@@ -204,6 +205,13 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
   }
 }
 {{endfor}}
+
+/* work_local_sum is a 3D array indexed by [iwarp, k_offset, j] */
+void zero_accumulation_buffer(local double *work_local_sum) {
+  for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
+    work_local_sum[iwarp * K_CHUNK * NVECS + idx] = 0;
+  }
+}
 
 /*****
  * Kernel entry points
@@ -246,6 +254,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   /* First two rows are special as they are dot products. Each thread
      only stores values for its own local consumption, so no need for
      barrier. */
+  zero_accumulation_buffer(work_local_sum);
   dot_and_copy(Lambda_0, q, Lambda_pp, work_warp_sum, ni);
   warp_sum_reduce(0, work_warp_sum, work_local_sum);
   dot_and_copy(Lambda_1, q, Lambda_p, work_warp_sum, ni);
@@ -254,54 +263,89 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   inter_warp_sum(0, 2, work_local_sum, out, nk);
   /* Will hit barrier below before work_local_sum gets overwritten */
 
+
+  /* Blocking approach: Process blocks of size (K_CHUNK, I_CHUNK * NTHREADS).
+     Within each block, local memory contains data needed for rows (k-axis),
+     and registers contains data needed for columns (i-axis).
+     The blocks are processed in row-wise order.
+  */
   for (int k_block_start = 2; k_block_start < nk; k_block_start += K_CHUNK) {
     int k_block_len = min(K_CHUNK, nk - k_block_start);
     /* Compute auxiliaries for this row-block */
     compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, K_CHUNK,
                                    alpha, beta, gamma);
+
+    /* Zero accumulation scratch buffer */
+    zero_accumulation_buffer(work_local_sum);
+
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (int k_offset = 0; k_offset != k_block_len; ++k_offset) {
+    /* Process all blocks on this block-row */
+    for (int i_block_start = 0; i_block_start < ni; i_block_start += I_CHUNK * NTHREADS) {
+      int i_block_len = min(NTHREADS * I_CHUNK, ni - i_block_start);
 
-      /* Row initialization*/
-      double acc[NVECS];
-      for (int j = 0; j != NVECS; ++j) {
-        acc[j] = 0;
-      }
+      double Lambda_p_val[I_CHUNK], Lambda_pp_val[I_CHUNK];
+      double x_squared_val[I_CHUNK];
+      double q_thread[I_CHUNK * NVECS];
 
-      /* Process row. There may be less threads than columns, so for
-         each row, let the threads stride across so that all columns are
-         considered. */
-      for (int i = ithread; i < ni; i += NTHREADS) {
-        /* Recurrence */
-        double Lambda_val =
-          ((x_squared[i] + alpha[k_offset]) * beta[k_offset] * Lambda_p[i] +
-           gamma[k_offset] * Lambda_pp[i]);
-        /* Save Lambda_cur in Lambda_prevprev; then we shuffle the
-           buffer pointers after processing the entire row. */
-        Lambda_pp[i] = Lambda_val;
-
-        /* matvec */
+      /* Read Lambdas, x_squared, and q from global memory into registers for this block */
+      for (int it = 0, i_offset = ithread; i_offset < i_block_len; i_offset += NTHREADS, ++it) {
+        int i = i_block_start + i_offset;
+        Lambda_pp_val[it] = Lambda_pp[i];
+        Lambda_p_val[it] = Lambda_p[i];
+        x_squared_val[it] = x_squared[i];
         for (int j = 0; j != NVECS; ++j) {
-          acc[j] += Lambda_val * q[j * ni + i];
+          q_thread[j * I_CHUNK + it] = q[j * ni + i];
         }
       }
 
-      /* Done with row -- shuffle buffers */
-      global double *tmp = Lambda_pp;
-      Lambda_pp = Lambda_p;
-      Lambda_p = tmp;
+      /* Process blocks row-wise. Given correct loop unrolling, this should
+         maximize pipelining ability of each thread. */
+      for (int kt = 0; kt != k_block_len; ++kt) {
 
-      /* Before heading to the next row, we do a within-warp reduction
-         of the accumulators. This is necesarry lest work_local_sum
-         becomes too big, and cheap enough as we do not need any
-         thread synchronization. */
-      for (int j = 0; j != NVECS; ++j) {
-        /* save our own values to local memory... */
-        work_warp_sum[j * NTHREADS + ithread] = acc[j];
+        /* Initialize accumulation registers for row */
+        double acc[NVECS];
+        for (int j = 0; j != NVECS; ++j) {
+          acc[j] = 0;
+        }
+
+        /* Process row k=k_block_start + kt */
+        for (int it = 0, i_offset = ithread; i_offset < i_block_len; i_offset += NTHREADS, ++it) {
+          double Lambda_val =
+            ((x_squared_val[it] + alpha[kt]) * beta[kt] * Lambda_p_val[it] +
+             gamma[kt] * Lambda_pp_val[it]);
+
+          /* matvec */
+          for (int j = 0; j != NVECS; ++j) {
+            acc[j] += Lambda_val * q_thread[j * I_CHUNK + it];
+          }
+
+          Lambda_pp_val[it] = Lambda_p_val[it];
+          Lambda_p_val[it] = Lambda_val;
+        }
+
+        /* Before heading to the next row, we do a within-warp reduction
+           of the accumulators. This is necesarry lest work_local_sum
+           becomes too big, and cheap enough as we do not need any
+           thread synchronization. First store in local memory...  */
+        for (int j = 0; j != NVECS; ++j) {
+          work_warp_sum[j * NTHREADS + ithread] = acc[j];
+        }
+        /* ...and then do the tree reduction. The target is copied into
+           work_local_sum at kt. */
+        warp_sum_reduce(kt, work_warp_sum, work_local_sum);
       }
-      /* ...and do reduction */
-      warp_sum_reduce(k_offset, work_warp_sum, work_local_sum);
+
+
+      /* Done with all rows in block; we should move to the block to
+         our right.  Persist the Lambdas, to be read in again when we
+         visit the row of blocks below. */
+      for (int it = 0, i_offset = ithread; i_offset < i_block_len; i_offset += NTHREADS, ++it) {
+        int i = i_block_start + i_offset;
+        Lambda_pp[i] = Lambda_pp_val[it];
+        Lambda_p[i] = Lambda_p_val[it];
+      }
+
     }
 
     /* Done with row block. Do inter-warp accumulation and write to output
@@ -313,6 +357,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     /* Do not need another barrier here because the next iteration will
        hit the barrier after computing auxiliary values before it
        gets a chance to overwrite work_local_sum. */
+
   }
 
 }

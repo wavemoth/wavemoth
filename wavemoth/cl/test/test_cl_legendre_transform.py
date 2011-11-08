@@ -39,14 +39,14 @@ def test_dot_and_copy():
         P = ndrange((nx,))
 
         q = ndrange((nvecs, nx))
-        P_local = np.ones(nx) * np.nan
+        P_copy = np.ones(nx) * np.nan
         work_sum = np.ones((nvecs, nthreads)) * np.nan
 
         kernel = ClLegendreKernel(ctx, nvecs=nvecs, nthreads=nthreads, **kopts)
-        kernel.dot_and_copy(queue, P, q, P_local, work_sum)
+        kernel.dot_and_copy(queue, P, q, P_copy, work_sum)
 
         # Check that P was copied into P_local
-        ok_(all(P == P_local))
+        ok_(all(P == P_copy))
         # Check that work_sum contains the per-thread sum contribution for P[None, :] * q
         P_by_q = P[None, :] * q
         threadsum = np.zeros((nvecs, nthreads))

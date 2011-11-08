@@ -130,7 +130,7 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
 {{for spec, suffix, scope in kernel_or_not}}
 {{spec}} void dot_and_copy{{suffix}}(global const double *P,
                                      global const double *q,
-                                     {{scope}} double *P_local,
+                                     global double *P_copy,
                                      {{scope}} double *work_sum,
                                      int ni) {
   double s[NVECS];
@@ -139,7 +139,7 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
   }
   for (int i = ithread; i < ni; i += NTHREADS) {
     double Pval = P[i];
-    P_local[i] = Pval;
+    P_copy[i] = Pval;
     for (int j = 0; j != NVECS; ++j) {
       s[j] += Pval * q[j * ni + i];
     }
@@ -188,7 +188,7 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
 
 {{for spec, suffix, scope in kernel_or_not}}
 {{spec}} void inter_warp_sum{{suffix}}(int k_start, int nk,
-                                       {{scope}}  double *work_local_sum,
+                                       {{scope}} double *work_local_sum,
                                        global double *out,
                                        int out_stride) {
   /* Have threads divide evenly over the different vectors, gracefully
@@ -214,19 +214,13 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                          global const double *Lambda_0,
                                          global const double *Lambda_1,
                                          global const double *q,
+                                         global double *work,
                                          global double *out) {
-  /* Local scratch. We process NTHREADS rows for each batch (and then
-     start again to reuse the scratch buffers). */
-
-  /* Buffer for temporarily storing Legendre function values */
-  local double work_Lambda_a[MAX_NI], work_Lambda_b[MAX_NI];
-
-  /* Simple scratch for auxiliary values */
+  /* Scratch for auxiliary values */
   local double alpha[NTHREADS], beta[NTHREADS], gamma[NTHREADS];
 
-  /* Buffer for sum-reduction. We use the one column padding trick to avoid
-     memory bank conflicts. See work_sum_idx for indexing.
-  */
+  /* Scratch for sum-reduction. We use the one column padding trick to
+     avoid memory bank conflicts. See work_sum_idx for indexing.  */
 
   local double work_local_sum[NWARPS * NTHREADS * NVECS];
   local double work_warp_sum[NTHREADS * NVECS];
@@ -238,7 +232,9 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
 
   int iblock = get_global_id(0) / NTHREADS;
 
-  local double *Lambda_prev, *Lambda_prevprev;
+  /* Buffer for temporarily storing Legendre function values */
+  global double *Lambda_pp = work + (2 * iblock) * MAX_NI;
+  global double *Lambda_p = work + (2 * iblock + 1) * MAX_NI;
 
   /* Shift to our block */
   x_squared += iblock * ni;
@@ -250,11 +246,9 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   /* First two rows are special as they are dot products. Each thread
      only stores values for its own local consumption, so no need for
      barrier. */
-  Lambda_prevprev = work_Lambda_a;
-  Lambda_prev = work_Lambda_b;
-  dot_and_copy(Lambda_0, q, Lambda_prevprev, work_warp_sum, ni);
+  dot_and_copy(Lambda_0, q, Lambda_pp, work_warp_sum, ni);
   warp_sum_reduce(0, work_warp_sum, work_local_sum);
-  dot_and_copy(Lambda_1, q, Lambda_prev, work_warp_sum, ni);
+  dot_and_copy(Lambda_1, q, Lambda_p, work_warp_sum, ni);
   warp_sum_reduce(1, work_warp_sum, work_local_sum);
   barrier(CLK_LOCAL_MEM_FENCE);
   inter_warp_sum(0, 2, work_local_sum, out, nk);
@@ -281,11 +275,11 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       for (int i = ithread; i < ni; i += NTHREADS) {
         /* Recurrence */
         double Lambda_val =
-          ((x_squared[i] + alpha[k_offset]) * beta[k_offset] * Lambda_prev[i] +
-           gamma[k_offset] * Lambda_prevprev[i]);
+          ((x_squared[i] + alpha[k_offset]) * beta[k_offset] * Lambda_p[i] +
+           gamma[k_offset] * Lambda_pp[i]);
         /* Save Lambda_cur in Lambda_prevprev; then we shuffle the
            buffer pointers after processing the entire row. */
-        Lambda_prevprev[i] = Lambda_val;
+        Lambda_pp[i] = Lambda_val;
 
         /* matvec */
         for (int j = 0; j != NVECS; ++j) {
@@ -294,9 +288,9 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       }
 
       /* Done with row -- shuffle buffers */
-      local double *tmp = Lambda_prevprev;
-      Lambda_prevprev = Lambda_prev;
-      Lambda_prev = tmp;
+      global double *tmp = Lambda_pp;
+      Lambda_pp = Lambda_p;
+      Lambda_p = tmp;
 
       /* Before heading to the next row, we do a within-warp reduction
          of the accumulators. This is necesarry lest work_local_sum

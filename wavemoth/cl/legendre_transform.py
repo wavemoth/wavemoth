@@ -53,21 +53,24 @@ class ClLegendreKernel(object):
     
     """
     
-    def __init__(self, ctx, nvecs, nthreads, warp_size=32, **args):
+    def __init__(self, ctx, nvecs, nthreads, max_ni, warp_size=32, **args):
         self.nthreads = nthreads
         self.nvecs = nvecs
         self.warp_size = 32
+        self.max_ni = max_ni
+        self.ctx = ctx
 
         code = core.instantiate_template('legendre_transform.cl.in',
                                          nvecs=nvecs,
                                          local_size=nthreads,
                                          warp_size=self.warp_size,
+                                         max_ni=max_ni,
                                          **args)
         self.prg = cl.Program(ctx, code).build()
         self._transpose_legendre_transform = self.prg.transpose_legendre_transform
         self._transpose_legendre_transform.set_scalar_arg_dtypes(
             [np.int32, np.int32, np.int32, np.int32,
-             None, None, None, None, None])
+             None, None, None, None, None, None])
 
     def transpose_legendre_transform(self, queue, m, lmin,
                                      x_squared, Lambda_0, Lambda_1, q, out):
@@ -84,10 +87,15 @@ class ClLegendreKernel(object):
         if not (nx == Lambda_0.shape[0] == Lambda_1.shape[0] == x_squared.shape[0]):
             raise ValueError('Lambda_0 and/or Lambda_1 and/or x_squared has wrong shape')
 
+        # TODO: On-device heap allocation
+        work = cl.to_device(queue, np.empty(2 * self.max_ni * nblocks))
+                            #cl.Buffer(self.ctx, cl.READ_WRITE, 2 * 8 * self.max_ni * nblocks)
+        print 2 * self.max_ni * nblocks#, self.max_ni, nblocks
+
         return self._transpose_legendre_transform(
             queue, (nblocks * self.nthreads,), (self.nthreads,),
             m, lmin, nk, nx, x_squared.data,
-            Lambda_0.data, Lambda_1.data, q.data, out.data)
+            Lambda_0.data, Lambda_1.data, q.data, work.data, out.data)
 
     @convertargs()
     def dot_and_copy(self, queue, P, q, P_local, work_sum):

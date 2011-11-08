@@ -27,6 +27,10 @@ for platform in cl.get_platforms():
 queue = cl.CommandQueue(ctx, 
                         properties=cl.command_queue_properties.PROFILING_ENABLE)
 
+
+k_chunk = 32
+kopts = dict(max_ni=256, has_warps=has_warps, k_chunk=k_chunk)
+
 def ndrange(shape, dtype=np.double):
     return np.arange(np.prod(shape), dtype=dtype).reshape(shape)
 
@@ -38,7 +42,7 @@ def test_dot_and_copy():
         P_local = np.ones(nx) * np.nan
         work_sum = np.ones((nvecs, nthreads)) * np.nan
 
-        kernel = ClLegendreKernel(ctx, nvecs=nvecs, nthreads=nthreads, has_warps=has_warps)
+        kernel = ClLegendreKernel(ctx, nvecs=nvecs, nthreads=nthreads, **kopts)
         kernel.dot_and_copy(queue, P, q, P_local, work_sum)
 
         # Check that P was copied into P_local
@@ -63,11 +67,35 @@ def test_warp_sum_reduce():
     nthreads = 128
     
     thread_sum = ndrange((nvecs, nthreads))
-    warp_sum = np.ones((nvecs, nthreads // WARP_SIZE)) * np.nan
+    warp_sum = np.ones((nthreads // WARP_SIZE, k_chunk, nvecs)) * np.nan
     
-    kernel = ClLegendreKernel(ctx, nvecs=nvecs, nthreads=nthreads, has_warps=has_warps)
-    kernel.warp_sum_reduce(queue, thread_sum.copy(), warp_sum)
+    kernel = ClLegendreKernel(ctx, nvecs=nvecs, nthreads=nthreads, **kopts)
+    kernel.warp_sum_reduce(queue, 0, thread_sum.copy(), warp_sum)
 
     for iwarp in range(nthreads // WARP_SIZE):
         warp_sum0 = thread_sum[:, iwarp * WARP_SIZE:(iwarp + 1) * WARP_SIZE].sum(axis=1)
-        assert_almost_equal(warp_sum[:, iwarp], warp_sum0)
+        assert_almost_equal(warp_sum[iwarp, 0, :], warp_sum0)
+
+def test_inter_warp_sum():
+    nthreads = 128
+    k_chunk = 32
+
+    def test(nvecs, nk):
+        opts = dict(kopts)
+        opts.update(nvecs=nvecs,
+                    nthreads=nthreads,
+                    k_chunk=k_chunk)
+        nwarps = nthreads // WARP_SIZE
+
+        work_local_sum = ndrange((nwarps, k_chunk, nvecs))
+        out = np.ones((nvecs, 80)) * np.nan
+
+        kernel = ClLegendreKernel(ctx, **opts)
+        kernel.inter_warp_sum(queue, 0, nk, work_local_sum, out)
+        assert_almost_equal(work_local_sum.sum(axis=0).T[:, :nk], out[:, :nk])
+        ok_(np.isnan(out[0, nk]))
+
+    yield test, 2, 32
+    yield test, 4, 3
+    
+    

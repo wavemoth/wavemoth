@@ -95,6 +95,15 @@ class ClLegendreKernel(object):
                                      P.data, q.data, P_local.data, work_sum.data,
                                      np.int32(P.shape[0]))
     @convertargs()
-    def warp_sum_reduce(self, queue, thread_sum, warp_sum):
+    def warp_sum_reduce(self, queue, k_offset, thread_sum, warp_sum):
         self.prg.warp_sum_reduce_kernel(queue, (self.nthreads,), (self.nthreads,),
-                                        thread_sum.data, warp_sum.data)
+                                        k_offset, thread_sum.data, warp_sum.data)
+
+    @convertargs()
+    def inter_warp_sum(self, queue, k_start, nk, work_local_sum, out):
+        self.prg.inter_warp_sum_kernel(queue, (self.nthreads,), (self.nthreads,),
+                                       k_start, nk,
+                                       work_local_sum.data, out.data,
+                                       np.int32(out.strides[0] // 8))
+
+                       

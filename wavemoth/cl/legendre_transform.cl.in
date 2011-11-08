@@ -15,6 +15,8 @@ def log2(x):
 #define MAX_NI {{max_ni}}
 #define WARP_SIZE {{warp_size}}
 #define NWARPS {{local_size // warp_size}}
+{{default memory_bank_count = warp_size}}
+#define K_CHUNK {{k_chunk}}
 
 /* Cast get_local_id(0) to int to make it easier to printf, as all
    our integers are then 32-bit. */
@@ -117,11 +119,15 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
  * Main code
  *****/
 
+{{py:
+kernel_or_not = [('kernel', '_kernel', 'global'),
+                 ('', '', 'local')]
+}}
+
 /* Do a dot product of the 1D vector P with NVECS vectors
    stored in q, and simultaneously copy P into local memory
    P_local. */
-{{for spec, suffix, scope in [('kernel', '_kernel', 'global'),
-                              ('', '', 'local')]}}
+{{for spec, suffix, scope in kernel_or_not}}
 {{spec}} void dot_and_copy{{suffix}}(global const double *P,
                                      global const double *q,
                                      {{scope}} double *P_local,
@@ -145,11 +151,11 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
 {{endfor}}
 
 /* thread_sums[j, ithread] is summed over the threads in each warp and
-   result placed in warp_sums[j, iwarp].
+   result placed in warp_sums[iwarp, k_offset, j].
    Contents of thread_sums is destructed in the process. */
-{{for spec, suffix, scope in [('kernel', '_kernel', 'global'),
-                              ('', '', 'local')]}}
-{{spec}} void warp_sum_reduce{{suffix}}({{scope}} double *thread_sums,
+{{for spec, suffix, scope in kernel_or_not}}
+{{spec}} void warp_sum_reduce{{suffix}}(int k_offset,
+                                        {{scope}} double *thread_sums,
                                         {{scope}} double *warp_sums) {
     /* TODO: Use parallelism to work on multiple vectors in parallel... */
   WARP_BARRIER();
@@ -159,8 +165,9 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
     for (int j = 0; j != NVECS; ++j) {
       {{if 2 * stride == warp_size}}
       {{# Write to warp_sums }}
-      warp_sums[j * NWARPS + iwarp] = (thread_sums[j * NTHREADS + ithread] +
-                                       thread_sums[j * NTHREADS + ithread + {{stride}}]);
+      warp_sums[iwarp * K_CHUNK * NVECS + k_offset * NVECS + j] = 
+        (thread_sums[j * NTHREADS + ithread] +
+        thread_sums[j * NTHREADS + ithread + {{stride}}]);
       {{else}}
       {{# Write temporary result to thread_sums}}
       thread_sums[j * NTHREADS + ithread] += thread_sums[j * NTHREADS + ithread + {{stride}}];
@@ -173,23 +180,30 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
 {{endfor}}
 
 
-void inter_warp_sum(int k_start, int nk, int out_stride,
-                    local double *work_local_sum,
-                    global double *out) {
-  int k = k_start + ithread;
-  if (k >= nk) return;
+/* Sum up a number of output buffers (one per warp) in
+   `work_local_sum`, and put the result in `out`.  `work_local_sum`
+   is a 3D array indexed by [iwarp, k_offset, j] and dimensions
+   (NWARPS, K_CHUNK, NVECS).
+*/
 
-  local double *sum_per_warp_for_k =
-    work_local_sum + ithread * (NWARPS * NVECS);
-
-  for (int j = 0; j != NVECS; ++j) {
+{{for spec, suffix, scope in kernel_or_not}}
+{{spec}} void inter_warp_sum{{suffix}}(int k_start, int nk,
+                                       {{scope}}  double *work_local_sum,
+                                       global double *out,
+                                       int out_stride) {
+  /* Have threads divide evenly over the different vectors, gracefully
+     handling different nk. */
+  for (int idx = ithread; idx < NVECS * nk; idx += NTHREADS) {
     double s = 0;
     for (int t = 0; t != NWARPS; ++t) {
-      s += sum_per_warp_for_k[j * NWARPS + t];
+      s += work_local_sum[t * K_CHUNK * NVECS + idx]; /*idx == k * NVECS + j*/
     }
-    out[j * out_stride + k] = s;
+    int j = idx % NVECS;
+    int k = idx / NVECS;
+    out[j * out_stride + k_start + k] = s;
   }
 }
+{{endfor}}
 
 /*****
  * Kernel entry points
@@ -239,11 +253,11 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   Lambda_prevprev = work_Lambda_a;
   Lambda_prev = work_Lambda_b;
   dot_and_copy(Lambda_0, q, Lambda_prevprev, work_warp_sum, ni);
-  warp_sum_reduce(work_warp_sum, work_local_sum + 0 * (NWARPS * NVECS));
+  warp_sum_reduce(0, work_warp_sum, work_local_sum);
   dot_and_copy(Lambda_1, q, Lambda_prev, work_warp_sum, ni);
-  warp_sum_reduce(work_warp_sum, work_local_sum + 1 * (NWARPS * NVECS));
+  warp_sum_reduce(1, work_warp_sum, work_local_sum);
   barrier(CLK_LOCAL_MEM_FENCE);
-  inter_warp_sum(0, 2, nk, work_local_sum, out);
+  inter_warp_sum(0, 2, work_local_sum, out, nk);
   /* Will hit barrier below before work_local_sum gets overwritten */
 
   for (int k_block_start = 2; k_block_start < nk; k_block_start += NTHREADS) {
@@ -290,15 +304,15 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       for (int j = 0; j != NVECS; ++j) {
         work_warp_sum[j * NTHREADS + ithread] = acc[j];
       }
-      warp_sum_reduce(work_warp_sum, work_local_sum + k_offset * (NWARPS * NVECS));
+      warp_sum_reduce(k_offset, work_warp_sum, work_local_sum);
     }
 
     /* Done with row block. Do inter-warp accumulation and write to output
        before heading on to the next block. We let k=ithread, and have
        each thread sum over iwarp. */
     barrier(CLK_LOCAL_MEM_FENCE);
-    inter_warp_sum(k_block_start, k_block_start + k_block_len,
-                   nk, work_local_sum, out);
+    inter_warp_sum(k_block_start, k_block_len,
+                   work_local_sum, out, nk);
     /* Do not need another barrier here because the next iteration will
        hit the barrier after computing auxiliary values before it
        gets a chance to overwrite work_local_sum. */

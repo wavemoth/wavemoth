@@ -260,14 +260,15 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   inter_warp_sum(0, 2, work_local_sum, out, nk);
   /* Will hit barrier below before work_local_sum gets overwritten */
 
-  for (int k_block_start = 2; k_block_start < nk; k_block_start += NTHREADS) {
-    int k_block_len = min(NTHREADS, nk - k_block_start);
+  for (int k_block_start = 2; k_block_start < nk; k_block_start += K_CHUNK) {
+    int k_block_len = min(K_CHUNK, nk - k_block_start);
     /* Compute auxiliaries for this row-block */
-    compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, NTHREADS,
+    compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, K_CHUNK,
                                    alpha, beta, gamma);
     barrier(CLK_LOCAL_MEM_FENCE);
 
     for (int k_offset = 0; k_offset != k_block_len; ++k_offset) {
+
       /* Row initialization*/
       double acc[NVECS];
       for (int j = 0; j != NVECS; ++j) {
@@ -302,8 +303,10 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
          becomes too big, and cheap enough as we do not need any
          thread synchronization. */
       for (int j = 0; j != NVECS; ++j) {
+        /* save our own values to local memory... */
         work_warp_sum[j * NTHREADS + ithread] = acc[j];
       }
+      /* ...and do reduction */
       warp_sum_reduce(k_offset, work_warp_sum, work_local_sum);
     }
 

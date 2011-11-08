@@ -78,10 +78,9 @@ def test_warp_sum_reduce():
         assert_almost_equal(warp_sum[iwarp, 0, :], warp_sum0)
 
 def test_inter_warp_sum():
-    nthreads = 128
     k_chunk = 32
 
-    def test(nvecs, nk):
+    def test(nthreads, nvecs, nk):
         opts = dict(kopts)
         opts.update(nvecs=nvecs,
                     nthreads=nthreads,
@@ -89,7 +88,7 @@ def test_inter_warp_sum():
         nwarps = nthreads // WARP_SIZE
 
         work_local_sum = ndrange((nwarps, k_chunk, nvecs))
-        out = np.ones((nvecs, 80)) * np.nan
+        out = np.ones((nvecs, nk + 10)) * np.nan
 
         kernel = ClLegendreKernel(ctx, **opts)
         kernel.inter_warp_sum(queue, 0, nk, work_local_sum, out)
@@ -97,7 +96,8 @@ def test_inter_warp_sum():
         assert_almost_equal(expected, out[:, :nk])
         ok_(np.isnan(out[0, nk]))
 
-    yield test, 2, 32
-    yield test, 4, 3
+    yield test, 128, 2, 32
+    yield test, 64, 4, 3
+    yield test, 32, 2, 31
     
     

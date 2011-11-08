@@ -206,9 +206,11 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
 }
 {{endfor}}
 
-/* work_local_sum is a 3D array indexed by [iwarp, k_offset, j] */
+/* Zero the accumulation buffer on a per-warp basis, so that no
+   barrier is needed. work_local_sum is a 3D array indexed by [iwarp,
+   k_offset, j] */
 void zero_accumulation_buffer(local double *work_local_sum) {
-  for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
+  for (int idx = ithread % WARP_SIZE; idx < NVECS * K_CHUNK; idx += WARP_SIZE) {
     work_local_sum[iwarp * K_CHUNK * NVECS + idx] = 0;
   }
 }
@@ -261,7 +263,9 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   warp_sum_reduce(1, work_warp_sum, work_local_sum);
   barrier(CLK_LOCAL_MEM_FENCE);
   inter_warp_sum(0, 2, work_local_sum, out, nk);
-  /* Will hit barrier below before work_local_sum gets overwritten */
+  /* No barrier: Will hit barrier below before work_local_sum gets
+     overwritten again, and we only write once to each element in
+     out. */
 
 
   /* Blocking approach: Process blocks of size (K_CHUNK, I_CHUNK * NTHREADS).
@@ -275,10 +279,9 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, K_CHUNK,
                                    alpha, beta, gamma);
 
+    barrier(CLK_LOCAL_MEM_FENCE);
     /* Zero accumulation scratch buffer */
     zero_accumulation_buffer(work_local_sum);
-
-    barrier(CLK_LOCAL_MEM_FENCE);
 
     /* Process all blocks on this block-row */
     for (int i_block_start = 0; i_block_start < ni; i_block_start += I_CHUNK * NTHREADS) {

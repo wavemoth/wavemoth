@@ -89,9 +89,6 @@ class ClLegendreKernel(object):
 
         # TODO: On-device heap allocation
         work = cl.to_device(queue, np.empty(2 * self.max_ni * nblocks))
-                            #cl.Buffer(self.ctx, cl.READ_WRITE, 2 * 8 * self.max_ni * nblocks)
-        print 2 * self.max_ni * nblocks#, self.max_ni, nblocks
-
         return self._transpose_legendre_transform(
             queue, (nblocks * self.nthreads,), (self.nthreads,),
             m, lmin, nk, nx, x_squared.data,

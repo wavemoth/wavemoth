@@ -19,6 +19,7 @@ from wavemoth import *
 from wavemoth import healpix
 from wavemoth.cuda import CudaLegendreKernel
 
+from wavemoth.cuda.profile import cuda_profile
 import wavemoth.cuda.flatcuda as cuda
 
 def hrepeat(x, n):
@@ -52,8 +53,7 @@ q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
 a0 = np.dot(Lambda, q[:, :, 0])
 
 #cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
-cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
-cuda.start_profiler()
+#cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
 
 for nwarps in [1]:
     nthreads = 32 * nwarps
@@ -74,21 +74,19 @@ for nwarps in [1]:
                                 i_chunk=i_chunk)
 
     times = []
-    for rep in range(repeat):
-        kernel.transpose_legendre_transform(m, m + odd,
-                                            x_squared, Lambda_0, Lambda_1,
-                                            q, out)
-    #cuda.stop_profiler()
-        #e.wait()
-        #times.append((e.profile.end - e.profile.start) * 1e-9)
-
-    #dt = min(times)
+    #cuda.start_profiler()
+    with cuda_profile() as prof:
+        for rep in range(repeat):
+            kernel.transpose_legendre_transform(m, m + odd,
+                                                x_squared, Lambda_0, Lambda_1,
+                                                q, out)
+    times = np.asarray(prof.transpose_legendre_transform) * 1e-6
+    dt = np.min(times)
 
     nk, ni = Lambda.shape
     matrix_elements = nblocks * ni * nk
     UOP = matrix_elements * (6 + 2 * nvecs)
-    print 'UOP=', UOP
-    #print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
+    print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
 
     a = out
     if not np.all(a[:, :, 0:1] == a):

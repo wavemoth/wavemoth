@@ -59,7 +59,7 @@ class CudaLegendreKernel(object):
 
         code = core.instantiate_template('legendre_transform.cu.in',
                                          nvecs=nvecs,
-                                         local_size=nthreads,
+                                         nthreads=nthreads,
                                          warp_size=self.warp_size,
                                          max_ni=max_ni,
                                          **args)

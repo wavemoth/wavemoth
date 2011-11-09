@@ -14,28 +14,29 @@ import numpy.linalg as la
 from matplotlib import pyplot as plt
 
 import pycuda.autoinit
-import wavemoth.cuda.flatcuda as cuda
 
 from wavemoth import *
 from wavemoth import healpix
 from wavemoth.cuda import CudaLegendreKernel
 
+import wavemoth.cuda.flatcuda as cuda
+
 def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
-nblocks = 500
+nblocks = 1000
 has_warps = True
-nside = 32
+nside = 1024
 
 # Compute Lambda
-k_chunk = 64
-i_chunk = 2
+k_chunk = 32
+i_chunk = 4
 nvecs = 2
 
 m = 0
 lmax = 2 * nside
 odd = 0
-repeat = 1
+repeat = 3
 
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
@@ -49,6 +50,10 @@ q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
     (Lambda.shape[1], nvecs, nblocks), order='F')
 
 a0 = np.dot(Lambda, q[:, :, 0])
+
+#cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
+cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
+cuda.start_profiler()
 
 for nwarps in [1]:
     nthreads = 32 * nwarps
@@ -73,6 +78,7 @@ for nwarps in [1]:
         kernel.transpose_legendre_transform(m, m + odd,
                                             x_squared, Lambda_0, Lambda_1,
                                             q, out)
+    #cuda.stop_profiler()
         #e.wait()
         #times.append((e.profile.end - e.profile.start) * 1e-9)
 
@@ -81,6 +87,7 @@ for nwarps in [1]:
     nk, ni = Lambda.shape
     matrix_elements = nblocks * ni * nk
     UOP = matrix_elements * (6 + 2 * nvecs)
+    print 'UOP=', UOP
     #print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
 
     a = out

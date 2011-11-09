@@ -30,9 +30,9 @@ for platform in cl.get_platforms():
         nside = 64
     else:
         wanted = 'NVIDIA'
-        nblocks = 1000
+        nblocks = 500
         has_warps = True
-        nside = 512
+        nside = 1024
 
     if wanted in platform.name:
         ctx = cl.Context(platform.get_devices())
@@ -41,12 +41,10 @@ queue = cl.CommandQueue(ctx,
                         properties=cl.command_queue_properties.PROFILING_ENABLE)
 
 
-nside = 1024
-
 # Compute Lambda
 k_chunk = 64
 i_chunk = 2
-nvecs = 2
+nvecs = 8
 
 m = 0
 lmax = 2 * nside

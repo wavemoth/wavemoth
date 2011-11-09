@@ -7,8 +7,6 @@ def log2(x):
     return r
 }}
 
-#pragma OPENCL EXTENSION cl_khr_fp64: enable
-
 #define NVECS {{nvecs}}
 #define NTHREADS {{local_size}}
 #define APPROXIMATE_AUX 1
@@ -19,18 +17,10 @@ def log2(x):
 #define K_CHUNK {{k_chunk}}
 #define I_CHUNK {{i_chunk}}
 
-/* Cast get_local_id(0) to int to make it easier to printf, as all
-   our integers are then 32-bit. */
-#define ithread ((int)get_local_id(0))
+/* Cast to int to make it easier to printf, as all our integers are
+   then 32-bit. */
+#define ithread ((int)threadIdx.x)
 #define iwarp (ithread / WARP_SIZE)
-
-{{if has_warps}}
-#define WARP_BARRIER() 
-{{else}}
-#define WARP_BARRIER() barrier(CLK_LOCAL_MEM_FENCE)
-{{endif}}
-
-
 
 
 /*****
@@ -57,7 +47,7 @@ void print_array_glob(constant const char *msg, global double* arr, int len) {
 */
 
 /* Multiply four 16-bit ints and produce 64-bit result safely. */
-inline unsigned long prod4_16(unsigned short a, unsigned short b,
+inline __device__ unsigned long prod4_16(unsigned short a, unsigned short b,
                               unsigned short c, unsigned short d) {
   return (unsigned long)((unsigned int)a * b) * ((unsigned int)c * d);
 }
@@ -67,17 +57,17 @@ inline unsigned long prod4_16(unsigned short a, unsigned short b,
  * Auxiliary value computation
  *****/
 
-double get_c_squared_num(unsigned short m, unsigned short l) {
+__device__ double get_c_squared_num(unsigned short m, unsigned short l) {
   return prod4_16(l - m + 1, l - m + 2,
                   l + m + 1, l + m + 2);
 }
 
-double get_c_squared_den(unsigned short m, unsigned short l) {
+__device__ double get_c_squared_den(unsigned short m, unsigned short l) {
   return prod4_16(2 * l + 1, 2 * l + 3,
                   2 * l + 3, 2 * l + 5);
 }
 
-double get_c(unsigned short m, unsigned short l) {
+__device__ double get_c(unsigned short m, unsigned short l) {
   /* A reciprocial square-root of the inverse whould be faster,
      but cost 1 ulp precision, and this step is very amortized. */
 #if APPROXIMATE_AUX
@@ -87,7 +77,7 @@ double get_c(unsigned short m, unsigned short l) {
 #endif
 }
 
-double get_c_inv(unsigned short m, unsigned short l) {
+__device__ double get_c_inv(unsigned short m, unsigned short l) {
 #if APPROXIMATE_AUX
   return rsqrt(get_c_squared_num(m, l) / get_c_squared_den(m, l));
 #else
@@ -95,16 +85,16 @@ double get_c_inv(unsigned short m, unsigned short l) {
 #endif
 }
 
-double get_d(unsigned short m, unsigned short l) {
+__device__ double get_d(unsigned short m, unsigned short l) {
   double num = 2 * l * (l + 1) - 2 * m * m - 1;
   double den = (2 * l - 1) * (2 * l + 3);
   return num / den;
 }
 
-void compute_recurrence_auxiliaries(int m, int lmin, int nk,
-                                    local double *alpha,
-                                    local double *beta,
-                                    local double *gamma) {
+__device__ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
+                                               double *alpha,
+                                               double *beta,
+                                               double *gamma) {
   if (ithread >= nk) return;
   int l = lmin + 2 * ithread;
 
@@ -121,17 +111,17 @@ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
  *****/
 
 {{py:
-kernel_or_not = [('kernel', '_kernel', 'global'),
-                 ('', '', 'local')]
+kernel_or_not = [('__global__', '_kernel', ''),
+                 ('__device__', '', '')]
 }}
 
 /* Do a dot product of the 1D vector P with NVECS vectors
    stored in q, and simultaneously copy P into local memory
    P_local. */
 {{for spec, suffix, scope in kernel_or_not}}
-{{spec}} void dot_and_copy{{suffix}}(global const double *P,
-                                     global const double *q,
-                                     global double *P_copy,
+{{spec}} void dot_and_copy{{suffix}}(const double *P,
+                                     const double *q,
+                                     double *P_copy,
                                      {{scope}} double *work_sum,
                                      int ni) {
   double s[NVECS];
@@ -159,7 +149,6 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
                                         {{scope}} double *thread_sums,
                                         {{scope}} double *warp_sums) {
     /* TODO: Use parallelism to work on multiple vectors in parallel... */
-  WARP_BARRIER();
   {{for p in range(log2(warp_size))}}
   {{py:stride = 2**p}}
   if (ithread % {{2 * stride}} == 0) {
@@ -175,7 +164,6 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
     {{endif}}
     }
   }
-  WARP_BARRIER();
   {{endfor}}
 }
 {{endfor}}
@@ -190,7 +178,7 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
 {{for spec, suffix, scope in kernel_or_not}}
 {{spec}} void inter_warp_sum{{suffix}}(int k_start, int nk,
                                        {{scope}} double *work_local_sum,
-                                       global double *out,
+                                       double *out,
                                        int out_stride) {
   /* Have threads divide evenly over the different vectors, gracefully
      handling different nk. */
@@ -209,7 +197,7 @@ kernel_or_not = [('kernel', '_kernel', 'global'),
 /* Zero the accumulation buffer on a per-warp basis, so that no
    barrier is needed. work_local_sum is a 3D array indexed by [iwarp,
    k_offset, j] */
-void zero_accumulation_buffer(local double *work_local_sum) {
+__device__ void zero_accumulation_buffer(double *work_local_sum) {
   for (int idx = ithread % WARP_SIZE; idx < NVECS * K_CHUNK; idx += WARP_SIZE) {
     work_local_sum[iwarp * K_CHUNK * NVECS + idx] = 0;
   }
@@ -219,32 +207,32 @@ void zero_accumulation_buffer(local double *work_local_sum) {
  * Kernel entry points
  *****/
 
-kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
-                                         global const double *x_squared,
-                                         global const double *Lambda_0,
-                                         global const double *Lambda_1,
-                                         global const double *q,
-                                         global double *work,
-                                         global double *out) {
+__global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
+                                             const double *x_squared,
+                                             const double *Lambda_0,
+                                             const double *Lambda_1,
+                                             const double *q,
+                                             double *work,
+                                             double *out) {
   /* Scratch for auxiliary values */
-  local double alpha[NTHREADS], beta[NTHREADS], gamma[NTHREADS];
+  __shared__ double alpha[NTHREADS], beta[NTHREADS], gamma[NTHREADS];
 
   /* Scratch for sum-reduction. We use the one column padding trick to
      avoid memory bank conflicts. See work_sum_idx for indexing.  */
 
-  local double work_local_sum[NWARPS * NTHREADS * NVECS];
-  local double work_warp_sum[NTHREADS * NVECS];
+  __shared__ double work_local_sum[NWARPS * NTHREADS * NVECS];
+  __shared__ double work_warp_sum[NTHREADS * NVECS];
 
   /*  if (get_local_size(0) != NTHREADS) {
     printf("Assertion get_local_size(0) == NTHREADS failed\n");
     printf("FAIL %d", *(int*)0);
     }*/
 
-  int iblock = get_global_id(0) / NTHREADS;
+  int iblock = blockIdx.x;
 
   /* Buffer for temporarily storing Legendre function values */
-  global double *Lambda_pp = work + (2 * iblock) * MAX_NI;
-  global double *Lambda_p = work + (2 * iblock + 1) * MAX_NI;
+  double *Lambda_pp = work + (2 * iblock) * MAX_NI;
+  double *Lambda_p = work + (2 * iblock + 1) * MAX_NI;
 
   /* Shift to our block */
   x_squared += iblock * ni;
@@ -261,7 +249,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   warp_sum_reduce(0, work_warp_sum, work_local_sum);
   dot_and_copy(Lambda_1, q, Lambda_p, work_warp_sum, ni);
   warp_sum_reduce(1, work_warp_sum, work_local_sum);
-  barrier(CLK_LOCAL_MEM_FENCE);
+  __syncthreads();
   inter_warp_sum(0, 2, work_local_sum, out, nk);
   /* No barrier: Will hit barrier below before work_local_sum gets
      overwritten again, and we only write once to each element in
@@ -279,7 +267,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, K_CHUNK,
                                    alpha, beta, gamma);
 
-    barrier(CLK_LOCAL_MEM_FENCE);
+    __syncthreads();
     /* Zero accumulation scratch buffer */
     zero_accumulation_buffer(work_local_sum);
 
@@ -354,7 +342,7 @@ kernel void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     /* Done with row block. Do inter-warp accumulation and write to output
        before heading on to the next block. We let k=ithread, and have
        each thread sum over iwarp. */
-    barrier(CLK_LOCAL_MEM_FENCE);
+    __syncthreads();
     inter_warp_sum(k_block_start, k_block_len,
                    work_local_sum, out, nk);
     /* Do not need another barrier here because the next iteration will

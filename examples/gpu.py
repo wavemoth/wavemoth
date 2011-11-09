@@ -13,38 +13,24 @@ import numpy.linalg as la
 
 from matplotlib import pyplot as plt
 
+import pycuda.autoinit
+import wavemoth.cuda.flatcuda as cuda
+
 from wavemoth import *
 from wavemoth import healpix
-from wavemoth.cl import ClLegendreKernel
-import wavemoth.cl.flatpyopencl as cl
+from wavemoth.cuda import CudaLegendreKernel
 
 def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
-
-for platform in cl.get_platforms():
-    if socket.gethostname() == 'dagss-laptop':
-        wanted = 'Intel'
-        nblocks = 10
-        has_warps = False
-        nside = 64
-    else:
-        wanted = 'NVIDIA'
-        nblocks = 500
-        has_warps = True
-        nside = 1024
-
-    if wanted in platform.name:
-        ctx = cl.Context(platform.get_devices())
-
-queue = cl.CommandQueue(ctx, 
-                        properties=cl.command_queue_properties.PROFILING_ENABLE)
-
+nblocks = 500
+has_warps = True
+nside = 32
 
 # Compute Lambda
 k_chunk = 64
 i_chunk = 2
-nvecs = 8
+nvecs = 2
 
 m = 0
 lmax = 2 * nside
@@ -61,44 +47,43 @@ nk, ni = Lambda.shape
 
 q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
     (Lambda.shape[1], nvecs, nblocks), order='F')
-q_cl = cl.to_device(queue, q)
 
 a0 = np.dot(Lambda, q[:, :, 0])
 
-for nwarps in [1, 2, 3, 4, 5]:
+for nwarps in [1]:
     nthreads = 32 * nwarps
 
     print
     print
     print '=== nthreads=%d, nvecs=%d ===' % (nthreads, nvecs)
 
-    Lambda_0_cl = cl.to_device(queue, hrepeat(Lambda[0, :], nblocks))
-    Lambda_1_cl = cl.to_device(queue, hrepeat(Lambda[1, :], nblocks))
-    x_squared_cl = cl.to_device(queue,
-                                hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F'))
-    out_cl = cl.zeros(queue, (nk, nvecs, nblocks), dtype=np.double, order='F')
+    Lambda_0 = hrepeat(Lambda[0, :], nblocks)
+    Lambda_1 = hrepeat(Lambda[1, :], nblocks)
+    x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
+    out = np.zeros((nk, nvecs, nblocks), dtype=np.double, order='F')
+
+    kernel = CudaLegendreKernel(max_ni=ni,
+                                nthreads=nthreads, nvecs=nvecs,
+                                has_warps=has_warps,
+                                k_chunk=k_chunk,
+                                i_chunk=i_chunk)
 
     times = []
     for rep in range(repeat):
-        kernel = ClLegendreKernel(ctx, max_ni=ni,
-                                  nthreads=nthreads, nvecs=nvecs,
-                                  has_warps=has_warps,
-                                  k_chunk=k_chunk,
-                                  i_chunk=i_chunk)
-        e = kernel.transpose_legendre_transform(queue, m, m + odd,
-                                                x_squared_cl, Lambda_0_cl, Lambda_1_cl,
-                                                q_cl, out_cl)
-        e.wait()
-        times.append((e.profile.end - e.profile.start) * 1e-9)
+        kernel.transpose_legendre_transform(m, m + odd,
+                                            x_squared, Lambda_0, Lambda_1,
+                                            q, out)
+        #e.wait()
+        #times.append((e.profile.end - e.profile.start) * 1e-9)
 
-    dt = min(times)
+    #dt = min(times)
 
     nk, ni = Lambda.shape
     matrix_elements = nblocks * ni * nk
     UOP = matrix_elements * (6 + 2 * nvecs)
-    print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
+    #print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
 
-    a = out_cl.get()
+    a = out
     if not np.all(a[:, :, 0:1] == a):
         print 'NOT ALL j EQUAL!:', np.linalg.norm(a[:, :, 0:1] - a)
     a = a[:, :, 0]

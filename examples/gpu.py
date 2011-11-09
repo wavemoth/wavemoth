@@ -25,14 +25,14 @@ import wavemoth.cuda.flatcuda as cuda
 def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
-nblocks = 1000
+np.seterr(all='raise')
+
+nblocks = 500
 has_warps = True
 nside = 1024
 
 # Compute Lambda
-k_chunk = 32
-i_chunk = 4
-nvecs = 2
+nvecs = 8
 
 m = 0
 lmax = 2 * nside
@@ -43,8 +43,14 @@ thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
 
-# Mock input vector
+
 nk, ni = Lambda.shape
+
+Lambda_0 = hrepeat(Lambda[0, :], nblocks)
+Lambda_1 = hrepeat(Lambda[1, :], nblocks)
+x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
+
+# Mock input vector
     
 
 q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
@@ -55,16 +61,15 @@ a0 = np.dot(Lambda, q[:, :, 0])
 #cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
 #cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
 
-for nwarps in [1]:
+check = False
+
+def doit(nvecs, nwarps, i_chunk, k_chunk):
     nthreads = 32 * nwarps
 
     print
     print
-    print '=== nthreads=%d, nvecs=%d ===' % (nthreads, nvecs)
+    print '=== nvecs={nvecs}, nthreads={nthreads}, i_chunk={i_chunk}, k_chunk={k_chunk}'.format(**locals())
 
-    Lambda_0 = hrepeat(Lambda[0, :], nblocks)
-    Lambda_1 = hrepeat(Lambda[1, :], nblocks)
-    x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
     out = np.zeros((nk, nvecs, nblocks), dtype=np.double, order='F')
 
     kernel = CudaLegendreKernel(max_ni=ni,
@@ -83,19 +88,32 @@ for nwarps in [1]:
     times = np.asarray(prof.transpose_legendre_transform) * 1e-6
     dt = np.min(times)
 
-    nk, ni = Lambda.shape
     matrix_elements = nblocks * ni * nk
     UOP = matrix_elements * (6 + 2 * nvecs)
     print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
 
     a = out
-    if not np.all(a[:, :, 0:1] == a):
-        print 'NOT ALL j EQUAL!:', np.linalg.norm(a[:, :, 0:1] - a)
-    a = a[:, :, 0]
+    if check:
+        if not np.all(a[:, :, 0:1] == a):
+            print 'NOT ALL j EQUAL!'
 
+    a = a[:, :, 0]
     print la.norm(a - a0)
+    sys.stdout.flush()
+    return a
+    
+
+for nwarps in [1, 2, 3]:
+    for i_chunk in [1, 2, 3, 4, 6, 8]:
+        for k_chunk in [32]:
+            a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 
 print np.hstack([a, a0])
 
 
 #plt.clf()
+
+
+# TODO:
+# k_chunk must be 32 (because of aux computations)
+# i_chunk must be %2 (because of ni)

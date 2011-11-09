@@ -22,23 +22,28 @@ def parse_profile_csv(filename, results):
             continue
         if len(line) == 3:
             method, gputime, cputime = line
+            occupancy = 0
         elif len(line) == 4:
             method, gputime, cputime, occupancy = line
         if method not in results:
-            results[method] = stats = []
+            results[method] = stats = AttrDict()
         else:
             stats = results[method]
-        stats.append(float(gputime))
+        for listname, value in [('times', float(gputime)),
+                                ('occupancy', float(occupancy))]:
+            if listname not in stats:
+                stats[listname] = []
+            stats[listname].append(value)
 
 @contextmanager
 def cuda_profile():
-    fields=['method', 'gputime', 'cputime', 'occupancy']
+    options=['method', 'gputime', 'cputime', 'occupancy']
     config_file = mktemp()
     profile_file = mktemp()
     try:
         results = AttrDict()
         with file(config_file, 'w') as f:
-            f.write('gputime')#\n'.join(fields))
+            f.write('\n'.join(options))
         cuda.initialize_profiler(config_file, profile_file, cuda.CSV)
         cuda.start_profiler()
         try:

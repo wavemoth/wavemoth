@@ -11,7 +11,7 @@ def log2(x):
 
 #define NVECS {{nvecs}}
 #define NTHREADS {{nthreads}}
-#define APPROXIMATE_AUX 1
+#define APPROXIMATE_AUX 0
 #define MAX_NI {{max_ni}}
 #define WARP_SIZE {{warp_size}}
 {{py: nwarps = nthreads // warp_size}}

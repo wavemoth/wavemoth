@@ -63,7 +63,8 @@ class CudaLegendreKernel(object):
                                          warp_size=self.warp_size,
                                          max_ni=max_ni,
                                          **args)
-        self.module = cuda.SourceModule(code)
+        options = ['-Xptxas', '-v', '-ftz=true', '-prec-div=true', '-prec-sqrt=true']
+        self.module = cuda.SourceModule(code, options=options, cache_dir=False)
         for name in ['transpose_legendre_transform', 'dot_and_copy_kernel', 'warp_sum_reduce_kernel',
                      'inter_warp_sum_kernel']:
             setattr(self, '_' + name, self.module.get_function(name))

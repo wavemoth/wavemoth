@@ -1,3 +1,5 @@
+from __future__ import division
+
 # http://www.khronos.org/registry/cl/sdk/1.1/docs/man/xhtml/
 
 
@@ -29,7 +31,7 @@ def hrepeat(x, n):
 
 nblocks = 500
 has_warps = True
-nside = 1024
+nside = 512
 
 # Compute Lambda
 nvecs = 2
@@ -85,12 +87,15 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
             kernel.transpose_legendre_transform(m, m + odd,
                                                 x_squared, Lambda_0, Lambda_1,
                                                 q, out)
-    times = np.asarray(prof.transpose_legendre_transform) * 1e-6
+    times = np.asarray(prof.transpose_legendre_transform.times) * 1e-6
     dt = np.min(times)
 
     matrix_elements = nblocks * ni * nk
     UOP = matrix_elements * (6 + 2 * nvecs)
     print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
+    occupancy_fraction = prof.transpose_legendre_transform.occupancy[0]
+    nblocks_per_sm = occupancy_fraction * 1024. / (32. * nwarps)
+    print 'Occupancy: %.2f (%.2f blocks)' % (occupancy_fraction, nblocks_per_sm) 
 
     a = out
     if check:
@@ -103,9 +108,9 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     return a
     
 
-for nwarps in [1, 2, 3]:
-    for i_chunk in [2]:
-        for k_chunk in [8, 16, 32, 64]:
+for nwarps in [2]:
+    for i_chunk in [4]:
+        for k_chunk in [64]:#, 16, 32, 64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 
 print np.hstack([a, a0])

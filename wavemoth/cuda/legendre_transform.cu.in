@@ -14,7 +14,8 @@ def log2(x):
 #define APPROXIMATE_AUX 1
 #define MAX_NI {{max_ni}}
 #define WARP_SIZE {{warp_size}}
-#define NWARPS {{nthreads // warp_size}}
+{{py: nwarps = nthreads // warp_size}}
+#define NWARPS {{nwarps}}
 {{default memory_bank_count = warp_size}}
 #define K_CHUNK {{k_chunk}}
 #define I_CHUNK {{i_chunk}}
@@ -93,19 +94,43 @@ __device__ double get_d(unsigned short m, unsigned short l) {
   return num / den;
 }
 
-__device__ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
+__device__ void compute_recurrence_auxiliaries(int m, int lmin,
                                                double *alpha,
                                                double *beta,
                                                double *gamma) {
-  if (ithread >= nk) return;
-  int l = lmin + 2 * ithread;
+  /* Let half of the warps handle alpha, the rest beta/gamma; taking
+     care to take both branches when NWARPS==1. */
+  {{def alphapart()}}
+      alpha[k] = -get_d(m, l - 2);
+  {{enddef}}
 
-  alpha[ithread] = -get_d(m, l - 2);
+  {{def betagammapart()}}
+      double cpp = get_c(m, l - 4);
+      double cp_inv = get_c_inv(m, l - 2);
+      beta[k] = cp_inv;
+      gamma[k] = -cpp * cp_inv;
+  {{enddef}}
 
-  double cpp = get_c(m, l - 4);
-  double cp_inv = get_c_inv(m, l - 2);
-  beta[ithread] = cp_inv;
-  gamma[ithread] = -cpp * cp_inv;
+  {{if nthreads == warp_size}}
+    for (int k = ithread; k < K_CHUNK; k += NTHREADS) {
+      int l = lmin + 2 * k;
+      {{alphapart()}}
+      {{betagammapart()}}
+    }
+  {{else}}
+    {{py: nthreads_mid = (nwarps // 2) * warp_size}}
+    if (ithread < {{nthreads_mid}}) {
+      for (int k = ithread; k < K_CHUNK; k += {{nthreads_mid}}) {
+        int l = lmin + 2 * k;
+        {{alphapart()}}
+      }
+    } else {
+      for (int k = ithread - {{nthreads_mid}}; k < K_CHUNK; k += {{nthreads - nthreads_mid}}) {
+        int l = lmin + 2 * k;
+        {{betagammapart()}}
+      }
+    }
+  {{endif}}
 }
 
 /*****
@@ -217,13 +242,12 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              double *work,
                                              double *out) {
   /* Scratch for auxiliary values */
-  __shared__ double alpha[{{max(k_chunk, nthreads)}}], beta[{{max(k_chunk, nthreads)}}],
-    gamma[{{max(k_chunk, nthreads)}}];
+  __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
 
   /* Scratch for sum-reduction. We use the one column padding trick to
      avoid memory bank conflicts. See work_sum_idx for indexing.  */
 
-  __shared__ double work_local_sum[NWARPS * NTHREADS * NVECS];
+  __shared__ double work_local_sum[NWARPS * K_CHUNK * NVECS];
   __shared__ double work_warp_sum[NTHREADS * NVECS];
 
   /*  if (get_local_size(0) != NTHREADS) {
@@ -267,7 +291,7 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   for (int k_block_start = 2; k_block_start < nk; k_block_start += K_CHUNK) {
     int k_block_len = min(K_CHUNK, nk - k_block_start);
     /* Compute auxiliaries for this row-block */
-    compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start, K_CHUNK,
+    compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start,
                                    alpha, beta, gamma);
 
     __syncthreads();

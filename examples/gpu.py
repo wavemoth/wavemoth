@@ -25,14 +25,14 @@ import wavemoth.cuda.flatcuda as cuda
 def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
-np.seterr(all='raise')
+
 
 nblocks = 500
 has_warps = True
 nside = 1024
 
 # Compute Lambda
-nvecs = 8
+nvecs = 2
 
 m = 0
 lmax = 2 * nside
@@ -104,8 +104,8 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     
 
 for nwarps in [1, 2, 3]:
-    for i_chunk in [1, 2, 3, 4, 6, 8]:
-        for k_chunk in [32]:
+    for i_chunk in [2]:
+        for k_chunk in [8, 16, 32, 64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 
 print np.hstack([a, a0])
@@ -117,3 +117,4 @@ print np.hstack([a, a0])
 # TODO:
 # k_chunk must be 32 (because of aux computations)
 # i_chunk must be %2 (because of ni)
+# nthreads = 96 does not work either (?)

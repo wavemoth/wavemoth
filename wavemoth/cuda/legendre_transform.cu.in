@@ -113,18 +113,18 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin, int nk,
  *****/
 
 {{py:
-kernel_or_not = [('__global__', '_kernel', ''),
-                 ('__device__', '', '')]
+kernel_or_not = [('__global__', '_kernel'),
+                 ('__device__', '')]
 }}
 
 /* Do a dot product of the 1D vector P with NVECS vectors
    stored in q, and simultaneously copy P into local memory
    P_local. */
-{{for spec, suffix, scope in kernel_or_not}}
+{{for spec, suffix in kernel_or_not}}
 {{spec}} void dot_and_copy{{suffix}}(const double *P,
                                      const double *q,
                                      double *P_copy,
-                                     {{scope}} double *work_sum,
+                                     double *work_sum,
                                      int ni) {
   double s[NVECS];
   for (int j = 0; j != NVECS; ++j) {
@@ -146,10 +146,10 @@ kernel_or_not = [('__global__', '_kernel', ''),
 /* thread_sums[j, ithread] is summed over the threads in each warp and
    result placed in warp_sums[iwarp, k_offset, j].
    Contents of thread_sums is destructed in the process. */
-{{for spec, suffix, scope in kernel_or_not}}
+{{for spec, suffix in kernel_or_not}}
 {{spec}} void warp_sum_reduce{{suffix}}(int k_offset,
-                                        {{scope}} double *thread_sums,
-                                        {{scope}} double *warp_sums) {
+                                        double *thread_sums,
+                                        double *warp_sums) {
     /* TODO: Use parallelism to work on multiple vectors in parallel... */
   {{for p in range(log2(warp_size))}}
   {{py:stride = 2**p}}
@@ -177,9 +177,9 @@ kernel_or_not = [('__global__', '_kernel', ''),
    (NWARPS, K_CHUNK, NVECS).
 */
 
-{{for spec, suffix, scope in kernel_or_not}}
+{{for spec, suffix in kernel_or_not}}
 {{spec}} void inter_warp_sum{{suffix}}(int k_start, int nk,
-                                       {{scope}} double *work_local_sum,
+                                       double *work_local_sum,
                                        double *out,
                                        int out_stride) {
   /* Have threads divide evenly over the different vectors, gracefully

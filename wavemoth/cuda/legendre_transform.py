@@ -63,7 +63,9 @@ class CudaLegendreKernel(object):
                                          warp_size=self.warp_size,
                                          max_ni=max_ni,
                                          **args)
-        options = ['-Xptxas', '-v', '-ftz=true', '-prec-div=true', '-prec-sqrt=true']
+        options = ['-ftz=true',
+                   '-prec-div=true', '-prec-sqrt=true',
+                   '-maxrregcount=16', '-Xptxas', '-v', ]
         self.module = cuda.SourceModule(code, options=options, cache_dir=False)
         for name in ['transpose_legendre_transform', 'dot_and_copy_kernel', 'warp_sum_reduce_kernel',
                      'inter_warp_sum_kernel']:
@@ -89,6 +91,7 @@ class CudaLegendreKernel(object):
         return self._transpose_legendre_transform(
             int32(m), int32(lmin), int32(nk), int32(nx), In(x_squared),
             In(Lambda_0), In(Lambda_1), In(q), In(work), Out(out),
+            int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 
     @convertargs()

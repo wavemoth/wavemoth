@@ -240,7 +240,8 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              const double *Lambda_1,
                                              const double *q,
                                              double *work,
-                                             double *out) {
+                                             double *out,
+                                             int zero) {
   /* Scratch for auxiliary values */
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
 

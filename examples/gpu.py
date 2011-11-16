@@ -94,8 +94,9 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     UOP = matrix_elements * (6 + 2 * nvecs)
     print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
     occupancy_fraction = prof.transpose_legendre_transform.occupancy[0]
-    nblocks_per_sm = occupancy_fraction * 1024. / (32. * nwarps)
-    print 'Occupancy: %.2f (%.2f blocks)' % (occupancy_fraction, nblocks_per_sm) 
+    nblocks_per_sm = occupancy_fraction * 48. / (nwarps)
+    print 'Occupancy: %.2f (%.2f warps, %.2f blocks)' % (
+        occupancy_fraction, occupancy_fraction * 48, nblocks_per_sm) 
 
     a = out
     if check:
@@ -103,14 +104,14 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
             print 'NOT ALL j EQUAL!'
 
     a = a[:, :, 0]
-    print la.norm(a - a0)
+    print 'Error', la.norm(a - a0) / la.norm(a0)
     sys.stdout.flush()
     return a
     
 
-for nwarps in [2]:
-    for i_chunk in [4]:
-        for k_chunk in [64]:#, 16, 32, 64]:
+for nwarps in [4]:
+    for i_chunk in [1]:
+        for k_chunk in [32]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 
 print np.hstack([a, a0])

@@ -3,33 +3,16 @@ from numpy.testing import assert_almost_equal
 from nose.tools import ok_
 from numpy import all, any
 
-from ..legendre_transform import *
+import pycuda.autoinit
 
-from .. import flatpyopencl as cl
+from ..legendre_transform import *
 
 import socket
 
-WARP_SIZE = 32
-
-for platform in cl.get_platforms():
-    if socket.gethostname() == 'dagss-laptop':
-        wanted = 'Intel'
-        nblocks = 5
-        has_warps = False
-    else:
-        wanted = 'NVIDIA'
-        nblocks = 5000
-        has_warps = True
-
-    if wanted in platform.name:
-        ctx = cl.Context(platform.get_devices())
-
-queue = cl.CommandQueue(ctx, 
-                        properties=cl.command_queue_properties.PROFILING_ENABLE)
-
+WS = 32
 
 k_chunk = 32
-kopts = dict(max_ni=256, has_warps=has_warps, k_chunk=k_chunk, i_chunk=2)
+kopts = dict(max_ni=256, k_chunk=k_chunk, i_chunk=4)
 
 def ndrange(shape, dtype=np.double):
     return np.arange(np.prod(shape), dtype=dtype).reshape(shape)
@@ -100,4 +83,25 @@ def test_inter_warp_sum():
     yield test, 64, 4, 3
     yield test, 32, 2, 31
     
+    
+def test_parallel_reduction():
+    nthreads = 32 * 2
+    nvecs = 2
+    kernel = CudaLegendreKernel(nvecs=nvecs, nthreads=nthreads, **kopts)
+
+    input = np.ones((nvecs, 16, nthreads))
+    for irow in range(16):
+        input[0, irow, :] = irow
+    for irow in range(16):
+        input[1, irow, :] = -irow
+    output = np.zeros((nvecs, 16, nthreads // WS))
+    kernel.test_reduce_kernel(input, output)
+
+    print np.vstack([output.sum(axis=2), input.sum(axis=2)]).T
+    print output.T
+
+    #ok_(np.all(output.sum(axis=2) == input.sum(axis=2)))
+
+
+
     

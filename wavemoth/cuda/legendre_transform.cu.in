@@ -7,23 +7,27 @@ def log2(x):
         x //= 2
         r += 1
     return r
+
+def idiv(x, y): # Because / followed by / destroys emacs formatting
+    return x.__floordiv__(y)
 }}
 
 #define NVECS {{nvecs}}
 #define NTHREADS {{nthreads}}
 #define APPROXIMATE_AUX 0
 #define MAX_NI {{max_ni}}
-#define WARP_SIZE {{warp_size}}
+#define WS {{warp_size}}
 {{py: nwarps = nthreads // warp_size}}
 #define NWARPS {{nwarps}}
 {{default memory_bank_count = warp_size}}
 #define K_CHUNK {{k_chunk}}
 #define I_CHUNK {{i_chunk}}
+{{py: ws = warp_size}}
 
 /* Cast to int to make it easier to printf, as all our integers are
    then 32-bit. */
 #define ithread ((int)threadIdx.x)
-#define iwarp (ithread / WARP_SIZE)
+#define iwarp (ithread / WS)
 
 
 /*****
@@ -118,7 +122,7 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin,
       {{betagammapart()}}
     }
   {{else}}
-    {{py: nthreads_mid = (nwarps // 2) * warp_size}}
+    {{py: nthreads_mid = (idiv(nwarps, 2) * warp_size)}}
     if (ithread < {{nthreads_mid}}) {
       for (int k = ithread; k < K_CHUNK; k += {{nthreads_mid}}) {
         int l = lmin + 2 * k;
@@ -134,6 +138,110 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin,
 }
 
 /*****
+ * Parallel tree reduction w/ test case
+ *****/
+
+{{py:
+class ReductionContext(object):
+    def __init__(self, nextrow_func, store_func):
+        self.all_buffers = set()
+        self.free_buffers = set()
+        self.nextrow_func = nextrow_func
+        self.store_func = store_func
+
+    def allocate_buf(self):
+        if len(self.free_buffers) == 0:
+            buffer = 'reduce_buf_%d' % len(self.all_buffers)
+            self.all_buffers.add(buffer)
+            self.free_buffers.add(buffer)
+        return self.free_buffers.pop()
+
+    def deallocate_buf(self, buffer):
+        self.free_buffers.add(buffer)
+
+}}
+
+{{def block_add_reduce(buf_vname, out_vname)}}
+  {{# TODO avoid bank conflicts }}
+  {{out_vname}}[ithread] = {{buf_vname}}[reduce_idx] + {{buf_vname}}[reduce_idx + 2];
+{{enddef}}
+
+{{def reduce_worker(ctx, row_start, row_stop, out_vname)}}
+  {{if row_stop - row_start == 1}}
+    {{ctx.nextrow_func(row_start, out_vname)}}
+  {{else}}
+    {{py: buf_vname = ctx.allocate_buf()}}
+    {{py: nrows = row_stop - row_start}}
+    {{reduce_worker(ctx, row_start, row_start + idiv(nrows, 2), buf_vname)}}
+    {{reduce_worker(ctx, row_start + idiv(nrows, 2), row_stop, '(%s + NTHREADS)' % buf_vname)}}
+
+    /* Do pairwise reduction of values in buf and store result in out.
+       For the final output, we call user code to do the store. */
+    {{py: value_code = '%s[reduce_idx] + %s[reduce_idx + 2]' % (buf_vname, buf_vname)}}
+    {{if out_vname is None}} /* first level */
+      //output[ithread] = {{value_code}};
+      {{ctx.store_func('(ithread % 2)', '((ithread % WS) / 2)', value_code)}}
+    {{else}} /* inner level, store results for parent level */
+      printf("%d: {{out_vname}}[%d] = {{buf_vname}}[%d] + {{buf_vname}}[%d] = %f + %f;\n",
+         ithread, ithread, reduce_idx, reduce_idx + 2,
+         {{buf_vname}}[reduce_idx], {{buf_vname}}[reduce_idx + 2]);
+
+      {{out_vname}}[ithread] = {{value_code}};
+    {{endif}}
+
+    {{py: ctx.deallocate_buf(buf_vname)}}
+  {{endif}}
+{{enddef}}
+
+{{def parallel_tree_reduction(final_out_vname, *args)}}
+  {{py: ctx = ReductionContext(*args)}}
+
+  {{py: body = reduce_worker(ctx, 0, 16, None)}}
+  {{for buf in ctx.all_buffers}}
+    __shared__ double {{buf}}[2 * NTHREADS];
+  {{endfor}}
+  int pair_idx = (ithread % WS) / 2;
+  int reduce_idx = (ithread / WS) * 2 * WS + 4 * pair_idx + ithread % 2;
+  printf("%d %d\n", ithread, reduce_idx);
+  {{body}}
+{{enddef}}
+
+{{py: assert nvecs % 2 == 0}}
+__global__ void test_reduce_kernel(const double *input, double *output) {
+  /* Assume input has shape (nvecs, 16, nthreads), output shape
+     (nvecs, 16, nwarps); this routine should sum over all threads in each
+     warp, using the same parallel reduction algorithm as we use in
+     transpose_legendre_transform. */
+
+  /* Registers for loading row of input*/
+  double mine, to_other;
+  int odd;
+  {{def nextrow(rowidx, outbuf)}}
+    /* Load next row into registers -- in transpose_legendre_transform,
+       this step is replaced by computation. The "computation order" must
+       be arranged so that vec-number is reversed for every other thread... */
+    odd = ithread % 2;
+    mine = input[odd * 16 * NTHREADS + {{rowidx}} * NTHREADS + ithread];
+    to_other = input[(1 - odd) * 16 * NTHREADS + {{rowidx}} * NTHREADS + ithread];
+    /* Pair-of-two sum-reduction */
+    {{outbuf}}[ithread] = to_other; /* Send q0 to neighbour thread */
+    mine += {{outbuf}}[ithread + 1 - 2 * odd]; /* Fetch accumulation to q1 from neighbour */
+    printf("%d: reading {{rowidx}}: %f\n", ithread, mine);
+    {{outbuf}}[ithread] = mine; /* store interleaved: (j=0, j=1, j=0, j=1, ...) */
+  {{enddef}}
+  {{def store(vec_code, row_code, value_code)}}
+  printf("%d: storing [%d,%d]=%f\n", ithread, {{vec_code}}, {{row_code}}, {{value_code}});
+  output[{{vec_code}} * 16 * NWARPS + {{row_code}} * NWARPS + iwarp] = {{value_code}};
+  {{enddef}}
+
+  {{parallel_tree_reduction('output', nextrow, store)}}
+
+}
+
+
+
+
+/*****
  * Main code
  *****/
 
@@ -141,7 +249,7 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin,
 kernel_or_not = [('__global__', '_kernel'),
                  ('__device__', '')]
 }}
-
+     
 /* Do a dot product of the 1D vector P with NVECS vectors
    stored in q, and simultaneously copy P into local memory
    P_local. */
@@ -225,7 +333,7 @@ kernel_or_not = [('__global__', '_kernel'),
    barrier is needed. work_local_sum is a 3D array indexed by [iwarp,
    k_offset, j] */
 __device__ void zero_accumulation_buffer(double *work_local_sum) {
-  for (int idx = ithread % WARP_SIZE; idx < NVECS * K_CHUNK; idx += WARP_SIZE) {
+  for (int idx = ithread % WS; idx < NVECS * K_CHUNK; idx += WS) {
     work_local_sum[iwarp * K_CHUNK * NVECS + idx] = 0;
   }
 }
@@ -352,7 +460,9 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
         {{endfor}}
         /* ...and then do the tree reduction. The target is copied into
            work_local_sum at kt. */
-        warp_sum_reduce(kt, work_warp_sum, work_local_sum);
+        if (zero) {
+          warp_sum_reduce(kt, work_warp_sum, work_local_sum);
+        }
       }
 
 

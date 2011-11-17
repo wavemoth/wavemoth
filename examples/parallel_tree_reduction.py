@@ -10,7 +10,6 @@ def block_add_reduce(top, bottom, output):
     assert np.prod(bottom.shape) == 32
     assert np.prod(output.shape) == 32
     h = top.shape[1]
-    print top.shape, h, output.shape
     output[:, :h, :] = top[:, :, ::2] + top[:, :, 1::2]
     output[:, h:, :] = bottom[:, :, ::2] + bottom[:, :, 1::2]
 
@@ -41,10 +40,8 @@ def warp_tree_reduction(row_start, row_stop, out):
         top_block, bottom_block = buf
         warp_tree_reduction(row_start, row_start + nrows // 2, top_block)
         warp_tree_reduction(row_start + nrows // 2, row_stop, bottom_block)
-        #out = allocate(nrows)
         block_add_reduce(top_block, bottom_block, out)
         deallocate(buf)
-        #deallocate(bottom_block)
         return out
         
 

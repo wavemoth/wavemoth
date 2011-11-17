@@ -109,8 +109,8 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     return a
     
 
-for nwarps in [4]:
-    for i_chunk in [1]:
+for nwarps in [2]:
+    for i_chunk in [4]:
         for k_chunk in [32]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 

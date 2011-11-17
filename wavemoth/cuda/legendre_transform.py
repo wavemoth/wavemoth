@@ -96,7 +96,7 @@ class CudaLegendreKernel(object):
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 
     def test_reduce_kernel(self, input, output):
-        self._test_reduce_kernel(In(input), Out(output), block=(self.nthreads, 1, 1),
+        self._test_reduce_kernel(In(input), InOut(output), block=(self.nthreads, 1, 1),
                                  grid=(1, 1))
 
     ## @convertargs()

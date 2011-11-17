@@ -85,7 +85,7 @@ def test_inter_warp_sum():
     
     
 def test_parallel_reduction():
-    nthreads = 32 * 2
+    nthreads = 32 * 3
     nvecs = 2
     kernel = CudaLegendreKernel(nvecs=nvecs, nthreads=nthreads, **kopts)
 
@@ -94,13 +94,19 @@ def test_parallel_reduction():
         input[0, irow, :] = irow
     for irow in range(16):
         input[1, irow, :] = -irow
+
+    input[0, 0, :32] = 100
+    input[0, 0, 32:64] = 200
+    input[0, 0, 64:] = 300
+
     output = np.zeros((nvecs, 16, nthreads // WS))
     kernel.test_reduce_kernel(input, output)
 
-    print np.vstack([output.sum(axis=2), input.sum(axis=2)]).T
-    print output.T
+    if 0:
+        print np.vstack([output.sum(axis=2), input.sum(axis=2)]).T
+        print output.T
 
-    #ok_(np.all(output.sum(axis=2) == input.sum(axis=2)))
+    ok_(np.all(output.sum(axis=2) == input.sum(axis=2)))
 
 
 

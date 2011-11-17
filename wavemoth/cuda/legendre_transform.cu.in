@@ -161,11 +161,6 @@ class ReductionContext(object):
 
 }}
 
-{{def block_add_reduce(buf_vname, out_vname)}}
-  {{# TODO avoid bank conflicts }}
-  {{out_vname}}[ithread] = {{buf_vname}}[reduce_idx] + {{buf_vname}}[reduce_idx + 2];
-{{enddef}}
-
 {{def reduce_worker(ctx, row_start, row_stop, out_vname)}}
   {{if row_stop - row_start == 1}}
     {{ctx.nextrow_func(row_start, out_vname)}}
@@ -173,36 +168,37 @@ class ReductionContext(object):
     {{py: buf_vname = ctx.allocate_buf()}}
     {{py: nrows = row_stop - row_start}}
     {{reduce_worker(ctx, row_start, row_start + idiv(nrows, 2), buf_vname)}}
-    {{reduce_worker(ctx, row_start + idiv(nrows, 2), row_stop, '(%s + NTHREADS)' % buf_vname)}}
+    {{reduce_worker(ctx, row_start + idiv(nrows, 2), row_stop, '(%s + WS)' % buf_vname)}}
 
     /* Do pairwise reduction of values in buf and store result in out.
        For the final output, we call user code to do the store. */
-    {{py: value_code = '%s[reduce_idx] + %s[reduce_idx + 2]' % (buf_vname, buf_vname)}}
-    {{if out_vname is None}} /* first level */
-      //output[ithread] = {{value_code}};
-      {{ctx.store_func('(ithread % 2)', '((ithread % WS) / 2)', value_code)}}
-    {{else}} /* inner level, store results for parent level */
-      printf("%d: {{out_vname}}[%d] = {{buf_vname}}[%d] + {{buf_vname}}[%d] = %f + %f;\n",
-         ithread, ithread, reduce_idx, reduce_idx + 2,
-         {{buf_vname}}[reduce_idx], {{buf_vname}}[reduce_idx + 2]);
-
-      {{out_vname}}[ithread] = {{value_code}};
-    {{endif}}
-
+    {
+      double _reduced_val = {{buf_vname}}[reduce_idx] + {{buf_vname}}[reduce_idx + 2];
+      {{if out_vname is None}} /* first level */
+        int _reduced_j = ithread % 2;
+        int _reduced_k = ((ithread % WS) / 2);
+        {{ctx.store_func('_reduced_j', '_reduced_k', '_reduced_val')}}
+      {{else}} /* inner level, store results for parent level */
+        {{out_vname}}[ithread % WS] = _reduced_val;
+      {{endif}}
+    }
     {{py: ctx.deallocate_buf(buf_vname)}}
   {{endif}}
 {{enddef}}
 
-{{def parallel_tree_reduction(final_out_vname, *args)}}
+{{def parallel_tree_reduction(*args)}}
   {{py: ctx = ReductionContext(*args)}}
 
   {{py: body = reduce_worker(ctx, 0, 16, None)}}
+
+  /* Buffers for intra-warp communication. They are segmented into one
+     independent area for each warp of size 2 * WS; no cross-warp talk. */
   {{for buf in ctx.all_buffers}}
-    __shared__ double {{buf}}[2 * NTHREADS];
+    __shared__ volatile double _{{buf}}[2 * NTHREADS];
+    volatile double *{{buf}} = _{{buf}} + 2 * iwarp * WS;
   {{endfor}}
   int pair_idx = (ithread % WS) / 2;
-  int reduce_idx = (ithread / WS) * 2 * WS + 4 * pair_idx + ithread % 2;
-  printf("%d %d\n", ithread, reduce_idx);
+  int reduce_idx = 4 * pair_idx + ithread % 2;
   {{body}}
 {{enddef}}
 
@@ -216,6 +212,7 @@ __global__ void test_reduce_kernel(const double *input, double *output) {
   /* Registers for loading row of input*/
   double mine, to_other;
   int odd;
+
   {{def nextrow(rowidx, outbuf)}}
     /* Load next row into registers -- in transpose_legendre_transform,
        this step is replaced by computation. The "computation order" must
@@ -224,17 +221,15 @@ __global__ void test_reduce_kernel(const double *input, double *output) {
     mine = input[odd * 16 * NTHREADS + {{rowidx}} * NTHREADS + ithread];
     to_other = input[(1 - odd) * 16 * NTHREADS + {{rowidx}} * NTHREADS + ithread];
     /* Pair-of-two sum-reduction */
-    {{outbuf}}[ithread] = to_other; /* Send q0 to neighbour thread */
-    mine += {{outbuf}}[ithread + 1 - 2 * odd]; /* Fetch accumulation to q1 from neighbour */
-    printf("%d: reading {{rowidx}}: %f\n", ithread, mine);
-    {{outbuf}}[ithread] = mine; /* store interleaved: (j=0, j=1, j=0, j=1, ...) */
+    {{outbuf}}[ithread % 32] = to_other; /* Send q0 to neighbour thread */
+    mine += {{outbuf}}[ithread % 32 + 1 - 2 * odd]; /* Fetch accumulation to q1 from neighbour */
+    {{outbuf}}[ithread % 32] = mine; /* store interleaved: (j=0, j=1, j=0, j=1, ...) */
   {{enddef}}
   {{def store(vec_code, row_code, value_code)}}
-  printf("%d: storing [%d,%d]=%f\n", ithread, {{vec_code}}, {{row_code}}, {{value_code}});
   output[{{vec_code}} * 16 * NWARPS + {{row_code}} * NWARPS + iwarp] = {{value_code}};
   {{enddef}}
 
-  {{parallel_tree_reduction('output', nextrow, store)}}
+  {{parallel_tree_reduction(nextrow, store)}}
 
 }
 

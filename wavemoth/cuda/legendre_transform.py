@@ -66,9 +66,8 @@ class CudaLegendreKernel(object):
                                          max_ni=max_ni,
                                          **args)
         options = ['-ftz=true',
-                   '-prec-div=true', '-prec-sqrt=true',
-                   '-Xptxas', '-v', ]
-        self.module = cuda.SourceModule(code, options=options, cache_dir=False)
+                   '-prec-div=true', '-prec-sqrt=true']
+        self.module = cuda.SourceModule(code, options=options, keep=True)
         for name in self.kernel_names:
             setattr(self, '_' + name, self.module.get_function(name))
 

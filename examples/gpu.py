@@ -44,7 +44,7 @@ repeat = 3
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
-
+Lambda = Lambda[:498, :]
 
 nk, ni = Lambda.shape
 
@@ -109,9 +109,9 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     return a
     
 
-for nwarps in [2]:
+for nwarps in [1, 2]:
     for i_chunk in [4]:
-        for k_chunk in [32]:
+        for k_chunk in [32, 64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 
 print np.hstack([a, a0])

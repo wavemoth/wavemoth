@@ -55,7 +55,7 @@ nvecs = 2
 m = 0
 lmax = 2 * nside
 odd = 0
-repeat = 3
+repeat = 1
 
 def downto(x, mod):
     if x % mod != 0:

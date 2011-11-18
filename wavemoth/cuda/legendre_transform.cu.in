@@ -354,7 +354,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
              gamma[kc] * Lambda_pp_{{ri}});
       {{enddef}}
       
-      {{def matvec_and_persist}}
+      {{def matvec_and_swap}}
           {{for rj in range(nvecs)}}
           acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
           {{endfor}}
@@ -364,8 +364,9 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
       {{enddef}}
 
       {{if blocktype == 'inner'}}
+//      printonce("%e\n", Lambda_p_{{ri}});
         {{Lambda_recurrence}}
-        {{matvec_and_persist}}
+        {{matvec_and_swap}}
       {{else}}
         int i = ithread + {{nthreads * ri}};
         /* Need to account for i_stops and state of Lambda_p/pp,
@@ -380,7 +381,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
           } else {
             {{Lambda_recurrence}}
           }
-          {{matvec_and_persist}}
+          {{matvec_and_swap}}
         }
       {{endif}}
     }
@@ -394,7 +395,6 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     }
   }
   {{enddef}}
-
 
   /*
     Code snippet for storing reduction results. Only executed for iwarp==0.
@@ -526,8 +526,18 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     int i_block_start = 0;
     {{for blocktype in ('inner', 'edge')}}
     {
-      int i_stop = {{'i_stops_chunk[0]' if blocktype == 'inner' else 'ni'}};
+      int i_stop;
+      {{if blocktype == 'inner'}}
+        if (k_block_start == 0) {
+          i_stop = 0; /* for top edge, skip inner block loop */
+        } else {
+          i_stop = i_stops_chunk[0];
+        }
+      {{else}}
+        i_stop = ni;
+      {{endif}}
       for (; i_block_start < i_stop; i_block_start += I_CHUNK * NTHREADS) {
+        printonce("{{blocktype}} k=%d i=%d %d\n", k_block_start, i_block_start, i_stops_chunk[0]);
         transpose_legendre_transform_{{blocktype}}_block(
             Lambda_0 + i_block_start,
             Lambda_1 + i_block_start,
@@ -541,9 +551,9 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
             out_chunk,
             q + i_block_start,
             ni /* q_stride */,
-            min(K_CHUNK, nk - k_block_start),
+            min(K_CHUNK, nk - k_block_start),  /* nrows */
             {{','.join([buf for buf in reduction_buffers])}}
-         ); /* nrows */
+         );
       }
     }
     {{endfor}}

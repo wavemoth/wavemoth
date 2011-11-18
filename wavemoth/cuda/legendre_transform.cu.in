@@ -43,6 +43,10 @@ def idiv(x, y): # Because / followed by / destroys emacs formatting
 {{enddef}}
 
 
+/* Hack: Substitute function name with if-test + name. ugh;
+   todo: look up vararg macros*/
+#define printonce if (ithread == 0 && iblock == 0) printf
+
 /*****
  * Utilities
  *****/
@@ -70,6 +74,13 @@ void print_array_glob(constant const char *msg, global double* arr, int len) {
 inline __device__ unsigned long prod4_16(unsigned short a, unsigned short b,
                               unsigned short c, unsigned short d) {
   return (unsigned long)((unsigned int)a * b) * ((unsigned int)c * d);
+}
+
+inline __device__ unsigned int round_up_to(unsigned int x, unsigned int mod) {
+  if (x % mod != 0) {
+    x += (mod - x % mod);
+  }
+  return x;
 }
 
 
@@ -434,8 +445,9 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   }
 
   /* Buffer for temporarily storing Legendre function values */
-  double *Lambda_pp = work + (2 * iblock) * MAX_NI;
-  double *Lambda_p = work + (2 * iblock + 1) * MAX_NI;
+  int max_ni = round_up_to(ni, I_CHUNK * NTHREADS);
+  double *Lambda_pp = work + (2 * iblock) * max_ni;
+  double *Lambda_p = work + (2 * iblock + 1) * max_ni;
 
   /* Shift to our block */
   x_squared += iblock * ni;
@@ -466,7 +478,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     Lambda_p[idx] = UNASSIGNED;//Lambda_1[idx];
   }
 
-
   /* No barrier: Will hit barrier below before work_local_sum gets
      overwritten again, and we only write once to each element in
      out. */
@@ -491,7 +502,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     
     /* Process all blocks on this block-row */
     for (int i_block_start = 0; i_block_start < ni; i_block_start += I_CHUNK * NTHREADS) {
-
       transpose_legendre_transform_edge_block(Lambda_0 + i_block_start,
                                               Lambda_1 + i_block_start,
                                               x_squared + i_block_start,

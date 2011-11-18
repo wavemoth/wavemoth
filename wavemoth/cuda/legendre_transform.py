@@ -43,6 +43,11 @@ def convertargs():
         return repl_func
     return dec
 
+def round_up_to(x, mod):
+    if x % mod > 0:
+        x += mod - x % mod
+    return x
+
 class CudaLegendreKernel(object):
     """
 
@@ -52,17 +57,19 @@ class CudaLegendreKernel(object):
     """
     
     kernel_names = ['transpose_legendre_transform', 'test_reduce_kernel']
-    def __init__(self, nvecs, nthreads, max_ni, warp_size=32, **args):
+    def __init__(self, nvecs, nthreads, max_ni, i_chunk, warp_size=32, **args):
         self.nthreads = nthreads
         self.nvecs = nvecs
         self.warp_size = 32
         self.max_ni = max_ni
+        self.i_chunk = i_chunk
 
         code = core.instantiate_template('legendre_transform.cu.in',
                                          nvecs=nvecs,
                                          nthreads=nthreads,
                                          warp_size=self.warp_size,
                                          max_ni=max_ni,
+                                         i_chunk=i_chunk,
                                          **args)
         options = ['-ftz=true',
                    '-prec-div=true', '-prec-sqrt=true']
@@ -89,7 +96,8 @@ class CudaLegendreKernel(object):
             raise ValueError('i_stops.dtype != np.uint16')
 
         # TODO: On-device heap allocation
-        work = np.empty(2 * self.max_ni * nblocks)
+        max_ni = round_up_to(nx, self.i_chunk * self.nthreads)
+        work = np.empty(2 * max_ni * nblocks)
         return self._transpose_legendre_transform(
             int32(m), int32(lmin), int32(nk), int32(nx), In(x_squared),
             In(Lambda_0), In(Lambda_1), In(i_stops), In(q), In(work), Out(out),

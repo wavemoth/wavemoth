@@ -47,12 +47,12 @@ def get_edge(Lambda):
 
 nblocks = 500
 has_warps = True
-nside = 128
+nside = 512
 
 # Compute Lambda
 nvecs = 2
 
-m = 0
+m = 200
 lmax = 2 * nside
 odd = 0
 repeat = 3

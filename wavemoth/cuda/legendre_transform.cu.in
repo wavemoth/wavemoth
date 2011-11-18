@@ -317,29 +317,26 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     {
       int i = i_offset + {{nthreads * ri}};
       int kc = k_offset + {{kt}};
-//      if (iblock == 0 && ithread == 0) {printf("%d %d\n", i, kc);}
       if (i < i_stops_chunk[kc]) {
         if (IS_UNASSIGNED(Lambda_p_{{ri}})) {
           /* Have not started this column at all yet */
           Lambda_val = Lambda_0[i];
-          //if (iblock == 0 && ithread == 0) printf("LOAD 0 %e\n", Lambda_val);
         } else if (IS_UNASSIGNED(Lambda_pp_{{ri}})) {
           /* Lambda_p != 0, Lambda_pp == 0 => Started in the previous iteration */
           Lambda_val = Lambda_1[i];
-          //if (iblock == 0 && ithread == 0) printf("LOAD 1 %e\n", Lambda_val);
         } else {
           Lambda_val =
             ((x_squared_{{ri}} + alpha[kc]) * beta[kc] * Lambda_p_{{ri}} +
              gamma[kc] * Lambda_pp_{{ri}});
-          //if (iblock == 0 && ithread == 0) printf("COMPUTE 1 %e\n", Lambda_val);
         }
-      }
-      {{for rj in range(nvecs)}}
-        acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
-      {{endfor}}
 
-      Lambda_pp_{{ri}} = Lambda_p_{{ri}};
-      Lambda_p_{{ri}} = Lambda_val;
+        {{for rj in range(nvecs)}}
+        acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
+        {{endfor}}
+
+        Lambda_pp_{{ri}} = Lambda_p_{{ri}};
+        Lambda_p_{{ri}} = Lambda_val;
+      }
     }
     {{endfor}}
         

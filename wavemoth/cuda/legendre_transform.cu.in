@@ -472,7 +472,7 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       /* Values in out_chunk are stored in strided order [j=0, j=1, j=1, ...]. */
       int j = ithread % NVECS;
       for (int k_offset = 0; k_offset != K_CHUNK; k_offset += NTHREADS / NVECS) {
-        int kt = ithread / 2;
+        int kt = ithread / NVECS;
         int k = k_block_start + k_offset + kt;
         int idx = (k_offset + kt) * NVECS + j;
         if (k < nk) {

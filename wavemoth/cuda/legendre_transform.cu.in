@@ -27,6 +27,8 @@ def idiv(x, y): # Because / followed by / destroys emacs formatting
 /* Cast to int to make it easier to printf, as all our integers are
    then 32-bit. */
 #define ithread ((int)threadIdx.x)
+#define iblock ((int)blockIdx.x)
+
 #define iwarp (ithread / WS)
 
 
@@ -203,33 +205,48 @@ class ReductionContext(object):
 {{enddef}}
 
 {{py: assert nvecs % 2 == 0}}
-__global__ void test_reduce_kernel(const double *input, double *output) {
-  /* Assume input has shape (nvecs, 16, nthreads), output shape
-     (nvecs, 16, nwarps); this routine should sum over all threads in each
-     warp, using the same parallel reduction algorithm as we use in
+__global__ void test_reduce_kernel(double *output, int repeat) {
+  /* Generates array (nvecs, 16, nwarps) in output, consisting
+     of sum_{over warp} ( ithread * irow * (ivec + 1)) ),
+     using the same parallel reduction algorithm as we use in
      transpose_legendre_transform. */
 
-  /* Registers for loading row of input*/
-  double mine, to_other;
-  int odd;
+  /* Move to block */
+  output += NTHREADS * iblock;
 
+  __shared__ double buffer[NTHREADS];
+
+  /* Zero output -- note that 2*16*nwarps == nthreads. */
+  buffer[ithread] = 0;
+  __syncthreads();
+
+  /* Registers for loading row of input*/
   {{def nextrow(rowidx, outbuf)}}
     /* Load next row into registers -- in transpose_legendre_transform,
        this step is replaced by computation. The "computation order" must
        be arranged so that vec-number is reversed for every other thread... */
-    odd = ithread % 2;
-    mine = input[odd * 16 * NTHREADS + {{rowidx}} * NTHREADS + ithread];
-    to_other = input[(1 - odd) * 16 * NTHREADS + {{rowidx}} * NTHREADS + ithread];
-    /* Pair-of-two sum-reduction */
-    {{outbuf}}[ithread % 32] = to_other; /* Send q0 to neighbour thread */
-    mine += {{outbuf}}[ithread % 32 + 1 - 2 * odd]; /* Fetch accumulation to q1 from neighbour */
-    {{outbuf}}[ithread % 32] = mine; /* store interleaved: (j=0, j=1, j=0, j=1, ...) */
+  {
+    int odd = ithread % 2;
+    int j_mine = odd;
+    int j_other = 1 - odd;
+    double mine = ithread * {{rowidx}} * (j_mine + 1);
+    double to_other = ithread * {{rowidx}} * (j_other + 1);
+    /* Pair-of-two sum-reduction. Result is stored
+       interleaved: (j=0, j=1, j=0, j=1, ...) */
+    {{outbuf}}[ithread % 32 + 1 - 2 * odd] = to_other; /* Send to neighbour thread */
+    {{outbuf}}[ithread % 32] += mine; /* Accumulate with what neighbour stored */
+  }
   {{enddef}}
   {{def store(vec_code, row_code, value_code)}}
-  output[{{vec_code}} * 16 * NWARPS + {{row_code}} * NWARPS + iwarp] = {{value_code}};
+  buffer[{{vec_code}} * 16 * NWARPS + {{row_code}} * NWARPS + iwarp] += {{value_code}};
   {{enddef}}
 
-  {{parallel_tree_reduction(nextrow, store)}}
+  for (int rep = 0; rep != repeat; ++rep) {
+    {{parallel_tree_reduction(nextrow, store)}}
+  }
+
+  __syncthreads();
+  output[ithread] = buffer[ithread];
 
 }
 
@@ -358,8 +375,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     printf("Assertion (nk - 2) % 16 == 0 failed\n");
     printf("FAIL %d", *(int*)0);
   }
-
-  int iblock = blockIdx.x;
 
   /* Buffer for temporarily storing Legendre function values */
   double *Lambda_pp = work + (2 * iblock) * MAX_NI;

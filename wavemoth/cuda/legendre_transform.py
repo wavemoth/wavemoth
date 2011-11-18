@@ -94,9 +94,10 @@ class CudaLegendreKernel(object):
             int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 
-    def test_reduce_kernel(self, input, output):
-        self._test_reduce_kernel(In(input), InOut(output), block=(self.nthreads, 1, 1),
-                                 grid=(1, 1))
+    def test_reduce_kernel(self, output, repeat=1, nblocks=1):
+        self._test_reduce_kernel(InOut(output), int32(repeat),
+                                 block=(self.nthreads, 1, 1),
+                                 grid=(nblocks, 1))
 
     ## @convertargs()
     ## def dot_and_copy(self, queue, P, q, P_local, work_sum):

@@ -71,7 +71,7 @@ class CudaLegendreKernel(object):
             setattr(self, '_' + name, self.module.get_function(name))
 
     def transpose_legendre_transform(self, m, lmin,
-                                     x_squared, Lambda_0, Lambda_1, q, out):
+                                     x_squared, Lambda_0, Lambda_1, i_stops, q, out):
         nblocks = q.shape[2]
         assert nblocks == out.shape[2] == Lambda_0.shape[1] == Lambda_1.shape[1]
         check_arrays([(x_squared, 2), (Lambda_0, 2), (Lambda_1, 2), (q, 3), (out, 3)])
@@ -85,11 +85,14 @@ class CudaLegendreKernel(object):
         if not (nx == Lambda_0.shape[0] == Lambda_1.shape[0] == x_squared.shape[0]):
             raise ValueError('Lambda_0 and/or Lambda_1 and/or x_squared has wrong shape')
 
+        if i_stops.dtype != np.uint16:
+            raise ValueError('i_stops.dtype != np.uint16')
+
         # TODO: On-device heap allocation
         work = np.empty(2 * self.max_ni * nblocks)
         return self._transpose_legendre_transform(
             int32(m), int32(lmin), int32(nk), int32(nx), In(x_squared),
-            In(Lambda_0), In(Lambda_1), In(q), In(work), Out(out),
+            In(Lambda_0), In(Lambda_1), In(i_stops), In(q), In(work), Out(out),
             int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 

@@ -28,10 +28,26 @@ def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
 
+epsilon_legendre = 1e-30
+
+def get_edge(Lambda):
+    zero_mask = Lambda == 0
+    i_stops = np.zeros(Lambda.shape[0], dtype=np.uint16)
+    Lambda_0 = np.zeros(Lambda.shape[1])
+    Lambda_1 = np.zeros(Lambda.shape[1])
+    cur_i = 0
+    for k in range(Lambda.shape[0]):
+        ilst, = zero_mask[k, :].nonzero()
+        i_stops[k] = next_i = ilst[0] if len(ilst) > 0 else Lambda.shape[1]
+        Lambda_0[cur_i:next_i] = Lambda[k, cur_i:next_i]
+        if k + 1 < Lambda.shape[0]:
+            Lambda_1[cur_i:next_i] = Lambda[k + 1, cur_i:next_i]
+        cur_i = next_i
+    return i_stops, Lambda_0, Lambda_1
 
 nblocks = 500
 has_warps = True
-nside = 512
+nside = 128
 
 # Compute Lambda
 nvecs = 2
@@ -42,6 +58,7 @@ odd = 0
 repeat = 3
 
 
+
 def downto(x, mod):
     if x % mod != 0:
         x -= x % mod
@@ -49,18 +66,23 @@ def downto(x, mod):
 
 
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
-Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
+Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=epsilon_legendre)
 Lambda = Lambda[:, odd::2].T
 
 nk, ni = Lambda.shape
 
-Lambda_0 = hrepeat(Lambda[0, :], nblocks)
-Lambda_1 = hrepeat(Lambda[1, :], nblocks)
 x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
 
-# Mock input vector
-    
+i_stops, Lambda_0, Lambda_1 = get_edge(Lambda)
 
+Lambda_0 = hrepeat(Lambda_0, nblocks)
+Lambda_1 = hrepeat(Lambda_1, nblocks)
+i_stops = hrepeat(i_stops, nblocks)
+
+#print Lambda_0
+#1/0
+
+# Mock input vector 
 q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
     (Lambda.shape[1], nvecs, nblocks), order='F')
 q[:, 1] *= 2
@@ -109,7 +131,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
         for rep in range(repeat):
             kernel.transpose_legendre_transform(m, m + odd,
                                                 x_squared, Lambda_0, Lambda_1,
-                                                q, out)
+                                                i_stops, q, out)
     times = np.asarray(prof.transpose_legendre_transform.times) * 1e-6
     dt = np.min(times)
 

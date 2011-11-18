@@ -163,35 +163,45 @@ class ReductionContext(object):
 
 }}
 
-{{def reduce_worker(ctx, row_start, row_stop, out_vname)}}
+{{def reduce_worker(ctx, row_start, row_stop, out_vname, is_top, store_func)}}
+  {{py: out_slice_vname = out_vname if is_top or out_vname is None else '(%s + WS)' % out_vname}}
   {{if row_stop - row_start == 1}}
-    {{ctx.nextrow_func(row_start, out_vname)}}
+    {{ctx.nextrow_func(row_start, out_slice_vname)}}
   {{else}}
-    {{py: buf_vname = ctx.allocate_buf()}}
+    /* Pass on output buffer to children if is_top, else allocate a new
+       one. */
+    {{py: buf_vname = out_vname if is_top else ctx.allocate_buf()}}
     {{py: nrows = row_stop - row_start}}
-    {{reduce_worker(ctx, row_start, row_start + idiv(nrows, 2), buf_vname)}}
-    {{reduce_worker(ctx, row_start + idiv(nrows, 2), row_stop, '(%s + WS)' % buf_vname)}}
+    {{reduce_worker(ctx, row_start, row_start + idiv(nrows, 2), buf_vname, True, None)}}
+    {{reduce_worker(ctx, row_start + idiv(nrows, 2), row_stop, buf_vname, False, None)}}
 
     /* Do pairwise reduction of values in buf and store result in out.
        For the final output, we call user code to do the store. */
     {
       double _reduced_val = {{buf_vname}}[reduce_idx] + {{buf_vname}}[reduce_idx + 2];
-      {{if out_vname is None}} /* first level */
+      {{if store_func is not None}}
+        /* we are asked to store reduced value directly to target */
         int _reduced_j = ithread % 2;
         int _reduced_k = ((ithread % WS) / 2);
-        {{ctx.store_func('_reduced_j', '_reduced_k', '_reduced_val')}}
-      {{else}} /* inner level, store results for parent level */
-        {{out_vname}}[ithread % WS] = _reduced_val;
+        {{store_func('_reduced_j', '_reduced_k', '_reduced_val')}}
+      {{else}}
+        /* inner level, store results for parent level */
+        {{out_slice_vname}}[ithread % WS] = _reduced_val;
       {{endif}}
     }
-    {{py: ctx.deallocate_buf(buf_vname)}}
+    {{py: if not is_top: ctx.deallocate_buf(buf_vname)}}
   {{endif}}
 {{enddef}}
 
 {{def parallel_tree_reduction(*args)}}
+/*
+  If nwarps == 1, we pass the store_func to reduce_worker so that the final
+  intra-warp reduction stores values. Otherwise, we proceed to inter-warp
+  reduction and call store_func at the end of that.
+*/
   {{py: ctx = ReductionContext(*args)}}
-
-  {{py: body = reduce_worker(ctx, 0, 16, None)}}
+  {{py: root_buf = ctx.allocate_buf()}}
+  {{py: body = reduce_worker(ctx, 0, 16, root_buf, True, ctx.store_func if nwarps == 1 else None)}}
 
   /* Buffers for intra-warp communication. They are segmented into one
      independent area for each warp of size 2 * WS; no cross-warp talk. */
@@ -201,7 +211,24 @@ class ReductionContext(object):
   {{endfor}}
   int pair_idx = (ithread % WS) / 2;
   int reduce_idx = 4 * pair_idx + ithread % 2;
+  /* Intra-warp reduction */
   {{body}}
+  {{if nwarps > 1}}
+    /* Inter-warp reduction within root_buf. The following is not an
+       optimal work-load distribution scheme, but we seem to be targeting
+       nwarps==2 at the time of writing... */
+    __syncthreads();
+    if (iwarp == 0) {
+      double _reduced_val = 0;
+      for (int t = 0; t != NWARPS; ++t) {
+        _reduced_val += (_{{root_buf}} + t * 2 * WS)[ithread];
+      }
+      int _reduced_j = ithread % 2;
+      int _reduced_k = ithread / 2;
+      {{ctx.store_func('_reduced_j', '_reduced_k', '_reduced_val')}}
+    }
+    __syncthreads();
+  {{endif}}
 {{enddef}}
 
 {{py: assert nvecs % 2 == 0}}

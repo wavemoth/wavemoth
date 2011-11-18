@@ -124,7 +124,7 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin,
       gamma[k] = -cpp * cp_inv;
   {{enddef}}
 
-  {{if nthreads == warp_size}}
+  {{if nwarps == 1 or k_chunk % nthreads == 1}}
     for (int k = ithread; k < K_CHUNK; k += NTHREADS) {
       int l = lmin + 2 * k;
       {{alphapart()}}
@@ -159,6 +159,8 @@ class ReductionContext(object):
         self.store_func = store_func
 
     def allocate_buf(self):
+        #self.all_buffers.add('reduce_buf_1')
+        #return 'reduce_buf_1'
         if len(self.free_buffers) == 0:
             buffer = 'reduce_buf_%d' % len(self.all_buffers)
             self.all_buffers.add(buffer)
@@ -335,16 +337,8 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   out_chunk[k_offset * NVECS + ithread] += {{value_code}};
   {{enddef}}
 
-
-//  __shared__ double work_warp_sum[NTHREADS * NVECS];
-
   for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
     out_chunk[idx] = 0;
-  }
-
-  if ((nk - 2) % 16 != 0) {
-    printf("Assertion (nk - 2) % 16 == 0 failed\n");
-    printf("FAIL %d", *(int*)0);
   }
 
   /* Buffer for temporarily storing Legendre function values */
@@ -391,7 +385,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
      The blocks are processed in row-wise order.
   */
   for (int k_block_start = 2; k_block_start < nk; k_block_start += K_CHUNK) {
-    int k_block_len = min(K_CHUNK, nk - k_block_start);
     /* Compute auxiliaries for this row-block */
     compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start,
                                    alpha, beta, gamma);
@@ -421,9 +414,14 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       {{endfor}}
 
       /* Process all rows, using generation-and-reduction code.
-         See above for definition of nextrow and store. */
-      for (int k_offset = 0; k_offset != K_CHUNK; k_offset += 16) {
-        /* Computation and intra-warp reduction */
+         See above for definition of nextrow and store.
+
+         We always work in chunks of 16 rows (as that is what the
+         reduction code support), but then avoid copying from buffer
+         to out beyond nk.
+      */
+      int k_block_len = min(K_CHUNK, nk - k_block_start);
+      for (int k_offset = 0; k_offset < k_block_len; k_offset += 16) {
         {{parallel_tree_reduction(nextrow, store)}}
       }
 
@@ -446,9 +444,10 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       for (int k_offset = 0; k_offset != K_CHUNK; k_offset += NTHREADS / NVECS) {
         int kt = ithread / 2;
         int k = k_block_start + k_offset + kt;
-        
         int idx = (k_offset + kt) * NVECS + j;
-        out[j * nk + k] = out_chunk[idx];
+        if (k < nk) {
+          out[j * nk + k] = out_chunk[idx];
+        }
         out_chunk[idx] = 0;
       }
     }

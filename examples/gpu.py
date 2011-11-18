@@ -51,7 +51,6 @@ def downto(x, mod):
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
-Lambda = Lambda[:downto(Lambda.shape[0] - 2, 64) + 2, :]
 
 nk, ni = Lambda.shape
 

@@ -10,6 +10,12 @@ def log2(x):
 
 def idiv(x, y): # Because / followed by / destroys emacs formatting
     return x.__floordiv__(y)
+
+def round_up_to(x, mod):
+    if x % mod > 0:
+        x += mod - x % mod
+    return x
+
 }}
 
 #define NVECS {{nvecs}}
@@ -22,7 +28,9 @@ def idiv(x, y): # Because / followed by / destroys emacs formatting
 {{default memory_bank_count = warp_size}}
 #define K_CHUNK {{k_chunk}}
 #define I_CHUNK {{i_chunk}}
-{{py: ws = warp_size}}
+{{py:ws = warp_size}}
+
+#define MAX_NCHUNKS_I {{idiv(round_up_to(max_ni, i_chunk * nthreads), i_chunk * nthreads)}}
 
 /* Cast to int to make it easier to printf, as all our integers are
    then 32-bit. */
@@ -394,8 +402,8 @@ __device__ void transpose_legendre_transform_edge_block(const double *Lambda_0,
     double {{', '.join(['q_%d_%d' % (ri, rj) for rj in range(nvecs)])}};
     {
       int i = ithread + {{nthreads * ri}};
-      Lambda_pp_{{ri}} = Lambda_pp[i];
-      Lambda_p_{{ri}} = Lambda_p[i];
+      Lambda_pp_{{ri}} = Lambda_pp[{{ri}}];
+      Lambda_p_{{ri}} = Lambda_p[{{ri}}];
       x_squared_{{ri}} = x_squared[i];
       {{for rj in range(nvecs)}}
         q_{{ri}}_{{rj}} = q[({{'odd' if rj == 0 else '1 - odd'}}) * q_stride + i];
@@ -418,8 +426,8 @@ __device__ void transpose_legendre_transform_edge_block(const double *Lambda_0,
 
   /* Persist Lambdas for the benefit of the block below. */
   {{for ri in range(i_chunk)}}
-  Lambda_pp[ithread + {{nthreads * ri}}] = Lambda_pp_{{ri}};
-  Lambda_p[ithread + {{nthreads * ri}}] = Lambda_p_{{ri}};
+  Lambda_pp[{{ri}}] = Lambda_pp_{{ri}};
+  Lambda_p[{{ri}}] = Lambda_p_{{ri}};
   {{endfor}}
 
   
@@ -431,7 +439,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              const double *Lambda_1,
                                              const unsigned short *i_stops,
                                              const double *q,
-                                             double *work,
                                              double *out,
                                              int zero) {
   /* Scratch for auxiliary values */
@@ -439,15 +446,20 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   __shared__ unsigned short i_stops_chunk[K_CHUNK];
   __shared__ double out_chunk[NVECS * K_CHUNK];
 
-
   for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
     out_chunk[idx] = 0;
   }
 
-  /* Buffer for temporarily storing Legendre function values */
-  int max_ni = round_up_to(ni, I_CHUNK * NTHREADS);
-  double *Lambda_pp = work + (2 * iblock) * max_ni;
-  double *Lambda_p = work + (2 * iblock + 1) * max_ni;
+  /* Buffer for temporarily storing Legendre function values,
+     stored in global/CUDA-local memory. Access to these arrays is
+     amortized over K_CHUNK. */
+  double Lambda_pp[MAX_NCHUNKS_I * I_CHUNK];
+  double Lambda_p[MAX_NCHUNKS_I * I_CHUNK];
+
+  for (int ri = 0; ri < I_CHUNK * MAX_NCHUNKS_I; ++ri) {
+    Lambda_pp[ri] = UNASSIGNED;
+    Lambda_p[ri] = UNASSIGNED;
+  }
 
   /* Shift to our block */
   x_squared += iblock * ni;
@@ -456,27 +468,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   i_stops += iblock * nk;
   q += iblock * ni * NVECS;
   out += iblock * nk * NVECS;
-
-  /* First two rows are special as they are dot products. Each thread
-     only stores values for its own local consumption, so no need for
-     barrier. */
-  /*zero_accumulation_buffer(work_local_sum);
-  dot_and_copy(Lambda_0, q, Lambda_pp, work_warp_sum, ni);
-  warp_sum_reduce(0, work_warp_sum, work_local_sum);
-  dot_and_copy(Lambda_1, q, Lambda_p, work_warp_sum, ni);
-  warp_sum_reduce(1, work_warp_sum, work_local_sum);
-  __syncthreads();
-  inter_warp_sum(0, 2, work_local_sum, out, nk);
-*/
-  for (int j = 0; j != NVECS; ++j) {
-    out[j * nk + 0] = 0;
-    out[j * nk + 1] = 0;
-  }
-
-  for (int idx = ithread; idx < ni; idx += NTHREADS) {
-    Lambda_pp[idx] = UNASSIGNED;//Lambda_0[idx];
-    Lambda_p[idx] = UNASSIGNED;//Lambda_1[idx];
-  }
 
   /* No barrier: Will hit barrier below before work_local_sum gets
      overwritten again, and we only write once to each element in
@@ -509,8 +500,8 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                               alpha,
                                               beta,
                                               gamma,
-                                              Lambda_p + i_block_start,
-                                              Lambda_pp + i_block_start,
+                                              Lambda_p + i_block_start / NTHREADS,
+                                              Lambda_pp + i_block_start / NTHREADS,
                                               out_chunk,
                                               q + i_block_start,
                                               ni /* q_stride */,

@@ -95,12 +95,9 @@ class CudaLegendreKernel(object):
         if i_stops.dtype != np.uint16:
             raise ValueError('i_stops.dtype != np.uint16')
 
-        # TODO: On-device heap allocation
-        max_ni = round_up_to(nx, self.i_chunk * self.nthreads)
-        work = np.empty(2 * max_ni * nblocks)
         return self._transpose_legendre_transform(
             int32(m), int32(lmin), int32(nk), int32(nx), In(x_squared),
-            In(Lambda_0), In(Lambda_1), In(i_stops), In(q), In(work), Out(out),
+            In(Lambda_0), In(Lambda_1), In(i_stops), In(q), Out(out),
             int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 

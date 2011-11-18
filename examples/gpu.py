@@ -64,6 +64,7 @@ x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
 
 q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
     (Lambda.shape[1], nvecs, nblocks), order='F')
+q[:, 1] *= 2
 
 a0 = np.dot(Lambda, q[:, :, 0])
 

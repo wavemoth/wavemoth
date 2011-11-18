@@ -236,9 +236,8 @@ class ReductionContext(object):
       for (int t = 0; t != NWARPS; ++t) {
         _reduced_val += (_{{root_buf}} + t * 2 * WS)[ithread];
       }
-      int _reduced_j = ithread % 2;
-      int _reduced_k = ithread / 2;
-      {{ctx.store_func('_reduced_j', '_reduced_k', '_reduced_val')}}
+      /* Call with expressions for (j, k, value) */
+      {{ctx.store_func('(ithread % 2)', '(ithread / 2)', '_reduced_val')}}
     }
     __syncthreads();
   {{endif}}

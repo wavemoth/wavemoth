@@ -414,11 +414,13 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       {{endfor}}
 
       /* Process all rows, using generation-and-reduction code.
-         See above for definition of nextrow and store.
+         See above for definition of nextrow and store; essentially,
+         `nextrow` computes for next k, while `store` accumulates in
+         the `out_chunk` buffer of shape (NVECS, K_CHUNK) .
 
          We always work in chunks of 16 rows (as that is what the
          reduction code support), but then avoid copying from buffer
-         to out beyond nk.
+         to out beyond nk at the end of the block row.
       */
       int k_block_len = min(K_CHUNK, nk - k_block_start);
       for (int k_offset = 0; k_offset < k_block_len; k_offset += 16) {

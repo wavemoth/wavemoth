@@ -30,6 +30,10 @@ def round_up_to(x, mod):
 #define I_CHUNK {{i_chunk}}
 {{py:ws = warp_size}}
 
+{{py:
+reduction_buffers = ['reduction_buffer%d' % i for i in range(4)]
+}}
+
 #define MAX_NCHUNKS_I {{idiv(round_up_to(max_ni, i_chunk * nthreads), i_chunk * nthreads)}}
 
 /* Cast to int to make it easier to printf, as all our integers are
@@ -175,19 +179,12 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin,
 
 {{py:
 class ReductionContext(object):
-    def __init__(self, nextrow_func, store_func):
-        self.all_buffers = set()
-        self.free_buffers = set()
+    def __init__(self, nextrow_func, store_func, buffers):
+        self.free_buffers = set(buffers)
         self.nextrow_func = nextrow_func
         self.store_func = store_func
 
     def allocate_buf(self):
-        #self.all_buffers.add('reduce_buf_1')
-        #return 'reduce_buf_1'
-        if len(self.free_buffers) == 0:
-            buffer = 'reduce_buf_%d' % len(self.all_buffers)
-            self.all_buffers.add(buffer)
-            self.free_buffers.add(buffer)
         return self.free_buffers.pop()
 
     def deallocate_buf(self, buffer):
@@ -235,12 +232,6 @@ class ReductionContext(object):
   {{py: root_buf = ctx.allocate_buf()}}
   {{py: body = reduce_worker(ctx, 0, 16, root_buf, True, ctx.store_func if nwarps == 1 else None)}}
 
-  /* Buffers for intra-warp communication. They are segmented into one
-     independent area for each warp of size 2 * WS; no cross-warp talk. */
-  {{for buf in ctx.all_buffers}}
-    __shared__ volatile double _{{buf}}[2 * NTHREADS];
-    volatile double *{{buf}} = _{{buf}} + 2 * iwarp * WS;
-  {{endfor}}
   int pair_idx = (ithread % WS) / 2;
   int reduce_idx = 4 * pair_idx + ithread % 2;
   /* Intra-warp reduction */
@@ -253,7 +244,8 @@ class ReductionContext(object):
     if (iwarp == 0) {
       double _reduced_val = 0;
       for (int t = 0; t != NWARPS; ++t) {
-        _reduced_val += (_{{root_buf}} + t * 2 * WS)[ithread];
+        /* This assumes buffers are contigously allocated between warps.. */
+        _reduced_val += ({{root_buf}} + t * 2 * WS)[ithread];
       }
       /* Call with expressions for (j, k, value) */
       {{ctx.store_func('(ithread % 2)', '(ithread / 2)', '_reduced_val')}}
@@ -268,6 +260,14 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
      of sum_{over warp} ( ithread * irow * (ivec + 1)) ),
      using the same parallel reduction algorithm as we use in
      transpose_legendre_transform. */
+
+  /* Buffers for intra-warp communication. They are segmented into one
+     independent area for each warp of size 2 * WS; no cross-warp talk. */
+  {{for buf in reduction_buffers}}
+    __shared__ volatile double _{{buf}}[2 * NTHREADS];
+    volatile double *{{buf}} = _{{buf}} + 2 * iwarp * WS;
+  {{endfor}}
+
 
   /* Move to block */
   output += NTHREADS * iblock;
@@ -300,7 +300,7 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
   {{enddef}}
 
   for (int rep = 0; rep != repeat; ++rep) {
-    {{parallel_tree_reduction(nextrow, store)}}
+    {{parallel_tree_reduction(nextrow, store, reduction_buffers)}}
   }
 
   __syncthreads();
@@ -319,19 +319,23 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
   given by expecting each of the given arrays to be shifted to the region
   of interest.
 */
-__device__ void transpose_legendre_transform_edge_block(const double *Lambda_0,
-                                                        const double *Lambda_1,
-                                                        const double *x_squared,
-                                                        const unsigned short *i_stops,
-                                                        const double *alpha,
-                                                        const double *beta,
-                                                        const double *gamma,
-                                                        double *Lambda_p,
-                                                        double *Lambda_pp,
-                                                        double *out_accumulator,
-                                                        const double *q,
-                                                        int q_stride,
-                                                        int nrows) {
+{{for blocktype in ('inner', 'edge')}}
+__device__ void transpose_legendre_transform_{{blocktype}}_block(
+    const double *Lambda_0,
+    const double *Lambda_1,
+    const double *x_squared,
+    const unsigned short *i_stops,
+    const double *alpha,
+    const double *beta,
+    const double *gamma,
+    double *Lambda_p,
+    double *Lambda_pp,
+    double *out_accumulator,
+    const double *q,
+    int q_stride,
+    int nrows,
+    {{', '.join(['volatile double *%s' % buf for buf in reduction_buffers])}}
+) {
 
   /*
     Code snippet to be instantiated to compute each row, including 32->16 reduction.
@@ -342,28 +346,43 @@ __device__ void transpose_legendre_transform_edge_block(const double *Lambda_0,
     double Lambda_val = 0;
     {{for ri in range(i_chunk)}}
     {
-      int i = ithread + {{nthreads * ri}};
       int kc = k_offset + {{kt}};
-      if (i < i_stops[kc]) {
-        if (IS_UNASSIGNED(Lambda_p_{{ri}})) {
-          /* Have not started this column at all yet */
-          Lambda_val = Lambda_0[i];
-        } else if (IS_UNASSIGNED(Lambda_pp_{{ri}})) {
-          /* Lambda_p != 0, Lambda_pp == 0 => Started in the previous iteration */
-          Lambda_val = Lambda_1[i];
-        } else {
+
+      {{def Lambda_recurrence}}
           Lambda_val =
             ((x_squared_{{ri}} + alpha[kc]) * beta[kc] * Lambda_p_{{ri}} +
              gamma[kc] * Lambda_pp_{{ri}});
+      {{enddef}}
+      
+      {{def matvec_and_persist}}
+          {{for rj in range(nvecs)}}
+          acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
+          {{endfor}}
+
+          Lambda_pp_{{ri}} = Lambda_p_{{ri}};
+          Lambda_p_{{ri}} = Lambda_val;
+      {{enddef}}
+
+      {{if blocktype == 'inner'}}
+        {{Lambda_recurrence}}
+        {{matvec_and_persist}}
+      {{else}}
+        int i = ithread + {{nthreads * ri}};
+        /* Need to account for i_stops and state of Lambda_p/pp,
+           and read initialization values from input if necesarry. */
+        if (i < i_stops[kc]) {
+          if (IS_UNASSIGNED(Lambda_p_{{ri}})) {
+            /* Have not started this column at all yet */
+            Lambda_val = Lambda_0[i];
+          } else if (IS_UNASSIGNED(Lambda_pp_{{ri}})) {
+            /* Lambda_p != 0, Lambda_pp == 0 => Started in the previous iteration */
+            Lambda_val = Lambda_1[i];
+          } else {
+            {{Lambda_recurrence}}
+          }
+          {{matvec_and_persist}}
         }
-
-        {{for rj in range(nvecs)}}
-        acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
-        {{endfor}}
-
-        Lambda_pp_{{ri}} = Lambda_p_{{ri}};
-        Lambda_p_{{ri}} = Lambda_val;
-      }
+      {{endif}}
     }
     {{endfor}}
         
@@ -421,7 +440,7 @@ __device__ void transpose_legendre_transform_edge_block(const double *Lambda_0,
      to out beyond nk at the end of the block row.
   */
   for (int k_offset = 0; k_offset < nrows; k_offset += 16) {
-    {{parallel_tree_reduction(nextrow, store)}}
+    {{parallel_tree_reduction(nextrow, store, reduction_buffers)}}
   }
 
   /* Persist Lambdas for the benefit of the block below. */
@@ -432,6 +451,7 @@ __device__ void transpose_legendre_transform_edge_block(const double *Lambda_0,
 
   
 }
+{{endfor}}{{#blocktype}}
 
 __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              const double *x_squared,
@@ -445,6 +465,12 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
   __shared__ unsigned short i_stops_chunk[K_CHUNK];
   __shared__ double out_chunk[NVECS * K_CHUNK];
+
+  {{for buf in reduction_buffers}}
+    __shared__ volatile double _{{buf}}[2 * NTHREADS];
+    volatile double *{{buf}} = _{{buf}} + 2 * iwarp * WS;
+  {{endfor}}
+
 
   for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
     out_chunk[idx] = 0;
@@ -491,24 +517,36 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     }
     __syncthreads();
     
-    /* Process all blocks on this block-row */
-    for (int i_block_start = 0; i_block_start < ni; i_block_start += I_CHUNK * NTHREADS) {
-      transpose_legendre_transform_edge_block(Lambda_0 + i_block_start,
-                                              Lambda_1 + i_block_start,
-                                              x_squared + i_block_start,
-                                              i_stops_chunk,
-                                              alpha,
-                                              beta,
-                                              gamma,
-                                              Lambda_p + i_block_start / NTHREADS,
-                                              Lambda_pp + i_block_start / NTHREADS,
-                                              out_chunk,
-                                              q + i_block_start,
-                                              ni /* q_stride */,
-                                              min(K_CHUNK, nk - k_block_start) /* nrows */
-                                              );
-    }
+    /* Process all blocks on this block-row. First do all inner blocks
+       where one does not need to check for i_stop or whether Lambda's
+       are initialize; then do the edge blocks.
+     */
 
+
+    int i_block_start = 0;
+    {{for blocktype in ('inner', 'edge')}}
+    {
+      int i_stop = {{'i_stops_chunk[0]' if blocktype == 'inner' else 'ni'}};
+      for (; i_block_start < i_stop; i_block_start += I_CHUNK * NTHREADS) {
+        transpose_legendre_transform_{{blocktype}}_block(
+            Lambda_0 + i_block_start,
+            Lambda_1 + i_block_start,
+            x_squared + i_block_start,
+            i_stops_chunk,
+            alpha,
+            beta,
+            gamma,
+            Lambda_p + i_block_start / NTHREADS,
+            Lambda_pp + i_block_start / NTHREADS,
+            out_chunk,
+            q + i_block_start,
+            ni /* q_stride */,
+            min(K_CHUNK, nk - k_block_start),
+            {{','.join([buf for buf in reduction_buffers])}}
+         ); /* nrows */
+      }
+    }
+    {{endfor}}
     /* Done with row block. Copy results from out_chunk to out, AND
        zero out_chunk. Note: Each iteration of parallel_tree_reduction
        ends with __syncthreads(), so threads are synced at this

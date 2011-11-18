@@ -73,6 +73,7 @@ class CudaLegendreKernel(object):
                                          **args)
         options = ['-ftz=true',
                    '-prec-div=true', '-prec-sqrt=true']
+        #options += ['-Xptxas', '-v']
         self.module = cuda.SourceModule(code, options=options, keep=True)
         for name in self.kernel_names:
             setattr(self, '_' + name, self.module.get_function(name))

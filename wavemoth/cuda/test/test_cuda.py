@@ -97,7 +97,7 @@ def test_parallel_reduction():
         output = np.zeros((nvecs, 16, nthreads // WS))
         kernel.test_reduce_kernel(output, repeat=repeat)
 
-        if 1:
+        if 0:
             print np.vstack([output.sum(axis=2), output0.sum(axis=2)]).T
             print output.T
 

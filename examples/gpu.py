@@ -41,10 +41,17 @@ lmax = 2 * nside
 odd = 0
 repeat = 3
 
+
+def downto(x, mod):
+    if x % mod != 0:
+        x -= x % mod
+    return x
+
+
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=1e-100)
 Lambda = Lambda[:, odd::2].T
-Lambda = Lambda[:498, :]
+Lambda = Lambda[:downto(Lambda.shape[0] - 2, 64) + 2, :]
 
 nk, ni = Lambda.shape
 
@@ -82,19 +89,20 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
 
     times = []
     #cuda.start_profiler()
-    print '======== Reduction '
-    with cuda_profile() as prof:
-        for rep in range(repeat):
-            output = np.zeros((nblocks, 2, 16, nwarps))
-            kernel.test_reduce_kernel(output, repeat=1000, nblocks=nblocks)
-    nops = nblocks * 2 * 16 * nthreads * 1000
-    times = np.asarray(prof.test_reduce_kernel.times) * 1e-6
-    dt = np.min(times)
-    print '%.2e +/- %.2e sec = %.2f GFLOP/sec' % (dt, np.std(times), nops / dt / 1e9)
-    occupancy_fraction = prof.test_reduce_kernel.occupancy[0]
-    nblocks_per_sm = occupancy_fraction * 48. / (nwarps)
-    print 'Occupancy: %.2f (%.2f warps, %.2f blocks)' % (
-        occupancy_fraction, occupancy_fraction * 48, nblocks_per_sm) 
+    if 0:
+        print '======== Reduction '
+        with cuda_profile() as prof:
+            for rep in range(repeat):
+                output = np.zeros((nblocks, 2, 16, nwarps))
+                kernel.test_reduce_kernel(output, repeat=1000, nblocks=nblocks)
+        nops = nblocks * 2 * 16 * nthreads * 1000
+        times = np.asarray(prof.test_reduce_kernel.times) * 1e-6
+        dt = np.min(times)
+        print '%.2e +/- %.2e sec = %.2f GFLOP/sec' % (dt, np.std(times), nops / dt / 1e9)
+        occupancy_fraction = prof.test_reduce_kernel.occupancy[0]
+        nblocks_per_sm = occupancy_fraction * 48. / (nwarps)
+        print 'Occupancy: %.2f (%.2f warps, %.2f blocks)' % (
+            occupancy_fraction, occupancy_fraction * 48, nblocks_per_sm) 
 
     print '======== Legendre transform '
     with cuda_profile() as prof:
@@ -126,7 +134,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
 
 for nwarps in [2]:
     for i_chunk in [4]:
-        for k_chunk in [32]:
+        for k_chunk in [64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 
 print np.hstack([a, a0])

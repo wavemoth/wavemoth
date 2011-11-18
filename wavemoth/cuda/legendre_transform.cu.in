@@ -31,12 +31,19 @@ def idiv(x, y): # Because / followed by / destroys emacs formatting
 
 #define iwarp (ithread / WS)
 
+{{def check(cond, msg='assertion failed')}}
+ if (!{{int(cond)}}) {
+   printf("{{msg}}\n");
+   return;
+ }
+{{enddef}}
+
 
 /*****
  * Utilities
  *****/
-/*
-void print_array(constant const char *msg, local double* arr, int len) {
+
+__device__ void print_array(const char *msg, double* arr, int len) {
   int i;
   printf("%s ", msg);
   for (i = 0; i != len; ++i) {
@@ -44,7 +51,7 @@ void print_array(constant const char *msg, local double* arr, int len) {
   }
   printf("\n");
 }
-
+/*
 void print_array_glob(constant const char *msg, global double* arr, int len) {
   int i;
   printf("%s ", msg);
@@ -391,12 +398,48 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              int zero) {
   /* Scratch for auxiliary values */
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
+  __shared__ double out_chunk[NVECS * K_CHUNK];
 
-  /* Scratch for sum-reduction. We use the one column padding trick to
-     avoid memory bank conflicts. See work_sum_idx for indexing.  */
 
-  __shared__ double work_local_sum[NWARPS * K_CHUNK * NVECS];
+  /* Code to be used to compute each row, including 32->16 reduction. */
+  {{def nextrow(kt, outbuf)}}
+  {
+    double acc_0 = 0, acc_1 = 0;
+    double Lambda_val;
+    {{for ri in range(i_chunk)}}
+    {
+      Lambda_val =
+        ((x_squared_{{ri}} + alpha[k_offset + {{kt}}]) * beta[k_offset + {{kt}}] * Lambda_p_{{ri}} +
+         gamma[k_offset + {{kt}}] * Lambda_pp_{{ri}});
+      {{for rj in range(nvecs)}}
+        acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
+      {{endfor}}
+
+      Lambda_pp_{{ri}} = Lambda_p_{{ri}};
+      Lambda_p_{{ri}} = Lambda_val;
+    }
+    {{endfor}}
+        
+    /* Do 32->16 reduction and store result in outbuf. Note that
+       acc_t corresponds to j=|t-odd|. */
+    {
+      {{outbuf}}[ithread % 32 + 1 - 2 * odd] = acc_1;
+      {{outbuf}}[ithread % 32] += acc_0;
+    }
+  }
+  {{enddef}}
+
+  /* Code to be used to store final reduction results. Only executed for iwarp==0. */
+  {{def store(vec_code, row_code, value_code)}}
+  out_chunk[k_offset * NVECS + ithread] += {{value_code}};
+  {{enddef}}
+
+
 //  __shared__ double work_warp_sum[NTHREADS * NVECS];
+
+  for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
+    out_chunk[idx] = 0;
+  }
 
   if ((nk - 2) % 16 != 0) {
     printf("Assertion (nk - 2) % 16 == 0 failed\n");
@@ -404,8 +447,8 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   }
 
   /* Buffer for temporarily storing Legendre function values */
-  double *Lambda_pp = work + (2 * iblock) * MAX_NI;
-  double *Lambda_p = work + (2 * iblock + 1) * MAX_NI;
+  volatile double *Lambda_pp = work + (2 * iblock) * MAX_NI;
+  volatile double *Lambda_p = work + (2 * iblock + 1) * MAX_NI;
 
   /* Shift to our block */
   x_squared += iblock * ni;
@@ -429,10 +472,12 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     out[j * nk + 0] = 0;
     out[j * nk + 1] = 0;
   }
-  for (int i = 0; i != ni / I_CHUNK; ++i) {
-    Lambda_pp[i * NTHREADS] = Lambda_0[i * NTHREADS];
-    Lambda_p[i * NTHREADS] = Lambda_1[i * NTHREADS];
+
+  for (int idx = ithread; idx < ni; idx += NTHREADS) {
+    Lambda_pp[idx] = Lambda_0[idx];
+    Lambda_p[idx] = Lambda_1[idx];
   }
+
 
   /* No barrier: Will hit barrier below before work_local_sum gets
      overwritten again, and we only write once to each element in
@@ -451,9 +496,7 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                    alpha, beta, gamma);
 
     __syncthreads();
-    /* Zero accumulation scratch buffer */
-    zero_accumulation_buffer(work_local_sum);
-
+    
     /* Process all blocks on this block-row */
     for (int i_block_start = 0; i_block_start < ni; i_block_start += I_CHUNK * NTHREADS) {
       int i_block_len = min(NTHREADS * I_CHUNK, ni - i_block_start);
@@ -471,66 +514,46 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
         double Lambda_p_{{ri}} = Lambda_p[i_offset + {{nthreads * ri}}];
         double x_squared_{{ri}} = x_squared[i_offset + {{nthreads * ri}}];
         {{for rj in range(nvecs)}}
-          double q_{{ri}}_{{rj}} = q[(odd - {{rj}}) * ni + i_offset + {{nthreads * ri}}];
+          double q_{{ri}}_{{rj}} = q[({{'odd' if rj == 0 else '1 - odd'}}) * ni +
+                                     i_offset + {{nthreads * ri}}];
         {{endfor}}
       {{endfor}}
 
-      /* Code to be used to compute each row, including 32->16 reduction. */
-      {{def nextrow(kt, outbuf)}}
-      {
-        double acc_0 = 0, acc_1 = 0;
-        {{for ri in range(i_chunk)}}
-        {
-          double Lambda_val =
-            ((x_squared_{{ri}} + alpha[k_offset + {{kt}}]) * beta[k_offset + {{kt}}] * Lambda_p_{{ri}} +
-             gamma[k_offset + {{kt}}] * Lambda_pp_{{ri}});
-          {{for rj in range(nvecs)}}
-            acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
-          {{endfor}}
-
-          Lambda_pp_{{ri}} = Lambda_p_{{ri}};
-          Lambda_p_{{ri}} = Lambda_val;
-        }
-        {{endfor}}
-        
-        /* Do 32->16 reduction and store result in outbuf. Note that
-           acc_t corresponds to j=|t-odd|. */
-        {
-          {{outbuf}}[ithread % 32] = acc_1;
-          acc_0 += {{outbuf}}[ithread % 32 + 1 - 2 * odd];
-          {{outbuf}}[ithread % 32] = acc_0;
-        }
-      }
-      {{enddef}}
-
-      /* Code to be used to store results of intra-warp reduction. Note that
-         we accumulate results of this block. */
-      {{def store(vec_code, row_code, value_code)}}
-      work_local_sum[iwarp * K_CHUNK * NVECS + (k_offset + {{row_code}}) * NVECS + {{vec_code}}] +=
-        {{value_code}};
-      {{enddef}}
-
-      /* Generate generation-and-reduction code */
+      /* Process all rows, using generation-and-reduction code.
+         See above for definition of nextrow and store. */
       for (int k_offset = 0; k_offset != K_CHUNK; k_offset += 16) {
         /* Computation and intra-warp reduction */
         {{parallel_tree_reduction(nextrow, store)}}
-        /* Cross-warp reduction */
-        {{#py: assert nthreads == 64}}
-        __syncthreads();
       }
 
+      /* Persist Lambda's */
+      {{for ri in range(i_chunk)}}
+        Lambda_pp[i_offset + {{nthreads * ri}}] = Lambda_pp_{{ri}};
+        Lambda_p[i_offset + {{nthreads * ri}}] = Lambda_p_{{ri}};
+      {{endfor}}
     }
 
-    /* Done with row block. Do inter-warp accumulation and write to output
-       before heading on to the next block. We let k=ithread, and have
-       each thread sum over iwarp. */
+    /* Done with row block. Copy results from out_chunk to out, AND
+       zero out_chunk. Note: Each iteration of parallel_tree_reduction
+       ends with __syncthreads(), so threads are synced at this
+       point. */
     __syncthreads();
-    inter_warp_sum(k_block_start, k_block_len,
-                   work_local_sum, out, nk);
+    {{check(nvecs == nwarps == 2, 'not (nvecs == nwarps == 2)')}}
+    {
+      /* Values in out_chunk are stored in strided order [j=0, j=1, j=1, ...]. */
+      int j = ithread % NVECS;
+      for (int k_offset = 0; k_offset != K_CHUNK; k_offset += NTHREADS / NVECS) {
+        int kt = ithread / 2;
+        int k = k_block_start + k_offset + kt;
+        
+        int idx = (k_offset + kt) * NVECS + j;
+        out[j * nk + k] = out_chunk[idx];
+        out_chunk[idx] = 0;
+      }
+    }
     /* Do not need another barrier here because the next iteration will
        hit the barrier after computing auxiliary values before it
-       gets a chance to overwrite work_local_sum. */
-
+       gets a chance to overwrite any accumulation buffers. */
   }
 
 }

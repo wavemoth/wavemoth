@@ -47,17 +47,15 @@ def get_edge(Lambda):
 
 nblocks = 500
 has_warps = True
-nside = 512
+nside = 128
 
 # Compute Lambda
 nvecs = 2
 
-m = 200
+m = 0
 lmax = 2 * nside
 odd = 0
 repeat = 3
-
-
 
 def downto(x, mod):
     if x % mod != 0:
@@ -68,6 +66,12 @@ def downto(x, mod):
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=epsilon_legendre)
 Lambda = Lambda[:, odd::2].T
+
+def plot_matrix(M):
+    ax = plt.gca()
+    ax.imshow(M, interpolation='nearest')
+
+#plot_matrix(Lambda)
 
 nk, ni = Lambda.shape
 

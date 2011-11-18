@@ -20,7 +20,7 @@ def allocate(nrows):
     global num_buffers
     num_buffers += 1
     print '+num_buffers=', num_buffers
-    return np.zeros((2, 2, nrows, 16 // nrows))
+    return np.zeros((2, nrows, 16 // nrows))
 
 def deallocate(arr):
     global num_buffers
@@ -29,31 +29,30 @@ def deallocate(arr):
     print '-num_buffers=', num_buffers
 
 def warp_tree_reduction(row_start, row_stop, out, is_top):
-    out_slice = out[0 if is_top else 1, ...]
     if row_stop - row_start == 1:
         # Leaf -- really: process next row of Lambda and reduce
         # in registers and scratch independent of nvecs to 16
         # in width.
         # here: dummy data
-        out_slice[...] = 1 * row_start
+        out[...] = 1 * row_start
     else:
         nrows = row_stop - row_start
         ncols = 16 // nrows
-        if is_top:
-            buf = out.reshape((2, 2, nrows // 2, 16 // (nrows // 2)))
-        else:
-            buf = allocate(nrows // 2)
-        warp_tree_reduction(row_start, row_start + nrows // 2, buf, True)
-        warp_tree_reduction(row_start + nrows // 2, row_stop, buf, False)
-        block_add_reduce(buf[0, ...], buf[1, ...], out_slice)
-        if not is_top:
-            deallocate(buf)
+
+        buf_top = out.reshape((2, nrows // 2, 16 // (nrows // 2)))
+        warp_tree_reduction(row_start, row_start + nrows // 2, buf_top, True)
+
+        buf_bottom = allocate(nrows // 2)
+        warp_tree_reduction(row_start + nrows // 2, row_stop, buf_bottom, False)
+        block_add_reduce(buf_top, buf_bottom, out)
+        
+        deallocate(buf_bottom)
         return out
         
 
 r = allocate(16)
 warp_tree_reduction(0, 16, r, True)
-print r[0, :, :, :].T
+print r[:, :, :].T
 print num_buffers
 
 #def append_line(block):

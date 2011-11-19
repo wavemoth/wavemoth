@@ -95,9 +95,6 @@ q[:, 1] *= 2
 
 a0 = np.dot(Lambda, q[:, :, 0])
 
-#cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
-#cuda.initialize_profiler('/home/dagss/cuda_profile_config', "profiles/test", cuda.CSV)
-
 check = False
 
 def doit(nvecs, nwarps, i_chunk, k_chunk):

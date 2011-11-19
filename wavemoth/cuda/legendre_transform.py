@@ -18,43 +18,7 @@ def check_arrays(args):
         if array.dtype != np.double:
             raise ValueError('array has dtype != np.double')
 
-
-# Decorator to use on functions so that any NumPy array passed
-# in is properly transferred to device memory and back. Does
-# not take into account that one does not wish to transfer *all*
-# data both ways...primarily useful for testing. It is assumed
-# that the first two arguments to the function are 'self' and 'queue'.
-#
-# Also, Python 'int' is turned automatically into np.int32.
-def convertargs():
-    def dec(real_func):
-        def repl_func(self, queue, *args, **kw):
-            def convert(arg):
-                if isinstance(arg, np.ndarray):
-                    arr_d = cuda.InOut(arg)
-                    return arr_d
-                elif isinstance(arg, int):
-                    return np.int32(arg)
-                else:
-                    return arg
-            new_args = [convert(arg) for arg in args]
-            new_kw = dict([(name, convert(arg)) for name, arg in kw.iteritems()])
-            return real_func(self, queue, *new_args, **new_kw)
-        return repl_func
-    return dec
-
-def round_up_to(x, mod):
-    if x % mod > 0:
-        x += mod - x % mod
-    return x
-
 class CudaLegendreKernel(object):
-    """
-
-    major_col_chunk -- How many columns of Lambda to process between
-        each round through global memory
-    
-    """
     
     kernel_names = ['transpose_legendre_transform', 'test_reduce_kernel']
     def __init__(self, nvecs, nthreads, max_ni, i_chunk, warp_size=32, **args):

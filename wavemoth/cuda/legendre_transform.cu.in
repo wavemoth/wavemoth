@@ -364,7 +364,6 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
       {{enddef}}
 
       {{if blocktype == 'inner'}}
-//      printonce("%e\n", Lambda_p_{{ri}});
         {{Lambda_recurrence}}
         {{matvec_and_swap}}
       {{else}}
@@ -527,17 +526,23 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     {{for blocktype in ('inner', 'edge')}}
     {
       int i_stop;
+      int k_block_len = min(K_CHUNK, nk - k_block_start);
       {{if blocktype == 'inner'}}
-        if (k_block_start == 0) {
-          i_stop = 0; /* for top edge, skip inner block loop */
+        if (k_block_start == 0 || i_stops_chunk[0] < I_CHUNK * NTHREADS) {
+          /* For top edge, skip inner block loop. And don't allow blocks
+             that would be too narrow. */
+          i_stop = 0; 
         } else {
-          i_stop = i_stops_chunk[0];
+          /* Do not allow inner blocks to touch edge. We subtract the blockwidth
+             here -- note that `i_stop` is the stop of the *left* edge of the block
+             in the for-loop.
+           */
+          i_stop = i_stops_chunk[0] - I_CHUNK * NTHREADS;
         }
       {{else}}
-        i_stop = ni;
+        i_stop = i_stops_chunk[k_block_len - 1];
       {{endif}}
       for (; i_block_start < i_stop; i_block_start += I_CHUNK * NTHREADS) {
-        printonce("{{blocktype}} k=%d i=%d %d\n", k_block_start, i_block_start, i_stops_chunk[0]);
         transpose_legendre_transform_{{blocktype}}_block(
             Lambda_0 + i_block_start,
             Lambda_1 + i_block_start,
@@ -551,7 +556,7 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
             out_chunk,
             q + i_block_start,
             ni /* q_stride */,
-            min(K_CHUNK, nk - k_block_start),  /* nrows */
+            k_block_len,  /* nrows */
             {{','.join([buf for buf in reduction_buffers])}}
          );
       }

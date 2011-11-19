@@ -2,7 +2,6 @@ from __future__ import division
 
 # http://www.khronos.org/registry/cl/sdk/1.1/docs/man/xhtml/
 
-
 import os
 import sys
 import socket
@@ -19,7 +18,7 @@ import pycuda.autoinit
 
 from wavemoth import *
 from wavemoth import healpix
-from wavemoth.cuda import CudaLegendreKernel
+from wavemoth.cuda import CudaShtPlan, CudaLegendreKernel
 
 from wavemoth.cuda.profile import cuda_profile
 import wavemoth.cuda.flatcuda as cuda
@@ -28,22 +27,6 @@ def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
 
-epsilon_legendre = 1e-30
-
-def get_edge(Lambda):
-    zero_mask = Lambda == 0
-    i_stops = np.zeros(Lambda.shape[0], dtype=np.uint16)
-    Lambda_0 = np.zeros(Lambda.shape[1])
-    Lambda_1 = np.zeros(Lambda.shape[1])
-    cur_i = 0
-    for k in range(Lambda.shape[0]):
-        ilst, = zero_mask[k, :].nonzero()
-        i_stops[k] = next_i = ilst[0] if len(ilst) > 0 else Lambda.shape[1]
-        Lambda_0[cur_i:next_i] = Lambda[k, cur_i:next_i]
-        if k + 1 < Lambda.shape[0]:
-            Lambda_1[cur_i:next_i] = Lambda[k + 1, cur_i:next_i]
-        cur_i = next_i
-    return i_stops, Lambda_0, Lambda_1
 
 nblocks = 500
 has_warps = True
@@ -54,32 +37,14 @@ nvecs = 2
 
 m = 200
 lmax = 2 * nside
-odd = 0
+odd = 1
 repeat = 1
 
-def downto(x, mod):
-    if x % mod != 0:
-        x -= x % mod
-    return x
+plan = CudaShtPlan(nside=nside, lmax=lmax)
+ni = plan.ni
+nk = (lmax + 1 - m - odd + 1) // 2
 
-
-thetas = healpix.get_ring_thetas(nside, positive_only=True)
-Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=epsilon_legendre)
-Lambda = Lambda[:, odd::2].T
-
-def plot_matrix(M):
-    ax = plt.gca()
-    ax.imshow(M, interpolation='nearest')
-
-#plot_matrix(Lambda)
-
-nk, ni = Lambda.shape
-
-nnz = np.sum(Lambda != 0)
-
-x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
-
-i_stops, Lambda_0, Lambda_1 = get_edge(Lambda)
+Lambda_0, Lambda_1, i_stops, nnz = plan.precompute(m, odd)
 
 Lambda_0 = hrepeat(Lambda_0, nblocks)
 Lambda_1 = hrepeat(Lambda_1, nblocks)
@@ -90,9 +55,10 @@ i_stops = hrepeat(i_stops, nblocks)
 
 # Mock input vector 
 q = hrepeat(np.sin(np.arange(ni) * 0.4), nvecs * nblocks).reshape(
-    (Lambda.shape[1], nvecs, nblocks), order='F')
+    (ni, nvecs, nblocks), order='F')
 q[:, 1] *= 2
 
+Lambda = plan.get_Lambda(m, odd)
 a0 = np.dot(Lambda, q[:, :, 0])
 
 check = False
@@ -126,7 +92,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     with cuda_profile() as prof:
         for rep in range(repeat):
             kernel.transpose_legendre_transform(m, m + odd,
-                                                x_squared, Lambda_0, Lambda_1,
+                                                plan.x_squared, Lambda_0, Lambda_1,
                                                 i_stops, q, out)
     print prof.format('transpose_legendre_transform',
                       nflops=nblocks * nnz * (6 + 2 * nvecs),

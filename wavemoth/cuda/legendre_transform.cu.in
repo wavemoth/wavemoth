@@ -464,6 +464,9 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
 }
 {{endfor}}{{#blocktype}}
 
+/*
+  x_squared: Currently, the same x_squared is assumed for every block.
+*/
 __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              const double *x_squared,
                                              const double *Lambda_0,
@@ -497,8 +500,7 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     Lambda_pp[ri] = UNASSIGNED;
     Lambda_p[ri] = UNASSIGNED;
   }
-  /* Shift to our block */
-  x_squared += iblock * ni;
+  /* Shift to our block. */
   Lambda_0 += iblock * ni;
   Lambda_1 += iblock * ni;
   i_stops += iblock * nk;

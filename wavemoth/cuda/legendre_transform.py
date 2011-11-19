@@ -46,7 +46,7 @@ class CudaLegendreKernel(object):
                                      x_squared, Lambda_0, Lambda_1, i_stops, q, out):
         nblocks = q.shape[2]
         assert nblocks == out.shape[2] == Lambda_0.shape[1] == Lambda_1.shape[1]
-        check_arrays([(x_squared, 2), (Lambda_0, 2), (Lambda_1, 2), (q, 3), (out, 3)])
+        check_arrays([(x_squared, 1), (Lambda_0, 2), (Lambda_1, 2), (q, 3), (out, 3)])
         self.nvecs = q.shape[1]
         if not (q.shape[1] == out.shape[1] == self.nvecs):
             raise ValueError('q and out arrays do not conform to self.nvecs')
@@ -71,3 +71,4 @@ class CudaLegendreKernel(object):
                                  block=(self.nthreads, 1, 1),
                                  grid=(nblocks, 1))
                        
+

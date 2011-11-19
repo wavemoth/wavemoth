@@ -444,7 +444,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
   /* Process all rows, using generation-and-reduction code.
      See above for definition of nextrow and store; essentially,
      `nextrow` computes for next k, while `store` accumulates in
-     the `out_chunk` buffer of shape (NVECS, K_CHUNK) .
+     `out_buffer` of shape (NVECS, K_CHUNK) .
 
      We always work in chunks of 16 rows (as that is what the
      reduction code support), but then avoid copying from buffer
@@ -474,13 +474,13 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
                                                     const double *Lambda_1,
                                                     const unsigned short *i_stops,
                                                     const double *q,
-                                                    double *out,
+                                                    double *a,
                                                     int zero) {
   
   /* Scratch for auxiliary values */
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
   __shared__ unsigned short i_stops_chunk[K_CHUNK];
-  __shared__ double out_chunk[NVECS * K_CHUNK];
+  __shared__ double out_buffer[NVECS * K_CHUNK];
 
   {{for buf in reduction_buffers}}
     __shared__ volatile double _{{buf}}[2 * NTHREADS];
@@ -489,7 +489,7 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
 
 
   for (int idx = ithread; idx < NVECS * K_CHUNK; idx += NTHREADS) {
-    out_chunk[idx] = 0;
+    out_buffer[idx] = 0;
   }
 
   /* Buffer for temporarily storing Legendre function values,
@@ -568,7 +568,7 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
             gamma,
             Lambda_p,
             Lambda_pp,
-            out_chunk,
+            out_buffer,
             q,
             ni /* q_stride */,
             k_block_len,  /* nrows */
@@ -577,30 +577,28 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
       }
     }
     {{endfor}}
-    /* Done with row block. Copy results from out_chunk to out, AND
-       zero out_chunk. Note: Each iteration of parallel_tree_reduction
+    /* Done with row block. Copy results from out_buffer to out, AND
+       zero out_buffer. Note: Each iteration of parallel_tree_reduction
        ends with __syncthreads(), so threads are synced at this
        point. */
-    __syncthreads();
     {{check(nvecs == nwarps == 2, 'not (nvecs == nwarps == 2)')}}
     {
-      /* Values in out_chunk are stored in strided order [j=0, j=1, j=1, ...]. */
+      /* Values in out_buffer are stored in strided order [j=0, j=1, j=1, ...]. */
       int j = ithread % NVECS;
       for (int k_offset = 0; k_offset != K_CHUNK; k_offset += NTHREADS / NVECS) {
         int kt = ithread / NVECS;
         int k = k_block_start + k_offset + kt;
         int idx = (k_offset + kt) * NVECS + j;
         if (k < nk) {
-          out[j * nk + k] = out_chunk[idx];
+          a[j * (2 * nk) + 2 * k] = out_buffer[idx];
         }
-        out_chunk[idx] = 0;
+        out_buffer[idx] = 0;
       }
     }
     /* Do not need another barrier here because the next iteration will
        hit the barrier after computing auxiliary values before it
        gets a chance to overwrite any accumulation buffers. */
   }
-
 }
 
 
@@ -608,7 +606,10 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
   Kernel for performing many similar Legendre transforms for the
   same m. Used for benchmarking and debugging.
 
-  x_squared: Currently, the same x_squared is assumed for every block.
+  The same `x_squared` is assumed for every block.
+
+  `a` is the output, of shape (NVECS, 2 * nk). Only every other
+  element of `a` is written to (corresponding to the even/odd elements)
 */
 
 __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
@@ -617,17 +618,17 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              const double *Lambda_1,
                                              const unsigned short *i_stops,
                                              const double *q,
-                                             double *out,
+                                             double *a,
                                              int zero) {
   /* Shift to our block. */
   Lambda_0 += iblock * ni;
   Lambda_1 += iblock * ni;
   i_stops += iblock * nk;
   q += iblock * ni * NVECS;
-  out += iblock * nk * NVECS;
+  a += iblock * (2 * nk) * NVECS;
   /* Call worker */
   transpose_legendre_transform_single(m, lmin, nk, ni, x_squared, Lambda_0,
-                                      Lambda_1, i_stops, q, out, zero);
+                                      Lambda_1, i_stops, q, a, zero);
 }
 
 

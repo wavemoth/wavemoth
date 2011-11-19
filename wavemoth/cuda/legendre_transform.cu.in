@@ -590,7 +590,7 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
         int k = k_block_start + k_offset + kt;
         int idx = (k_offset + kt) * NVECS + j;
         if (k < nk) {
-          a[j * (2 * nk) + 2 * k] = out_buffer[idx];
+          a[2 * k * NVECS + j] = out_buffer[idx];
         }
         out_buffer[idx] = 0;
       }
@@ -608,8 +608,8 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
 
   The same `x_squared` is assumed for every block.
 
-  `a` is the output, of shape (NVECS, 2 * nk). Only every other
-  element of `a` is written to (corresponding to the even/odd elements)
+  `a` is the output, of shape (2 * nk, NVECS). Only every other
+  row of `a` is written to (corresponding to the even/odd elements)
 */
 
 __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,

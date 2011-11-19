@@ -70,7 +70,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     print
     print '=== nvecs={nvecs}, nthreads={nthreads}, i_chunk={i_chunk}, k_chunk={k_chunk}'.format(**locals())
 
-    out = np.zeros((2 * nk, nvecs, nblocks), dtype=np.double, order='F')
+    out = np.zeros((nblocks, 2 * nk, nvecs), dtype=np.double, order='C')
 
     kernel = CudaLegendreKernel(max_ni=ni,
                                 nthreads=nthreads, nvecs=nvecs,
@@ -99,12 +99,12 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
                       nwarps=nwarps)
 
     # Output is stored in strided format
-    a = out[::2, :, :]
+    a = out[:, ::2, :]
     if check:
         if not np.all(a[:, :, 0:1] == a):
             print 'NOT ALL j EQUAL!'
 
-    a = a[:, :, 1]
+    a = a[1, :, :]
     print 'Error', la.norm(a - a0) / la.norm(a0)
     sys.stdout.flush()
     return a

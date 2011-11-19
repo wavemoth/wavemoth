@@ -52,7 +52,7 @@ nside = 2048
 # Compute Lambda
 nvecs = 2
 
-m = 0
+m = 200
 lmax = 2 * nside
 odd = 0
 repeat = 1
@@ -115,22 +115,15 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
                                 k_chunk=k_chunk,
                                 i_chunk=i_chunk)
 
-    times = []
-    #cuda.start_profiler()
     if 0:
         print '======== Reduction '
         with cuda_profile() as prof:
             for rep in range(repeat):
                 output = np.zeros((nblocks, 2, 16, nwarps))
                 kernel.test_reduce_kernel(output, repeat=1000, nblocks=nblocks)
-        nops = nblocks * 2 * 16 * nthreads * 1000
-        times = np.asarray(prof.test_reduce_kernel.times) * 1e-6
-        dt = np.min(times)
-        print '%.2e +/- %.2e sec = %.2f GFLOP/sec' % (dt, np.std(times), nops / dt / 1e9)
-        occupancy_fraction = prof.test_reduce_kernel.occupancy[0]
-        nblocks_per_sm = occupancy_fraction * 48. / (nwarps)
-        print 'Occupancy: %.2f (%.2f warps, %.2f blocks)' % (
-            occupancy_fraction, occupancy_fraction * 48, nblocks_per_sm) 
+        print prof.format('test_reduce_kernel',
+                          nflops=nblocks * 2 * 16 * nthreads * 1000,
+                          nwarps=nwarps)
 
     print '======== Legendre transform '
     with cuda_profile() as prof:
@@ -138,16 +131,9 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
             kernel.transpose_legendre_transform(m, m + odd,
                                                 x_squared, Lambda_0, Lambda_1,
                                                 i_stops, q, out)
-    times = np.asarray(prof.transpose_legendre_transform.times) * 1e-6
-    dt = np.min(times)
-
-    matrix_elements = nblocks * nnz
-    UOP = matrix_elements * (6 + 2 * nvecs)
-    print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
-    occupancy_fraction = prof.transpose_legendre_transform.occupancy[0]
-    nblocks_per_sm = occupancy_fraction * 48. / (nwarps)
-    print 'Occupancy: %.2f (%.2f warps, %.2f blocks)' % (
-        occupancy_fraction, occupancy_fraction * 48, nblocks_per_sm) 
+    print prof.format('transpose_legendre_transform',
+                      nflops=nblocks * nnz * (6 + 2 * nvecs),
+                      nwarps=nwarps)
 
     a = out
     if check:

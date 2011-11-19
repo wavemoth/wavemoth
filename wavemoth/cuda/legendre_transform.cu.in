@@ -394,7 +394,9 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     }
     {{endfor}}
 
-    done{{kt}}: /* a goto-label... */
+    {{if blocktype == 'edge'}}
+    done{{kt}}:
+    {{endif}}
         
     /* Do 32->16 reduction and store result in outbuf. Note that
        acc_t corresponds to j=|t-odd|. */

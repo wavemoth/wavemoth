@@ -47,7 +47,7 @@ def get_edge(Lambda):
 
 nblocks = 500
 has_warps = True
-nside = 64
+nside = 2048
 
 # Compute Lambda
 nvecs = 2
@@ -161,7 +161,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     
 
 for nwarps in [2]:
-    for i_chunk in [2]:
+    for i_chunk in [4]:
         for k_chunk in [64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 

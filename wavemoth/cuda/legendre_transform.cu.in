@@ -355,37 +355,46 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
              gamma[kc] * Lambda_pp_{{ri}});
       {{enddef}}
       
-      {{def matvec_and_swap}}
+      {{def matvec}}
           {{for rj in range(nvecs)}}
           acc_{{rj}} += Lambda_val * q_{{ri}}_{{rj}};
           {{endfor}}
+      {{enddef}}
 
+      {{def swap}}
           Lambda_pp_{{ri}} = Lambda_p_{{ri}};
           Lambda_p_{{ri}} = Lambda_val;
       {{enddef}}
 
       {{if blocktype == 'inner'}}
-        {{Lambda_recurrence}}
-        {{matvec_and_swap}}
+        {{Lambda_recurrence()}}
+        {{matvec()}}
+        {{swap()}}
       {{else}}
         int i = i_start + ithread + {{nthreads * ri}};
         /* Need to account for i_stops and state of Lambda_p/pp,
-           and read initialization values from input if necesarry. */
-        if (i < i_stops[kc]) {
-          if (IS_UNASSIGNED(Lambda_p_{{ri}})) {
-            /* Have not started this column at all yet */
-            Lambda_val = Lambda_0[i];
-          } else if (IS_UNASSIGNED(Lambda_pp_{{ri}})) {
-            /* Lambda_p != 0, Lambda_pp == 0 => Started in the previous iteration */
-            Lambda_val = Lambda_1[i];
-          } else {
-            {{Lambda_recurrence}}
-          }
-          {{matvec_and_swap}}
+           and read initialization values from input if necesarry.
+
+           Note the goto statement. */
+        if (i >= i_stops[kc]) {
+          goto done{{kt}};
         }
+        if (IS_UNASSIGNED(Lambda_p_{{ri}})) {
+          /* Have not started this column at all yet */
+          Lambda_val = Lambda_0[i];
+        } else if (IS_UNASSIGNED(Lambda_pp_{{ri}})) {
+          /* Lambda_p != 0, Lambda_pp == 0 => Started in the previous iteration */
+          Lambda_val = Lambda_1[i];
+        } else {
+          {{Lambda_recurrence()}}
+        }
+        {{matvec()}}
+        {{swap()}}
       {{endif}}
     }
     {{endfor}}
+
+    done{{kt}}: /* a goto-label... */
         
     /* Do 32->16 reduction and store result in outbuf. Note that
        acc_t corresponds to j=|t-odd|. */

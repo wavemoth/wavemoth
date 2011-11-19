@@ -47,7 +47,7 @@ def get_edge(Lambda):
 
 nblocks = 500
 has_warps = True
-nside = 128
+nside = 64
 
 # Compute Lambda
 nvecs = 2
@@ -66,7 +66,6 @@ def downto(x, mod):
 thetas = healpix.get_ring_thetas(nside, positive_only=True)
 Lambda = compute_normalized_associated_legendre(m, thetas, lmax, epsilon=epsilon_legendre)
 Lambda = Lambda[:, odd::2].T
-Lambda = Lambda[:128, :128]
 
 def plot_matrix(M):
     ax = plt.gca()
@@ -75,6 +74,8 @@ def plot_matrix(M):
 #plot_matrix(Lambda)
 
 nk, ni = Lambda.shape
+
+nnz = np.sum(Lambda != 0)
 
 x_squared = hrepeat(np.cos(thetas[:ni])**2, nblocks).copy('F')
 
@@ -140,7 +141,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     times = np.asarray(prof.transpose_legendre_transform.times) * 1e-6
     dt = np.min(times)
 
-    matrix_elements = nblocks * ni * nk
+    matrix_elements = nblocks * nnz
     UOP = matrix_elements * (6 + 2 * nvecs)
     print '%.2e +/- %.2e sec = %.2f GUOP/sec' % (dt, np.std(times), UOP / dt / 1e9)
     occupancy_fraction = prof.transpose_legendre_transform.occupancy[0]
@@ -160,7 +161,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
     
 
 for nwarps in [2]:
-    for i_chunk in [4]:
+    for i_chunk in [2]:
         for k_chunk in [64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
 

@@ -1,7 +1,5 @@
 from __future__ import division
 
-# http://www.khronos.org/registry/cl/sdk/1.1/docs/man/xhtml/
-
 import os
 import sys
 import socket
@@ -11,6 +9,7 @@ if socket.gethostname() != 'dagss-laptop':
 
 import numpy as np
 import numpy.linalg as la
+import logging
 
 from matplotlib import pyplot as plt
 
@@ -26,25 +25,34 @@ import wavemoth.cuda.flatcuda as cuda
 def hrepeat(x, n):
     return np.repeat(x[:, None], n, axis=1).copy('F')
 
-
+logging.basicConfig()
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
 
 nblocks = 500
-has_warps = True
-nside = 2048
+nside = 64
 
 # Compute Lambda
 nvecs = 2
 
-m = 200
+m = 1
 lmax = 2 * nside
-odd = 1
+odd = 0
 repeat = 1
 
-plan = CudaShtPlan(nside=nside, lmax=lmax)
+resource_path = '/home/dagss/wavemoth/resources/gpu/%d.dat' % nside
+
+if not os.path.exists(resource_path):
+    plan = CudaShtPlan(nside=nside, lmax=lmax)
+    with file(resource_path, 'w') as f:
+        plan.precompute_to_stream(f, logger)
+    
+plan = CudaShtPlan(nside=nside, lmax=lmax, resource_path=resource_path)
+    
 ni = plan.ni
 nk = (lmax + 1 - m - odd + 1) // 2
 
-Lambda_0, Lambda_1, i_stops, nnz = plan.precompute(m, odd)
+Lambda_0, Lambda_1, i_stops, nnz = plan.precompute_single(m, odd)
 
 Lambda_0 = hrepeat(Lambda_0, nblocks)
 Lambda_1 = hrepeat(Lambda_1, nblocks)
@@ -74,7 +82,6 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
 
     kernel = CudaLegendreKernel(max_ni=ni,
                                 nthreads=nthreads, nvecs=nvecs,
-                                has_warps=has_warps,
                                 k_chunk=k_chunk,
                                 i_chunk=i_chunk)
 
@@ -114,7 +121,7 @@ for nwarps in [2]:
     for i_chunk in [4]:
         for k_chunk in [64]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
-
+            
 print np.hstack([a, a0])
 
 

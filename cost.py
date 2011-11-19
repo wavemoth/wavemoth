@@ -26,3 +26,19 @@ for k, w, b in [
     print '%r aux=%d red=%d acc=%d %d %d %d' % (
         (k, w, b), aux, red, acc,
         cost_a(k, w, b), cost_b(k, w, b), cost_c(k, w, b))
+
+
+print 'Precomputed data:'
+
+nside = 2048
+lmax = 2 * nside
+
+per_col = 3 * 8 + 1 * 2
+s = 0
+for m in range(lmax + 1):
+    for odd in range(2):
+        s += 2 * nside * per_col
+print s / 1024.**2
+
+print 'map size', 12*nside**2 * 8 / 1024.**2
+print 'alm size', (lmax + 1)**2 * 8 / 1024.**2

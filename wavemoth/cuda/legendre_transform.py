@@ -1,7 +1,7 @@
 import os
 import tempita
 import numpy as np
-from numpy import int32
+from numpy import int32, uint32
 
 from . import flatcuda as cuda
 from .flatcuda import InOut, In, Out
@@ -20,8 +20,10 @@ def check_arrays(args):
 
 class CudaLegendreKernel(object):
     
-    kernel_names = ['transpose_legendre_transform', 'test_reduce_kernel']
-    def __init__(self, nvecs, nthreads, max_ni, i_chunk, warp_size=32, **args):
+    kernel_names = ['transpose_legendre_transform', 'test_reduce_kernel',
+                    'all_transpose_legendre_transforms']
+    def __init__(self, nvecs, nthreads, max_ni, i_chunk, warp_size=32,
+                 k_chunk=32, skip_kernels=(), **args):
         self.nthreads = nthreads
         self.nvecs = nvecs
         self.warp_size = 32
@@ -34,12 +36,17 @@ class CudaLegendreKernel(object):
                                          warp_size=self.warp_size,
                                          max_ni=max_ni,
                                          i_chunk=i_chunk,
+                                         k_chunk=k_chunk,
+                                         skip_kernels=skip_kernels,
                                          **args)
         options = ['-ftz=true',
                    '-prec-div=true', '-prec-sqrt=true']
         #options += ['-Xptxas', '-v']
+        #options += ['-g', '-G']
         self.module = cuda.SourceModule(code, options=options, keep=True)
         for name in self.kernel_names:
+            if name in skip_kernels:
+                continue
             setattr(self, '_' + name, self.module.get_function(name))
 
     def transpose_legendre_transform(self, m, lmin,
@@ -66,6 +73,22 @@ class CudaLegendreKernel(object):
             In(Lambda_0), In(Lambda_1), In(i_stops), In(q), Out(a),
             int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
+
+    def all_transpose_legendre_transforms(self, lmax, resources_gpu, q, a):
+        ni = q.shape[3]
+        assert q.strides[3] == 8 and q.dtype == np.double
+        assert q.shape[1] == self.nvecs
+        assert a.dtype == np.complex128 and a.shape[1] == self.nvecs // 2
+        assert a.shape[0] == (lmax + 1)**2
+        assert a.strides[1] == 16
+
+        print q.nbytes
+        print a.nbytes
+        
+        self._all_transpose_legendre_transforms(
+            uint32(lmax), uint32(ni), resources_gpu, In(q), Out(a), uint32(0),
+            block=(self.nthreads, 1, 1), grid=(lmax + 1, 2))
+
 
     def test_reduce_kernel(self, output, repeat=1, nblocks=1):
         self._test_reduce_kernel(InOut(output), int32(repeat),

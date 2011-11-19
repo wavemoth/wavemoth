@@ -25,7 +25,7 @@ def round_up_to(x, mod):
 #define WS {{warp_size}}
 {{py: nwarps = nthreads // warp_size}}
 #define NWARPS {{nwarps}}
-{{default memory_bank_count = warp_size}}
+{{default skip_kernels = []}}
 #define K_CHUNK {{k_chunk}}
 #define I_CHUNK {{i_chunk}}
 {{py:ws = warp_size}}
@@ -39,7 +39,6 @@ reduction_buffers = ['reduction_buffer%d' % i for i in range(4)]
 /* Cast to int to make it easier to printf, as all our integers are
    then 32-bit. */
 #define ithread ((int)threadIdx.x)
-#define iblock ((int)blockIdx.x)
 
 #define iwarp (ithread / WS)
 
@@ -57,7 +56,9 @@ reduction_buffers = ['reduction_buffer%d' % i for i in range(4)]
 
 /* Hack: Substitute function name with if-test + name. ugh;
    todo: look up vararg macros*/
-#define printonce if (ithread == 0 && iblock == 0) printf
+#define printonce if (ithread == 0 && blockIdx.x == 0 && blockIdx.y == 0) printf
+
+typedef unsigned short ushort;
 
 /*****
  * Utilities
@@ -83,8 +84,8 @@ void print_array_glob(constant const char *msg, global double* arr, int len) {
 */
 
 /* Multiply four 16-bit ints and produce 64-bit result safely. */
-inline __device__ unsigned long prod4_16(unsigned short a, unsigned short b,
-                              unsigned short c, unsigned short d) {
+inline __device__ unsigned long prod4_16(ushort a, ushort b,
+                              ushort c, ushort d) {
   return (unsigned long)((unsigned int)a * b) * ((unsigned int)c * d);
 }
 
@@ -96,21 +97,28 @@ inline __device__ unsigned int round_up_to(unsigned int x, unsigned int mod) {
 }
 
 
+/* Gets from (l,m) to array index in mmajor ordering */
+inline __device__ uint lm_to_idx_mmajor(uint l, uint m, uint lmax) {
+  return m * (2 * lmax - m + 3) / 2 + (l - m);
+}
+
+
+
 /*****
  * Auxiliary value computation
  *****/
 
-__device__ double get_c_squared_num(unsigned short m, unsigned short l) {
+__device__ double get_c_squared_num(ushort m, ushort l) {
   return prod4_16(l - m + 1, l - m + 2,
                   l + m + 1, l + m + 2);
 }
 
-__device__ double get_c_squared_den(unsigned short m, unsigned short l) {
+__device__ double get_c_squared_den(ushort m, ushort l) {
   return prod4_16(2 * l + 1, 2 * l + 3,
                   2 * l + 3, 2 * l + 5);
 }
 
-__device__ double get_c(unsigned short m, unsigned short l) {
+__device__ double get_c(ushort m, ushort l) {
   /* A reciprocial square-root of the inverse whould be faster,
      but cost 1 ulp precision, and this step is very amortized. */
 #if APPROXIMATE_AUX
@@ -120,7 +128,7 @@ __device__ double get_c(unsigned short m, unsigned short l) {
 #endif
 }
 
-__device__ double get_c_inv(unsigned short m, unsigned short l) {
+__device__ double get_c_inv(ushort m, ushort l) {
 #if APPROXIMATE_AUX
   return rsqrt(get_c_squared_num(m, l) / get_c_squared_den(m, l));
 #else
@@ -128,7 +136,7 @@ __device__ double get_c_inv(unsigned short m, unsigned short l) {
 #endif
 }
 
-__device__ double get_d(unsigned short m, unsigned short l) {
+__device__ double get_d(ushort m, ushort l) {
   double num = 2 * l * (l + 1) - 2 * m * m - 1;
   double den = (2 * l - 1) * (2 * l + 3);
   return num / den;
@@ -255,6 +263,7 @@ class ReductionContext(object):
 {{enddef}}
 
 {{py: assert nvecs % 2 == 0}}
+{{if 'test_reduce_kernel' not in skip_kernels}}
 __global__ void test_reduce_kernel(double *output, int repeat) {
   /* Generates array (nvecs, 16, nwarps) in output, consisting
      of sum_{over warp} ( ithread * irow * (ivec + 1)) ),
@@ -270,7 +279,7 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
 
 
   /* Move to block */
-  output += NTHREADS * iblock;
+  output += NTHREADS * blockIdx.x;
 
   __shared__ double buffer[NTHREADS];
 
@@ -307,7 +316,7 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
   output[ithread] = buffer[ithread];
 
 }
-
+{{endif}}
 
 /*****
  * Transposed Legendre transform
@@ -325,7 +334,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     const double *Lambda_0,
     const double *Lambda_1,
     const double *x_squared,
-    const unsigned short *i_stops,
+    const ushort *i_stops,
     const double *alpha,
     const double *beta,
     const double *gamma,
@@ -472,14 +481,14 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
                                                     const double *x_squared,
                                                     const double *Lambda_0,
                                                     const double *Lambda_1,
-                                                    const unsigned short *i_stops,
+                                                    const ushort *i_stops,
                                                     const double *q,
                                                     double *a,
                                                     int zero) {
   
   /* Scratch for auxiliary values */
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
-  __shared__ unsigned short i_stops_chunk[K_CHUNK];
+  __shared__ ushort i_stops_chunk[K_CHUNK];
   __shared__ double out_buffer[NVECS * K_CHUNK];
 
   {{for buf in reduction_buffers}}
@@ -556,6 +565,7 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
       {{else}}
         i_stop = i_stops_chunk[k_block_len - 1];
       {{endif}}
+      if (ithread == 0) printf("i_stop=%d\n", i_stop);
       for (; i_block_start < i_stop; i_block_start += I_CHUNK * NTHREADS) {
         transpose_legendre_transform_{{blocktype}}_block(
             i_block_start,
@@ -611,24 +621,83 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
   `a` is the output, of shape (2 * nk, NVECS). Only every other
   row of `a` is written to (corresponding to the even/odd elements)
 */
-
+{{if 'transpose_legendre_transform' not in skip_kernels}}
 __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
                                              const double *x_squared,
                                              const double *Lambda_0,
                                              const double *Lambda_1,
-                                             const unsigned short *i_stops,
+                                             const ushort *i_stops,
                                              const double *q,
                                              double *a,
                                              int zero) {
   /* Shift to our block. */
-  Lambda_0 += iblock * ni;
-  Lambda_1 += iblock * ni;
-  i_stops += iblock * nk;
-  q += iblock * ni * NVECS;
-  a += iblock * (2 * nk) * NVECS;
+  Lambda_0 += blockIdx.x * ni;
+  Lambda_1 += blockIdx.x * ni;
+  i_stops += blockIdx.x * nk;
+  q += blockIdx.x * ni * NVECS;
+  a += blockIdx.x * (2 * nk) * NVECS;
   /* Call worker */
   transpose_legendre_transform_single(m, lmin, nk, ni, x_squared, Lambda_0,
                                       Lambda_1, i_stops, q, a, zero);
 }
+{{endif}}
 
 
+/*
+Perform all the Legendre transforms necesarry for a SHT. We assume a block
+grid of size (lmax + 1, 2) and use one block per Legendre transform.
+
+Arguments
+---------
+  lmax, ni
+  resources: buffer of resource data, which is expected to be laid out as:
+
+   - double[ni] x_squared
+   - For each m = 0..lmax:
+        For each odd:
+            double[ni] Lambda_0
+            double[ni] Lambda_1
+            ushort[ni] i_stops
+
+  q: Input data of shape (lmax + 1, 2, NVECS, ni) indexed by [m, odd, j, i]
+  a: Output data of shape ((lmax + 1)**2, NVECS), stored contiguously in
+     m-major ordering
+*/
+
+{{if 'all_transpose_legendre_transforms' not in skip_kernels}}
+__global__ void all_transpose_legendre_transforms(uint lmax,
+                                                  uint ni,
+                                                  const char *resources,
+                                                  const double *q,
+                                                  double *a,
+                                                  int zero) {
+  uint m = blockIdx.x;
+  uint odd = blockIdx.y;
+  uint idx = lm_to_idx_mmajor(m + odd, m, lmax);
+  uint lmin = m + odd;
+
+  /* Shift to our block's data */
+  //q += (2 * m + odd) * (2 * NVECS * ni);
+  //a += lm_to_idx_mmajor(lmin, m, lmax) * NVECS;
+//  if (ithread == 0) printf("%d %d --  %d %d %d %d\n", blockIdx.x, blockIdx.y, m, odd, idx, lmin);
+  /* Find resources */
+  const char *head = resources;
+  const double *x_squared = (double*)head;
+  head += sizeof(double) * ni;
+
+  uint rstride = ni * (sizeof(double) + sizeof(double) + sizeof(ushort));
+  head += (2 * m + odd) * rstride;
+  const double *Lambda_0 = (double*)head; head += ni * sizeof(double);
+  const double *Lambda_1 = (double*)head; head += ni * sizeof(double);
+  const ushort *i_stops = (ushort*)head; head += ni * sizeof(ushort);
+  if (!(blockIdx.x == 1 && blockIdx.y == 0)) return;
+
+  if (ithread == 0) printf("%d: i_stop=%d %d\n", ithread, i_stops[0], (char*)Lambda_0 - resources);
+
+  /* Let's go! */
+  uint nk = (lmax + 1 - m - odd + 1) / 2;
+  transpose_legendre_transform_single(m, lmin, nk, ni, x_squared, Lambda_0,
+                                      Lambda_1, i_stops, q, a, zero);
+  
+}
+{{endif}}

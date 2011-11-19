@@ -315,12 +315,13 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
 
 /*
   The following routine is responsible for dealing with a block of Lambda
-  of size (K_CHUNK, I_CHUNK * NTHREADS). The coordinates are implicitly
-  given by expecting each of the given arrays to be shifted to the region
-  of interest.
+  of size (K_CHUNK, I_CHUNK * NTHREADS). The i-coordinate (of the upper-left
+  corner) is explicitly passed in, while the k-coordinate is only implicitly
+  given by the contents of input arrays.
 */
 {{for blocktype in ('inner', 'edge')}}
 __device__ void transpose_legendre_transform_{{blocktype}}_block(
+    int i_start,
     const double *Lambda_0,
     const double *Lambda_1,
     const double *x_squared,
@@ -367,7 +368,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
         {{Lambda_recurrence}}
         {{matvec_and_swap}}
       {{else}}
-        int i = ithread + {{nthreads * ri}};
+        int i = i_start + ithread + {{nthreads * ri}};
         /* Need to account for i_stops and state of Lambda_p/pp,
            and read initialization values from input if necesarry. */
         if (i < i_stops[kc]) {
@@ -419,9 +420,9 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     double x_squared_{{ri}};
     double {{', '.join(['q_%d_%d' % (ri, rj) for rj in range(nvecs)])}};
     {
-      int i = ithread + {{nthreads * ri}};
-      Lambda_pp_{{ri}} = Lambda_pp[{{ri}}];
-      Lambda_p_{{ri}} = Lambda_p[{{ri}}];
+      int i = i_start + ithread + {{nthreads * ri}};
+      Lambda_pp_{{ri}} = Lambda_pp[i_start / NTHREADS + {{ri}}];
+      Lambda_p_{{ri}} = Lambda_p[i_start / NTHREADS + {{ri}}];
       x_squared_{{ri}} = x_squared[i];
       {{for rj in range(nvecs)}}
         q_{{ri}}_{{rj}} = q[({{'odd' if rj == 0 else '1 - odd'}}) * q_stride + i];
@@ -444,8 +445,8 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
 
   /* Persist Lambdas for the benefit of the block below. */
   {{for ri in range(i_chunk)}}
-  Lambda_pp[{{ri}}] = Lambda_pp_{{ri}};
-  Lambda_p[{{ri}}] = Lambda_p_{{ri}};
+  Lambda_pp[i_start / NTHREADS + {{ri}}] = Lambda_pp_{{ri}};
+  Lambda_p[i_start / NTHREADS + {{ri}}] = Lambda_p_{{ri}};
   {{endfor}}
 
   
@@ -485,7 +486,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     Lambda_pp[ri] = UNASSIGNED;
     Lambda_p[ri] = UNASSIGNED;
   }
-
   /* Shift to our block */
   x_squared += iblock * ni;
   Lambda_0 += iblock * ni;
@@ -505,14 +505,21 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
      The blocks are processed in row-wise order.
   */
   for (int k_block_start = 0; k_block_start < nk; k_block_start += K_CHUNK) {
+    int k_block_len = min(K_CHUNK, nk - k_block_start);
     /* Put values invariant over row-block in shared memory:
          - Compute auxiliaries
          - Copy i_stops 
     */
     compute_recurrence_auxiliaries(m, lmin + 2 * k_block_start,
                                    alpha, beta, gamma);
-    for (int idx = ithread; idx < K_CHUNK; idx += NTHREADS) {
-      i_stops_chunk[idx] = i_stops[k_block_start + idx];
+    {
+      int idx;
+      for (idx = ithread; idx < k_block_len; idx += NTHREADS) {
+        i_stops_chunk[idx] = i_stops[k_block_start + idx];
+      }
+      for (; idx < K_CHUNK; idx += NTHREADS) {
+        i_stops_chunk[idx] = 0;
+      }
     }
     __syncthreads();
     
@@ -523,10 +530,9 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
 
 
     int i_block_start = 0;
-    {{for blocktype in ('inner', 'edge')}}
+    {{for blocktype in ('inner', 'edge',)}}
     {
       int i_stop;
-      int k_block_len = min(K_CHUNK, nk - k_block_start);
       {{if blocktype == 'inner'}}
         if (k_block_start == 0 || i_stops_chunk[0] < I_CHUNK * NTHREADS) {
           /* For top edge, skip inner block loop. And don't allow blocks
@@ -544,17 +550,18 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
       {{endif}}
       for (; i_block_start < i_stop; i_block_start += I_CHUNK * NTHREADS) {
         transpose_legendre_transform_{{blocktype}}_block(
-            Lambda_0 + i_block_start,
-            Lambda_1 + i_block_start,
-            x_squared + i_block_start,
+            i_block_start,
+            Lambda_0,
+            Lambda_1,
+            x_squared,
             i_stops_chunk,
             alpha,
             beta,
             gamma,
-            Lambda_p + i_block_start / NTHREADS,
-            Lambda_pp + i_block_start / NTHREADS,
+            Lambda_p,
+            Lambda_pp,
             out_chunk,
-            q + i_block_start,
+            q,
             ni /* q_stride */,
             k_block_len,  /* nrows */
             {{','.join([buf for buf in reduction_buffers])}}

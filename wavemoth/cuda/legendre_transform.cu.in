@@ -464,17 +464,19 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
 }
 {{endfor}}{{#blocktype}}
 
-/*
-  x_squared: Currently, the same x_squared is assumed for every block.
+/* The worker for performing a single transposed Legendre transform.
+   All arguments are expected to be block-specific, i.e., the block
+   index is never taken into account beyond this point.
 */
-__global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
-                                             const double *x_squared,
-                                             const double *Lambda_0,
-                                             const double *Lambda_1,
-                                             const unsigned short *i_stops,
-                                             const double *q,
-                                             double *out,
-                                             int zero) {
+__device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int ni,
+                                                    const double *x_squared,
+                                                    const double *Lambda_0,
+                                                    const double *Lambda_1,
+                                                    const unsigned short *i_stops,
+                                                    const double *q,
+                                                    double *out,
+                                                    int zero) {
+  
   /* Scratch for auxiliary values */
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];
   __shared__ unsigned short i_stops_chunk[K_CHUNK];
@@ -500,13 +502,6 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
     Lambda_pp[ri] = UNASSIGNED;
     Lambda_p[ri] = UNASSIGNED;
   }
-  /* Shift to our block. */
-  Lambda_0 += iblock * ni;
-  Lambda_1 += iblock * ni;
-  i_stops += iblock * nk;
-  q += iblock * ni * NVECS;
-  out += iblock * nk * NVECS;
-
   /* No barrier: Will hit barrier below before work_local_sum gets
      overwritten again, and we only write once to each element in
      out. */
@@ -607,3 +602,32 @@ __global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
   }
 
 }
+
+
+/*
+  Kernel for performing many similar Legendre transforms for the
+  same m. Used for benchmarking and debugging.
+
+  x_squared: Currently, the same x_squared is assumed for every block.
+*/
+
+__global__ void transpose_legendre_transform(int m, int lmin, int nk, int ni,
+                                             const double *x_squared,
+                                             const double *Lambda_0,
+                                             const double *Lambda_1,
+                                             const unsigned short *i_stops,
+                                             const double *q,
+                                             double *out,
+                                             int zero) {
+  /* Shift to our block. */
+  Lambda_0 += iblock * ni;
+  Lambda_1 += iblock * ni;
+  i_stops += iblock * nk;
+  q += iblock * ni * NVECS;
+  out += iblock * nk * NVECS;
+  /* Call worker */
+  transpose_legendre_transform_single(m, lmin, nk, ni, x_squared, Lambda_0,
+                                      Lambda_1, i_stops, q, out, zero);
+}
+
+

@@ -23,7 +23,7 @@ class CudaLegendreKernel(object):
     kernel_names = ['transpose_legendre_transform', 'test_reduce_kernel',
                     'all_transpose_legendre_transforms']
     def __init__(self, nvecs, nthreads, max_ni, i_chunk, warp_size=32,
-                 k_chunk=32, skip_kernels=(), **args):
+                 k_chunk=64, skip_kernels=(), **args):
         self.nthreads = nthreads
         self.nvecs = nvecs
         self.warp_size = 32
@@ -74,7 +74,7 @@ class CudaLegendreKernel(object):
             int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 
-    def all_transpose_legendre_transforms(self, lmax, resources_gpu, q, a):
+    def all_transpose_legendre_transforms(self, lmax, mmin, mmax, resources_gpu, q, a):
         ni = q.shape[3]
         assert q.strides[3] == 8 and q.dtype == np.double
         assert q.shape[1] == self.nvecs
@@ -82,12 +82,9 @@ class CudaLegendreKernel(object):
         assert a.shape[0] == (lmax + 1)**2
         assert a.strides[1] == 16
 
-        print q.nbytes
-        print a.nbytes
-        
         self._all_transpose_legendre_transforms(
-            uint32(lmax), uint32(ni), resources_gpu, In(q), Out(a), uint32(0),
-            block=(self.nthreads, 1, 1), grid=(lmax + 1, 2))
+            uint32(lmax), uint32(mmin), uint32(ni), resources_gpu, In(q), Out(a), uint32(0),
+            block=(self.nthreads, 1, 1), grid=(mmax - mmin + 1, 2))
 
 
     def test_reduce_kernel(self, output, repeat=1, nblocks=1):

@@ -1,5 +1,4 @@
 from __future__ import division
-from cpython cimport PyBytes_FromStringAndSize
 from libc.stdlib cimport free
 from libc.string cimport memcpy
 
@@ -9,6 +8,7 @@ import numpy as np
 cimport numpy as np
 
 from wavemoth cimport blas
+from .streamutils import write_int32, write_int64, pad128, write_array, write_aligned_array
 
 from interpolative_decomposition import sparse_interpolative_decomposition
 from collections import namedtuple
@@ -61,6 +61,9 @@ elif sizeof(bfm_index_t) == 8:
     index_dtype = np.int64
 else:
     assert False
+
+def write_index_t(stream, bfm_index_t i):
+    write_bin(stream, <char*>&i, sizeof(i))
 
 class ButterflyMatrixError(Exception):
     pass
@@ -152,31 +155,6 @@ cdef class DenseResidualButterfly(ButterflyPlan):
                         A,
                         buf,
                         nvecs, stop - start, row_stop - row_start, 0.0)
-
-cdef write_bin(stream, char *buf, Py_ssize_t size):
-    stream.write(PyBytes_FromStringAndSize(buf, size))
-
-def write_int32(stream, int32_t i):
-    write_bin(stream, <char*>&i, sizeof(i))
-
-def write_int64(stream, int64_t i):
-    write_bin(stream, <char*>&i, sizeof(i))
-
-def write_index_t(stream, bfm_index_t i):
-    write_bin(stream, <char*>&i, sizeof(i))
-
-def write_array(stream, arr):
-    n = stream.write(bytes(arr.data))
-
-def write_aligned_array(stream, arr):
-    pad128(stream)
-    n = stream.write(bytes(arr.data))
-
-def pad128(stream):
-    i = stream.tell()
-    m = i % 16
-    if m != 0:
-        stream.write(b'\0' * (16 - m))
 
 class Node(object):
     def format_stats(self, level=None, residual_size_func=int.__mul__):

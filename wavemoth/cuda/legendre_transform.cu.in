@@ -97,12 +97,6 @@ inline __device__ unsigned int round_up_to(unsigned int x, unsigned int mod) {
 }
 
 
-/* Gets from (l,m) to array index in mmajor ordering */
-inline __device__ uint lm_to_idx_mmajor(uint l, uint m, uint lmax) {
-  return m * (2 * lmax - m + 3) / 2 + (l - m);
-}
-
-
 
 /*****
  * Auxiliary value computation
@@ -445,7 +439,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
       Lambda_p_{{ri}} = Lambda_p[i_start / NTHREADS + {{ri}}];
       x_squared_{{ri}} = x_squared[i];
       {{for rj in range(nvecs)}}
-        q_{{ri}}_{{rj}} = q[({{'odd' if rj == 0 else '1 - odd'}}) * q_stride + i];
+      q_{{ri}}_{{rj}} = q[({{'odd' if rj == 0 else '1 - odd'}}) * q_stride + i]  ;
       {{endfor}}
     }
   {{endfor}}
@@ -565,7 +559,6 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
       {{else}}
         i_stop = i_stops_chunk[k_block_len - 1];
       {{endif}}
-      if (ithread == 0) printf("i_stop=%d\n", i_stop);
       for (; i_block_start < i_stop; i_block_start += I_CHUNK * NTHREADS) {
         transpose_legendre_transform_{{blocktype}}_block(
             i_block_start,
@@ -664,38 +657,63 @@ Arguments
      m-major ordering
 */
 
-{{if 'all_transpose_legendre_transforms' not in skip_kernels}}
+{{if "all_transpose_legendre_transforms" not in skip_kernels}}
+
+
+/* Gets from (l,m) to array index in mmajor ordering */
+inline __device__ uint lm_to_idx_mmajor(uint l, uint m, uint lmax) {
+  return m * (2 * lmax - m + 3) / 2 + (l - m);
+}
+
+inline __device__ uint get_nk(uint lmax, uint m, uint odd) {
+  return (lmax + 1 - m - odd + 1) / 2;
+}
+
 __global__ void all_transpose_legendre_transforms(uint lmax,
+                                                  uint mmin,
                                                   uint ni,
                                                   const char *resources,
                                                   const double *q,
                                                   double *a,
                                                   int zero) {
-  uint m = blockIdx.x;
+  uint m = mmin + blockIdx.x;
   uint odd = blockIdx.y;
   uint idx = lm_to_idx_mmajor(m + odd, m, lmax);
   uint lmin = m + odd;
 
-  /* Shift to our block's data */
-  //q += (2 * m + odd) * (2 * NVECS * ni);
-  //a += lm_to_idx_mmajor(lmin, m, lmax) * NVECS;
-//  if (ithread == 0) printf("%d %d --  %d %d %d %d\n", blockIdx.x, blockIdx.y, m, odd, idx, lmin);
-  /* Find resources */
+  /* Find resource tables */
   const char *head = resources;
-  const double *x_squared = (double*)head;
-  head += sizeof(double) * ni;
+  head += 2 * (lmax + 2) * 8; /* Skip nnz */
 
-  uint rstride = ni * (sizeof(double) + sizeof(double) + sizeof(ushort));
-  head += (2 * m + odd) * rstride;
-  const double *Lambda_0 = (double*)head; head += ni * sizeof(double);
-  const double *Lambda_1 = (double*)head; head += ni * sizeof(double);
-  const ushort *i_stops = (ushort*)head; head += ni * sizeof(ushort);
-  if (!(blockIdx.x == 1 && blockIdx.y == 0)) return;
+  const double *x_squared = (double*)head; head += sizeof(double) * ni;
+  const double *Lambda_0 = (double*)head; head += sizeof(double) * ni * 2 * (lmax + 1);
+  const double *Lambda_1 = (double*)head; head += sizeof(double) * ni * 2 * (lmax + 1);
+  const ushort *i_stops = (ushort*)head;
 
-  if (ithread == 0) printf("%d: i_stop=%d %d\n", ithread, i_stops[0], (char*)Lambda_0 - resources);
+  /* Shift to our block's data */
+  q += (2 * m + odd) * (NVECS * ni);
+  a += lm_to_idx_mmajor(lmin, m, lmax) * NVECS;
+
+  Lambda_0 += (2 * m + odd) * ni;
+  Lambda_1 += (2 * m + odd) * ni;
+  i_stops += lm_to_idx_mmajor(m, m, lmax);
+  /* Now i_stops points to beginning of even coefficients */
+  if (odd) i_stops += get_nk(lmax, m, 0);
+  
+
+ BUG: run the print below to see...
+
+  if (ithread == 0 && m == 100 && odd == 0) {
+    for (int t = 0; t != get_nk(lmax, m, odd); ++t) {
+      printf("%d ", i_stops[t]);
+    }
+    printf("\n");
+  }
+  //printf("%d %d %d: i_stop=%d %d\n", ithread, m, odd,
+  //                       i_stops[0], (char*)Lambda_0 - resources);
 
   /* Let's go! */
-  uint nk = (lmax + 1 - m - odd + 1) / 2;
+  uint nk = get_nk(lmax, m, odd);
   transpose_legendre_transform_single(m, lmin, nk, ni, x_squared, Lambda_0,
                                       Lambda_1, i_stops, q, a, zero);
   

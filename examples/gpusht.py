@@ -28,19 +28,27 @@ logging.basicConfig()
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-nside = 64
+force = False #or True
+nside = 1024
 nmaps = 1
 lmax = 2 * nside
 odd = 0
 
+if 1:
+    mmin = 0
+    mmax = lmax // 2
+else:
+    mmin = lmax // 2 + 1
+    mmax = None
+
 resource_path = '/home/dagss/wavemoth/resources/gpu/%d.dat' % nside
 
-if not os.path.exists(resource_path) or True:
+if not os.path.exists(resource_path) or force:
     plan = CudaShtPlan(nside=nside, lmax=lmax)
     with file(resource_path, 'w') as f:
         plan.precompute_to_stream(f, logger)
     
-plan = CudaShtPlan(nside=nside, lmax=lmax, resource_path=resource_path)
+plan = CudaShtPlan(nside=nside, lmax=lmax, mmin=mmin, mmax=mmax, resource_path=resource_path)
 ni = plan.ni
 
 q = np.zeros((lmax + 1, 2, 2 * nmaps, ni))
@@ -49,10 +57,11 @@ a = np.zeros(((lmax + 1)**2, nmaps), dtype=np.complex128)
 with cuda_profile() as prof:
     plan.execute_transpose_legendre(q, a)
 
+
 print prof.format('all_transpose_legendre_transforms',
-                  nflops=1e9,
+                  nflops=plan.get_flops(),
                   nwarps=2)
-    
-print a.shape, q.shape
+
+#print plan.nnz
 print np.std(a)
 print a[0,0]

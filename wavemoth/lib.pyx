@@ -7,12 +7,11 @@ from io import BytesIO
 
 from concurrent.futures import ProcessPoolExecutor
 
-from butterfly import write_int64, pad128, write_array, write_aligned_array
 from butterfly import butterfly_compress, serialize_butterfly_matrix
 from utils import FakeExecutor
 from .legendre import compute_normalized_associated_legendre
 from .healpix import get_ring_thetas
-
+from .streamutils import write_int64, pad128, write_array, write_aligned_array
 
 np.import_array()
 

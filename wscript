@@ -138,6 +138,7 @@ def build(bld):
 
     bld(source=(['wavemoth/streamutils.pyx']),
         target='streamutils',
+        use='NUMPY',
         features='c pyext cshlib')
 
     if BUILD_BUTTERFLY:

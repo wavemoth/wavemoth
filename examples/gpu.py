@@ -40,14 +40,7 @@ lmax = 2 * nside
 odd = 0
 repeat = 1
 
-resource_path = '/home/dagss/wavemoth/resources/gpu/%d.dat' % nside
-
-if not os.path.exists(resource_path):
-    plan = CudaShtPlan(nside=nside, lmax=lmax)
-    with file(resource_path, 'w') as f:
-        plan.precompute_to_stream(f, logger)
-    
-plan = CudaShtPlan(nside=nside, lmax=lmax, resource_path=resource_path)
+plan = CudaShtPlan(nside=nside, lmax=lmax)
     
 ni = plan.ni
 nk = (lmax + 1 - m - odd + 1) // 2
@@ -102,7 +95,7 @@ def doit(nvecs, nwarps, i_chunk, k_chunk):
                                                 plan.x_squared, Lambda_0, Lambda_1,
                                                 i_stops, q, out)
     print prof.format('transpose_legendre_transform',
-                      nflops=nblocks * nnz * (6 + 2 * nvecs),
+                      nflops=nblocks * nnz * (5 + 2 * nvecs),
                       nwarps=nwarps)
 
     # Output is stored in strided format

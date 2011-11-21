@@ -150,6 +150,6 @@ class CudaShtPlan(object):
         nnz = 0
         for m in range(2 * self.mmin, 2 * self.mmax + 1):
             nnz += self.nnz[m]
-        return nnz * (6 + 2 * 2 * self.nmaps)
+        return nnz * (5 + 2 * 2 * self.nmaps)
 
     #def unload_resources():

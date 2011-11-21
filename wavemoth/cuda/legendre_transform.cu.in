@@ -181,10 +181,12 @@ __device__ void compute_recurrence_auxiliaries(int m, int lmin,
 
 {{py:
 class ReductionContext(object):
-    def __init__(self, nextrow_func, store_func, buffers):
+    def __init__(self, nextrow_func, store_func, buffers, **kw):
         self.free_buffers = set(buffers)
         self.nextrow_func = nextrow_func
         self.store_func = store_func
+        for key, value in kw.iteritems():
+            setattr(self, key, value)
 
     def allocate_buf(self):
         return self.free_buffers.pop()
@@ -197,7 +199,7 @@ class ReductionContext(object):
 {{def reduce_worker(ctx, row_start, row_stop, out_vname, is_top, store_func)}}
   {{py: out_slice_vname = out_vname if is_top or out_vname is None else '(%s + WS)' % out_vname}}
   {{if row_stop - row_start == 1}}
-    {{ctx.nextrow_func(row_start, out_slice_vname)}}
+    {{ctx.nextrow_func(row_start, out_slice_vname, ctx)}}
   {{else}}
     /* Pass on output buffer to children if is_top, else allocate a new
        one. */
@@ -214,7 +216,7 @@ class ReductionContext(object):
         /* we are asked to store reduced value directly to target */
         int _reduced_j = ithread % 2;
         int _reduced_k = ((ithread % WS) / 2);
-        {{store_func('_reduced_j', '_reduced_k', '_reduced_val')}}
+        {{store_func('_reduced_j', '_reduced_k', '_reduced_val', ctx)}}
       {{else}}
         /* inner level, store results for parent level */
         {{out_slice_vname}}[ithread % WS] = _reduced_val;
@@ -224,13 +226,13 @@ class ReductionContext(object):
   {{endif}}
 {{enddef}}
 
-{{def parallel_tree_reduction(*args)}}
+{{def parallel_tree_reduction(*args, **kw)}}
 /*
   If nwarps == 1, we pass the store_func to reduce_worker so that the final
   intra-warp reduction stores values. Otherwise, we proceed to inter-warp
   reduction and call store_func at the end of that.
 */
-  {{py: ctx = ReductionContext(*args)}}
+  {{py: ctx = ReductionContext(*args, **kw)}}
   {{py: root_buf = ctx.allocate_buf()}}
   {{py: body = reduce_worker(ctx, 0, 16, root_buf, True, ctx.store_func if nwarps == 1 else None)}}
 
@@ -250,7 +252,7 @@ class ReductionContext(object):
         _reduced_val += ({{root_buf}} + t * 2 * WS)[ithread];
       }
       /* Call with expressions for (j, k, value) */
-      {{ctx.store_func('(ithread % 2)', '(ithread / 2)', '_reduced_val')}}
+      {{ctx.store_func('(ithread % 2)', '(ithread / 2)', '_reduced_val', ctx)}}
     }
     __syncthreads();
   {{endif}}
@@ -282,7 +284,7 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
   __syncthreads();
 
   /* Registers for loading row of input*/
-  {{def nextrow(rowidx, outbuf)}}
+  {{def nextrow(rowidx, outbuf, ctx)}}
     /* Load next row into registers -- in transpose_legendre_transform,
        this step is replaced by computation. The "computation order" must
        be arranged so that vec-number is reversed for every other thread... */
@@ -298,7 +300,7 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
     {{outbuf}}[ithread % 32] += mine; /* Accumulate with what neighbour stored */
   }
   {{enddef}}
-  {{def store(vec_code, row_code, value_code)}}
+  {{def store(vec_code, row_code, value_code, ctx)}}
   buffer[{{vec_code}} * 16 * NWARPS + {{row_code}} * NWARPS + iwarp] += {{value_code}};
   {{enddef}}
 
@@ -344,7 +346,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
   /*
     Code snippet to be instantiated to compute each row, including 32->16 reduction.
   */
-  {{def nextrow(kt, outbuf)}}
+  {{def nextrow(kt, outbuf, ctx)}}
   {
     double acc_0 = 0, acc_1 = 0;
     double Lambda_val = 0;
@@ -369,7 +371,10 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
           Lambda_p_{{ri}} = Lambda_val;
       {{enddef}}
 
-      {{if blocktype == 'inner'}}
+      {{if ctx.blocktype == 'inner'}}
+      /*      if (IS_UNASSIGNED(Lambda_pp_{{ri}}) || IS_UNASSIGNED(Lambda_pp_{{ri}})) {
+        printonce("%d %d\n", i_start + ithread + {{nthreads * ri}}, kc);
+        }*/
         {{Lambda_recurrence()}}
         {{matvec()}}
         {{swap()}}
@@ -414,7 +419,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     Code snippet for storing reduction results. Only executed for iwarp==0.
     k_offset is defined in a loop in the body below.
   */
-  {{def store(vec_code, row_code, value_code)}}
+  {{def store(vec_code, row_code, value_code, ctx)}}
   out_accumulator[k_offset * NVECS + ithread] += {{value_code}};
   {{enddef}}
 
@@ -454,7 +459,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
      to out beyond nk at the end of the block row.
   */
   for (int k_offset = 0; k_offset < nrows; k_offset += 16) {
-    {{parallel_tree_reduction(nextrow, store, reduction_buffers)}}
+    {{parallel_tree_reduction(nextrow, store, reduction_buffers, blocktype=blocktype)}}
   }
 
   /* Persist Lambdas for the benefit of the block below. */

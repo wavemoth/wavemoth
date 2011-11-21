@@ -101,7 +101,7 @@ class CudaShtPlan(object):
           Format of i_stops is m-major ordering, but with, additionally, even coefficents
           all coming before the odd ones.
         """
-        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
         executor = ProcessPoolExecutor(max_workers=8)
 

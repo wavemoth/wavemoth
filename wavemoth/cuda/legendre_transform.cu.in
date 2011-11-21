@@ -683,7 +683,7 @@ __global__ void all_transpose_legendre_transforms(uint lmax,
 
   /* Find resource tables */
   const char *head = resources;
-  head += 2 * (lmax + 2) * 8; /* Skip nnz */
+  head += 2 * (lmax + 1) * 8; /* Skip nnz */
 
   const double *x_squared = (double*)head; head += sizeof(double) * ni;
   const double *Lambda_0 = (double*)head; head += sizeof(double) * ni * 2 * (lmax + 1);
@@ -700,18 +700,6 @@ __global__ void all_transpose_legendre_transforms(uint lmax,
   /* Now i_stops points to beginning of even coefficients */
   if (odd) i_stops += get_nk(lmax, m, 0);
   
-
- BUG: run the print below to see...
-
-  if (ithread == 0 && m == 100 && odd == 0) {
-    for (int t = 0; t != get_nk(lmax, m, odd); ++t) {
-      printf("%d ", i_stops[t]);
-    }
-    printf("\n");
-  }
-  //printf("%d %d %d: i_stop=%d %d\n", ithread, m, odd,
-  //                       i_stops[0], (char*)Lambda_0 - resources);
-
   /* Let's go! */
   uint nk = get_nk(lmax, m, odd);
   transpose_legendre_transform_single(m, lmin, nk, ni, x_squared, Lambda_0,

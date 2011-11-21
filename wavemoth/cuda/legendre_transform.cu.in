@@ -402,7 +402,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     }
     {{endfor}}
 
-    {{if blocktype == 'edge'}}
+    {{if ctx.blocktype == 'edge'}}
     done{{kt}}:
     {{endif}}
         

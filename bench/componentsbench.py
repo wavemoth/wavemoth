@@ -6,7 +6,7 @@ import sys
 import numpy as np
 from wavemoth.butterflylib import *
 from wavemoth.benchmark_utils import *
-from wavemoth.fastsht import *
+from wavemoth.lib import *
 
 def post_projection_scatter():
     nvecs = 2
@@ -25,10 +25,10 @@ def post_projection_scatter():
     with benchmark('post_projection_scatter', J, profile=True):
         X = scatter(mask, target1, target2, a, add=True, not_mask=True, repeat=J)
 
-def legendre_transform(nvecs):
-    nx = 512
+def do_legendre_transform(nvecs):
+    nx = 4096
     nx -= nx % 6
-    nk = 512
+    nk = 2048
     x_squared = np.zeros(nx)
     a = np.zeros((nk, nvecs))
     y = np.zeros((nx, nvecs))
@@ -36,16 +36,16 @@ def legendre_transform(nvecs):
     p1 = np.zeros(nx)
 
     def legendre_transform_normal(repeat):
-        associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
-                                      repeat=repeat)
+        legendre_transform(0, 0, a, y, x_squared, p0, p1,
+                           repeat=repeat, use_sse=False)
 
     if nvecs == 2:
         benchmark(legendre_transform_normal, 1)
             
     J = 1000
     def legendre_transform_sse(repeat):
-        associated_legendre_transform(0, 0, a, y, x_squared, p0, p1,
-                                      repeat=repeat, use_sse=True)
+        legendre_transform(0, 0, a, y, x_squared, p0, p1,
+                           repeat=repeat, use_sse=True)
     dt = benchmark(legendre_transform_sse, J, profile=False, duration=20)
     print 'Time per vector', ftime(dt / nvecs)
     
@@ -79,8 +79,8 @@ def legendre_precompute():
 if sys.argv[1] == 'pps':
     post_projection_scatter()
 elif sys.argv[1] == 'lt':
-    legendre_transform(2)
+    do_legendre_transform(2)
 elif sys.argv[1] == 'ltmulti':
-    legendre_transform(12)
+    do_legendre_transform(10)
 elif sys.argv[1] == 'lp':
     legendre_precompute()

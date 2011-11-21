@@ -2,6 +2,7 @@ from __future__ import division
 from libc.stdlib cimport free
 from libc.string cimport memcpy
 
+from cpython cimport PyBytes_FromStringAndSize
 import sys
 from io import BytesIO
 import numpy as np
@@ -61,6 +62,9 @@ elif sizeof(bfm_index_t) == 8:
     index_dtype = np.int64
 else:
     assert False
+
+cdef write_bin(stream, char *buf, Py_ssize_t size):
+    stream.write(PyBytes_FromStringAndSize(buf, size))
 
 def write_index_t(stream, bfm_index_t i):
     write_bin(stream, <char*>&i, sizeof(i))

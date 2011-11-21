@@ -554,7 +554,7 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
              here -- note that `i_stop` is the stop of the *left* edge of the block
              in the for-loop.
            */
-          i_stop = i_stops_chunk[0] - I_CHUNK * NTHREADS;
+          i_stop = i_stops_chunk[0] - I_CHUNK * NTHREADS - 1;
         }
       {{else}}
         i_stop = i_stops_chunk[k_block_len - 1];

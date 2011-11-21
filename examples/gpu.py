@@ -4,6 +4,12 @@ import os
 import sys
 import socket
 
+# Problematic configurations:
+# - Nside=64
+# - Nside=m=2048, odd=0
+#
+#
+
 if socket.gethostname() != 'dagss-laptop':
     sys.path.append('/home/dagss/wavemoth')
 
@@ -29,13 +35,13 @@ logging.basicConfig()
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-nblocks = 500
-nside = 64
+nblocks = 1000
+nside = 2048
 
 # Compute Lambda
 nvecs = 2
 
-m = 1
+m = 200#2048
 lmax = 2 * nside
 odd = 0
 repeat = 1
@@ -116,8 +122,9 @@ for nwarps in [2]:
             a = doit(nvecs=nvecs, nwarps=nwarps, i_chunk=i_chunk, k_chunk=k_chunk)
             
 print np.hstack([a, a0])
+#print np.isnan(a).nonzero()
 
-
+print i_stops[:-300]
 #plt.clf()
 
 
@@ -125,3 +132,4 @@ print np.hstack([a, a0])
 # k_chunk must be 32 (because of aux computations)
 # i_chunk must be %2 (because of ni)
 # nthreads = 96 does not work either (?)
+

@@ -28,13 +28,13 @@ logging.basicConfig()
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-force = False #or True
-nside = 512
+force = False
+nside = 2048
 nmaps = 1
 lmax = 2 * nside
 odd = 0
 
-if 1:
+if 0:
     mmin = 0
     mmax = lmax // 2
 else:
@@ -89,3 +89,5 @@ for m in test_ms:
         if (m, odd) != (mmax, 1):
             print m, odd, np.linalg.norm(a_slice - a0_slice) / np.linalg.norm(a0_slice)
 
+
+print 'FLOPS', plan.get_flops()

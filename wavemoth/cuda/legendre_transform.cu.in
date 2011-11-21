@@ -379,7 +379,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
         {{matvec()}}
         {{swap()}}
       {{else}}
-        int i = i_start + ithread + {{nthreads * ri}};
+        int i = i_start + iwarp * (WS * I_CHUNK) + (ithread % WS) + {{ws * ri}};
         /* Need to account for i_stops and state of Lambda_p/pp,
            and read initialization values from input if necesarry.
 
@@ -439,7 +439,7 @@ __device__ void transpose_legendre_transform_{{blocktype}}_block(
     double x_squared_{{ri}};
     double {{', '.join(['q_%d_%d' % (ri, rj) for rj in range(nvecs)])}};
     {
-      int i = i_start + ithread + {{nthreads * ri}};
+      int i = i_start + iwarp * (I_CHUNK * WS) + (ithread % WS) + {{ws * ri}};
       Lambda_pp_{{ri}} = Lambda_pp[i_start / NTHREADS + {{ri}}];
       Lambda_p_{{ri}} = Lambda_p[i_start / NTHREADS + {{ri}}];
       x_squared_{{ri}} = x_squared[i];
@@ -559,7 +559,10 @@ __device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int
              here -- note that `i_stop` is the stop of the *left* edge of the block
              in the for-loop.
            */
-          i_stop = i_stops_chunk[0] - I_CHUNK * NTHREADS - 1;
+          i_stop = i_stops_chunk[0] - I_CHUNK * NTHREADS;
+          /*          printonce("%d STOPPING AT %d - %d = %d\n", k_block_start,
+                 i_stops_chunk[0], I_CHUNK * NTHREADS,
+                 i_stop);*/
         }
       {{else}}
         i_stop = i_stops_chunk[k_block_len - 1];

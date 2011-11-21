@@ -41,7 +41,7 @@ nside = 2048
 # Compute Lambda
 nvecs = 2
 
-m = 200#2048
+m = 200
 lmax = 2 * nside
 odd = 0
 repeat = 1

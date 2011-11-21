@@ -30,6 +30,8 @@ def get_edge(Lambda):
         if k + 1 < Lambda.shape[0]:
             Lambda_1[cur_i:next_i] = Lambda[k + 1, cur_i:next_i]
         cur_i = next_i
+    if np.any(i_stops[1:] < i_stops[:-1]):
+        raise NotImplementedError('i_stops does not behave nicely')
     return Lambda_0, Lambda_1, i_stops
 
 def write_array(stream, arr):

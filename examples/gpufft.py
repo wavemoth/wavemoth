@@ -32,7 +32,7 @@ drv.memcpy_htod(map_gpu, map)
 from wavemoth.cuda import cufft
 
 print 'ctoring plan'
-plan = cufft.HealpixCuFFTPlan(2048, 1)
+plan = cufft.HealpixCuFFTPlan(2048, 8)
 
 repeats = 1
 print 'plan ctored'
@@ -48,6 +48,7 @@ dt = 0
 for kernel, stats in prof.kernels.iteritems():
     dt += sum(stats['times'])
 print dt
+print prof.kernels
 
 drv.memcpy_dtoh(buf, buf_gpu)
 

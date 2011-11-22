@@ -78,6 +78,8 @@ def configure(conf):
     conf.env.CFLAGS_PROFILEUSE = ['-fprofile-use']
     conf.env.LINKFLAGS_PROFILEUSE = ['-fprofile-use']
 
+    conf.env.LINKFLAGS_CUFFT = ['-fopenmp']
+    conf.env.CFLAGS_CUFFT = ['-fopenmp']
     conf.env.LIB_CUFFT = ['cufft']
     conf.env.INCLUDES_CUFFT = ['/usr/local/cuda/include']
     conf.env.LIBPATH_CUFFT = ['/usr/local/cuda/lib64']

@@ -35,7 +35,7 @@ cdef extern from "cufft.h":
     cufftResult cufftPlan1d(cufftHandle *plan, 
                             int nx, 
                             cufftType type, 
-                            int batch)
+                            int batch) nogil
     
     cufftResult cufftDestroy(cufftHandle plan)
 
@@ -44,13 +44,33 @@ cdef extern from "cufft.h":
 
     cufftResult cufftExecD2Z(cufftHandle plan, 
                              cufftDoubleReal *idata,
-                             cufftDoubleComplex *odata)
+                             cufftDoubleComplex *odata) nogil
+
+
+## cdef extern from "pthread.h":
+##     ctypedef struct pthread_t
+##     int pthread_create(pthread_t * thread,
+##                        pthread_attr_t * attr,
+##                        void *(*start_routine)(void*),
+##                        void * arg)
+##     int pthread_join(pthread_t thread, void **value_ptr)
+    
+
+#from cython.parallel cimport prange, parallel, threadid
+from openmp cimport omp_set_num_threads, omp_get_thread_num, omp_get_wtime
+
+from concurrent.futures import ThreadPoolExecutor
+
+cdef check(int retcode):
+    if retcode != 0:
+        raise Exception("nonzero return code: %d" % retcode)
 
 
 cdef class HealpixCuFFTPlan:
     cdef cufftHandle *plans
     cdef cudaStream_t *streams
     cdef int nside, nstreams
+
 
     def __cinit__(self, int nside, int nstreams):
         self.nstreams = nstreams
@@ -60,38 +80,66 @@ cdef class HealpixCuFFTPlan:
         self.streams = <cudaStream_t*>malloc(sizeof(cudaStream_t) * nstreams);
 
         for i in range(nstreams):
-            print cudaStreamCreate(&self.streams[i])
+            check(cudaStreamCreate(&self.streams[i]))
+            
 
         cdef int n = 4
         cdef cufftResult ret
         for i in range(nside):
-            ret = cufftPlan1d(&self.plans[i], n, CUFFT_D2Z, 1)
-            if ret != CUFFT_SUCCESS:
-                raise Exception("cufft failed: %d" % ret)
-            cufftSetStream(self.plans[i], self.streams[i % nstreams]);
+            check(cufftPlan1d(&self.plans[i], n, CUFFT_D2Z, 1))
+            #check(cufftSetStream(self.plans[i], self.streams[i % nstreams]))
             n += 4
 
     def __dealloc__(self):
         for i in range(self.nside):
             cufftDestroy(self.plans[i])
-        for i in range(self.nstreams):
-            print self.streams[i]
-            #cudaStreamDestroy(self.streams[i])
+        #for i in range(self.nstreams):
+        #    cudaStreamDestroy(self.streams[i])
         free(self.plans)
         free(self.streams)
 
     def execute(self, size_t indata, size_t outdata):
         cdef int ret
-        n = 4
-        for i in range(self.nside):
-            ret |= cufftExecD2Z(self.plans[i],
-                                <cufftDoubleReal*>indata,
-                                <cufftDoubleComplex*>outdata)
-            indata += n * 8
-            outdata += (n // 2 + 1) * 16
-            n += 4
-            
-        if ret != 0:
-            raise Exception("Did not succeed: %d" % ret)
-        #cudaDeviceSynchronize()
+        cdef int n = 4
+        cdef int i
+        print self.nstreams
+        e = ThreadPoolExecutor(max_workers=self.nstreams)
+        futures = []
+        for i in range(self.nstreams):
+            futures.append(e.submit(executor, self, i, indata, outdata))
+            #print cufftExecD2Z(self.plans[i],
+            #                   <cufftDoubleReal*>indata,
+            #                   <cufftDoubleComplex*>outdata)
 
+        print futures
+        for fut in futures:
+            fut.result()
+        cudaDeviceSynchronize()
+            
+        
+
+def executor(HealpixCuFFTPlan plan, int streamidx, size_t indata, size_t outdata):
+    cdef size_t inp, outp
+    cdef int i
+    cdef int nside = plan.nside
+    cdef int nstreams = plan.nstreams
+    cdef cufftHandle h
+    
+    print 'inside executor', plan.plans[0]
+
+    cdef double t0, dt0, dt1
+    cdef int n = 8192 - 4
+    with nogil:
+        for i from streamidx <= i < nside by nstreams:
+            inp = indata + i * n * 8
+            outp = outdata + i * n * 16
+            t0 = omp_get_wtime()
+            cufftPlan1d(&h, n, CUFFT_D2Z, 1)
+            dt0 += omp_get_wtime() - t0
+
+            t0 = omp_get_wtime()
+            cufftExecD2Z(h,
+                         <cufftDoubleReal*>inp,
+                         <cufftDoubleComplex*>outp)
+            dt1 += omp_get_wtime() - t0
+    print dt0, dt1

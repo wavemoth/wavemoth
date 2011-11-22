@@ -23,6 +23,7 @@ def options(opt):
     opt.add_option('--with-perftools', help='path to google-perftools'
                    '(NOTE: must be configured with PIC)')
     opt.add_option('--with-numa', help='path to NUMA')
+    opt.add_option('--with-cufft', action='store_true')
     opt.add_option('--patched-libpsht', action='store_true',
                    help='libpsht is patched to enable selective benchmarks')
     opt.add_option('--no-openmp', action='store_true')
@@ -76,6 +77,13 @@ def configure(conf):
     conf.env.LINKFLAGS_PROFILEGEN = ['-fprofile-generate']
     conf.env.CFLAGS_PROFILEUSE = ['-fprofile-use']
     conf.env.LINKFLAGS_PROFILEUSE = ['-fprofile-use']
+
+    conf.env.LIB_CUFFT = ['cufft']
+    conf.env.INCLUDES_CUFFT = ['/usr/local/cuda/include']
+    conf.env.LIB_CUFFT = ['/usr/local/cuda/lib']
+    conf.env.RPATH_CUFFT = ['/usr/local/cuda/lib']
+
+    conf.env.USE_CUFFT = conf.options.with_cufft
 
     conf.env.CFLAGS_C99 = ['-std=gnu99']
     conf.env.CYTHONFLAGS = ['-a']
@@ -140,6 +148,13 @@ def build(bld):
         target='streamutils',
         use='NUMPY',
         features='c pyext cshlib')
+
+    if bld.env.USE_CUFFT:
+        bld(source=(['wavemoth/cuda/cufft.pyx']),
+            target='cufft',
+            use='NUMPY CUFFT',
+            features='c pyext cshlib')
+        
 
     if BUILD_BUTTERFLY:
         bld(source=(['wavemoth/butterfly.pyx']),

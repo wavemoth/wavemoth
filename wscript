@@ -80,8 +80,8 @@ def configure(conf):
 
     conf.env.LIB_CUFFT = ['cufft']
     conf.env.INCLUDES_CUFFT = ['/usr/local/cuda/include']
-    conf.env.LIB_CUFFT = ['/usr/local/cuda/lib']
-    conf.env.RPATH_CUFFT = ['/usr/local/cuda/lib']
+    conf.env.LIBPATH_CUFFT = ['/usr/local/cuda/lib64']
+    conf.env.RPATH_CUFFT = ['/usr/local/cuda/lib64']
 
     conf.env.USE_CUFFT = conf.options.with_cufft
 

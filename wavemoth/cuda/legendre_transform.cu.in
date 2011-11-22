@@ -324,7 +324,7 @@ __global__ void test_reduce_kernel(double *output, int repeat) {
   corner) is explicitly passed in, while the k-coordinate is only implicitly
   given by the contents of input arrays.
 */
-__device__ void transpose_legendre_transform_block(
+__device__ __forceinline__ void transpose_legendre_transform_block(
     int i_start,
     const double *Lambda_0,
     const double *Lambda_1,
@@ -495,14 +495,16 @@ __device__ void transpose_legendre_transform_block(
    All arguments are expected to be block-specific, i.e., the block
    index is never taken into account beyond this point.
 */
-__device__ void transpose_legendre_transform_single(int m, int lmin, int nk, int ni,
-                                                    const double *x_squared,
-                                                    const double *Lambda_0,
-                                                    const double *Lambda_1,
-                                                    const ushort *i_stops,
-                                                    const double *q,
-                                                    double *a,
-                                                    int zero) {
+__device__ __forceinline__ void transpose_legendre_transform_single(
+    int m, int lmin, int nk, int ni,
+    const double *x_squared,
+    const double *Lambda_0,
+    const double *Lambda_1,
+    const ushort *i_stops,
+    const double *q,
+    double *a,
+    int zero
+) {
   
   /* Scratch for auxiliary values */
   __shared__ double alpha[K_CHUNK], beta[K_CHUNK], gamma[K_CHUNK];

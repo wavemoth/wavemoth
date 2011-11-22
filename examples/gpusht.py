@@ -71,6 +71,12 @@ with cuda_profile() as prof:
 print prof.format('all_transpose_legendre_transforms',
                   nflops=plan.get_flops(),
                   nwarps=2)
+#print plan.get_in_transfer_bytes(), q.nbytes
+#print plan.get_out_transfer_bytes(), a.nbytes
+
+print prof.format('memcpyHtoD', nflops=q.nbytes)
+print prof.format('memcpyDtoH', nflops=a.nbytes)
+#print prof.kernels
 
 # Do it with np.dot and compare for selected m's
 def lm_to_idx_mmajor(l, m, lmax):

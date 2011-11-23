@@ -94,11 +94,11 @@ with cuda_profile() as prof:
         plan.execute_transpose_legendre(q_gpu, a_gpu)    
         cuda.memcpy_dtoh(a[0, ...], a_gpu)
 
-print 'Transfer in:  ', prof.format('memcpyHtoD', nflops=q.nbytes)
+print 'Transfer in:  ', prof.format('memcpyHtoD', nflops=q.nbytes // ntransforms)
 print 'Compute:      ', prof.format('all_transpose_legendre_transforms',
                                     nflops=plan.get_flops(),
                                     nwarps=2)
-print 'Transfer out: ', prof.format('memcpyDtoH', nflops=a.nbytes)
+print 'Transfer out: ', prof.format('memcpyDtoH', nflops=a.nbytes // ntransforms)
 
 # Check result
 print

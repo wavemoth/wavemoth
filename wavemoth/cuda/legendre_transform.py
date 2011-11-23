@@ -23,7 +23,7 @@ class CudaLegendreKernel(object):
     kernel_names = ['transpose_legendre_transform', 'test_reduce_kernel',
                     'all_transpose_legendre_transforms']
     def __init__(self, nvecs, nthreads, max_ni, i_chunk, warp_size=32,
-                 k_chunk=64, skip_kernels=(), **args):
+                 k_chunk=64, skip_kernels=(), maxregs=None, **args):
         self.nthreads = nthreads
         self.nvecs = nvecs
         self.warp_size = 32
@@ -41,6 +41,8 @@ class CudaLegendreKernel(object):
                                          **args)
         options = ['-ftz=true',
                    '-prec-div=true', '-prec-sqrt=true']
+        if maxregs is not None:
+            options += ['-maxrregcount', str(maxregs)]
         #options += ['-Xptxas', '-v']
         #options += ['-g', '-G']
         self.module = cuda.SourceModule(code, options=options, keep=True)

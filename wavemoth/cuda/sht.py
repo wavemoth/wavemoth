@@ -50,7 +50,7 @@ class CudaShtPlan(object):
 
     def __init__(self, nside, lmax, mmin=0, mmax=None,
                  resource_path=None, epsilon_legendre=1e-30,
-                 nthreads=64, i_chunk=4):
+                 nthreads=64, i_chunk=4, maxregs=None):
         if mmax is None:
             mmax = lmax
         self.nside, self.lmax, self.epsilon_legendre = nside, lmax, epsilon_legendre
@@ -66,6 +66,7 @@ class CudaShtPlan(object):
 
         self.legendre_kernel = CudaLegendreKernel(nvecs=2 * self.nmaps, nthreads=nthreads,
                                                   max_ni=self.ni, i_chunk=i_chunk,
+                                                  maxregs=maxregs,
                                                   skip_kernels=['transpose_legendre_transform',
                                                                 'test_reduce_kernel'])
 

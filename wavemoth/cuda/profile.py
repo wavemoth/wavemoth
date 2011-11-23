@@ -22,7 +22,7 @@ class CudaProfile(object):
         occupancy_fraction = stats['occupancy'][0]
         occ_warps = int(np.round(occupancy_fraction * 48))
 
-        s = '%.2e +/- %.0e sec = %.2f GFLOP/s, ' % (
+        s = '%.3e +/- %.0e sec = %.2f GFLOP/s, ' % (
             dt, np.std(times), nflops / dt / 1e9)
         if nwarps is not None:
             s += 'occupancy %.2f (%d warps in %d blocks)' % (

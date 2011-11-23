@@ -80,22 +80,11 @@ class CudaLegendreKernel(object):
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 
     def all_transpose_legendre_transforms(self, lmax, mmin, mmax, resources_gpu, q, a,
-                                          ni=None, stream=None):
-        if not isinstance(q, cuda.DeviceAllocation):
-            if ni is None:
-                ni = q.shape[3]
-            assert q.strides[3] == 8 and q.dtype == np.double
-            assert q.shape[1] == self.nvecs
-            q = In(q)
-        if not isinstance(a, cuda.DeviceAllocation):
-            assert a.dtype == np.complex128 and a.shape[1] == self.nvecs // 2
-            assert a.shape[0] == (lmax + 1)**2
-            assert a.strides[1] == 16
-            a = Out(a)
-
+                                          ni, stream=None):
         self._all_transpose_legendre_transforms.prepared_async_call(
             (mmax - mmin + 1, 2), (self.nthreads, 1, 1), stream,
             lmax, mmin, ni, resources_gpu, q, a, 0)
+            
 
 
     def test_reduce_kernel(self, output, repeat=1, nblocks=1):

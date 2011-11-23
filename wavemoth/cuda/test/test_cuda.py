@@ -22,7 +22,10 @@ def test_parallel_reduction():
         nthreads = 32 * nwarps
         nvecs = 2
         repeat = 2
-        kernel = CudaLegendreKernel(nvecs=nvecs, nthreads=nthreads, **kopts)
+        kernel = CudaLegendreKernel(nvecs=nvecs, nthreads=nthreads,
+                                    skip_kernels=['transpose_legendre_transform',
+                                                  'all_transpose_legendre_transforms'],
+                                    **kopts)
 
         j, k, i = np.ogrid[:2, :16, :nthreads]
         output0 = repeat * ((j + 1) * k * i)

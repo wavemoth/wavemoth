@@ -51,7 +51,7 @@ class CudaLegendreKernel(object):
                 continue
             setattr(self, '_' + name, self.module.get_function(name))
 
-        if '_all_transpose_legendre_transforms' not in skip_kernels:
+        if 'all_transpose_legendre_transforms' not in skip_kernels:
             self._all_transpose_legendre_transforms.prepare(
                 [uint32, uint32, uint32, None, None, None, uint32],
                 block=(self.nthreads, 1, 1))

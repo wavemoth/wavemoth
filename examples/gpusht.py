@@ -28,7 +28,7 @@ nside = 2048
 nmaps = 1
 lmax = 2 * nside
 odd = 0
-ntransforms = 2
+ntransforms = 20
 
 mmin = 0
 mmax = lmax

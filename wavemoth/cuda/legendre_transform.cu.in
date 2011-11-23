@@ -346,9 +346,6 @@ __device__ __forceinline__ void transpose_legendre_transform_block(
       {{enddef}}
 
       {{if args['blocktype'] == 'inner'}}
-      /*      if (IS_UNASSIGNED(Lambda_pp_{{ri}}) || IS_UNASSIGNED(Lambda_pp_{{ri}})) {
-        printonce("%d %d\n", i_start + ithread + {{nthreads * ri}}, kc);
-        }*/
         {{Lambda_recurrence()}}
         {{matvec()}}
         {{swap()}}

@@ -2,10 +2,7 @@ from __future__ import division
 
 import os
 import sys
-import socket
-
-if socket.gethostname() != 'dagss-laptop':
-    sys.path.append('/home/dagss/wavemoth')
+from time import time
 
 import numpy as np
 import numpy.linalg as la
@@ -13,9 +10,7 @@ import logging
 
 from matplotlib import pyplot as plt
 
-print 'Trying to get CUDA'
 import pycuda.autoinit
-print 'got CUDA'
 
 from wavemoth import *
 from wavemoth import healpix
@@ -34,17 +29,12 @@ nmaps = 1
 lmax = 2 * nside
 odd = 0
 
-if 0:
-    mmin = 0
-    mmax = lmax // 2
-else:
-    mmin = lmax // 2 + 1
-    mmax = lmax
-if 1:
-    mmin = 0
-    mmax = lmax
+mmin = 0
+mmax = lmax
 
 test_ms = [mmin, 1, (mmax - mmin) // 2, mmax]
+
+ni = 2 * nside
 
 resource_path = '/home/dagss/wavemoth/resources/gpu/%d.dat' % nside
 
@@ -53,11 +43,15 @@ if not os.path.exists(resource_path) or force:
     with file(resource_path, 'w') as f:
         plan.precompute_to_stream(f, logger)
     
-plan = CudaShtPlan(nside=nside, lmax=lmax, mmin=mmin, mmax=mmax, resource_path=resource_path)
-ni = plan.ni
+q = cuda.pagelocked_zeros((lmax + 1, 2, 2 * nmaps, ni), np.float64)
+a = cuda.pagelocked_zeros(((lmax + 1)**2, nmaps), np.complex128)
+q_gpu = cuda.mem_alloc(q.nbytes)
+a_gpu = cuda.mem_alloc(a.nbytes)
 
-q = np.zeros((lmax + 1, 2, 2 * nmaps, ni))
-a = np.zeros(((lmax + 1)**2, nmaps), dtype=np.complex128)
+plan = CudaShtPlan(nside=nside, lmax=lmax, mmin=mmin, mmax=mmax,
+                   resource_path=resource_path)
+
+
 
 # Fill with mock data
 for m in test_ms:
@@ -65,17 +59,31 @@ for m in test_ms:
         for j in range(2 * nmaps):
             q[m, odd, j, :] = (1 + m) * (2 + odd) * (3 + j) * np.sin(np.arange(ni) * 0.4)
 
-with cuda_profile() as prof:
-    plan.execute_transpose_legendre(q, a)
+# Copy to device
+stream = cuda.Stream()
 
-print prof.format('all_transpose_legendre_transforms',
-                  nflops=plan.get_flops(),
-                  nwarps=2)
+t0 = time()
+#with cuda_profile() as prof:
+if 1:
+    print time() - t0
+    cuda.memcpy_htod_async(q_gpu, q, stream=stream)
+    print time() - t0
+    plan.execute_transpose_legendre(q_gpu, a_gpu, stream=stream)
+    print time() - t0
+    cuda.memcpy_dtoh_async(a, a_gpu, stream=stream)
+    print time() - t0
+#print stream.is_done()
+stream.synchronize()
+print stream.is_done()
+print 'hoh', time() - t0
+#print prof.format('all_transpose_legendre_transforms',
+#                  nflops=plan.get_flops(),
+#                  nwarps=2)
 #print plan.get_in_transfer_bytes(), q.nbytes
 #print plan.get_out_transfer_bytes(), a.nbytes
 
-print prof.format('memcpyHtoD', nflops=q.nbytes)
-print prof.format('memcpyDtoH', nflops=a.nbytes)
+#print prof.format('memcpyHtoD', nflops=q.nbytes)
+#print prof.format('memcpyDtoH', nflops=a.nbytes)
 #print prof.kernels
 
 # Do it with np.dot and compare for selected m's
@@ -96,4 +104,4 @@ for m in test_ms:
             print m, odd, np.linalg.norm(a_slice - a0_slice) / np.linalg.norm(a0_slice)
 
 
-print 'FLOPS', plan.get_flops()
+print 'GFLOPS performed', plan.get_flops() / 1e9

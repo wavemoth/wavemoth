@@ -49,6 +49,11 @@ class CudaLegendreKernel(object):
                 continue
             setattr(self, '_' + name, self.module.get_function(name))
 
+        if '_all_transpose_legendre_transforms' not in skip_kernels:
+            self._all_transpose_legendre_transforms.prepare(
+                [uint32, uint32, uint32, None, None, None, uint32],
+                block=(self.nthreads, 1, 1))
+
     def transpose_legendre_transform(self, m, lmin,
                                      x_squared, Lambda_0, Lambda_1, i_stops, q, a):
         # a: (nblocks, 2 * nk, nvecs)
@@ -74,17 +79,23 @@ class CudaLegendreKernel(object):
             int32(0),
             block=(self.nthreads, 1, 1), grid=(nblocks, 1))
 
-    def all_transpose_legendre_transforms(self, lmax, mmin, mmax, resources_gpu, q, a):
-        ni = q.shape[3]
-        assert q.strides[3] == 8 and q.dtype == np.double
-        assert q.shape[1] == self.nvecs
-        assert a.dtype == np.complex128 and a.shape[1] == self.nvecs // 2
-        assert a.shape[0] == (lmax + 1)**2
-        assert a.strides[1] == 16
+    def all_transpose_legendre_transforms(self, lmax, mmin, mmax, resources_gpu, q, a,
+                                          ni=None, stream=None):
+        if not isinstance(q, cuda.DeviceAllocation):
+            if ni is None:
+                ni = q.shape[3]
+            assert q.strides[3] == 8 and q.dtype == np.double
+            assert q.shape[1] == self.nvecs
+            q = In(q)
+        if not isinstance(a, cuda.DeviceAllocation):
+            assert a.dtype == np.complex128 and a.shape[1] == self.nvecs // 2
+            assert a.shape[0] == (lmax + 1)**2
+            assert a.strides[1] == 16
+            a = Out(a)
 
-        self._all_transpose_legendre_transforms(
-            uint32(lmax), uint32(mmin), uint32(ni), resources_gpu, In(q), Out(a), uint32(0),
-            block=(self.nthreads, 1, 1), grid=(mmax - mmin + 1, 2))
+        self._all_transpose_legendre_transforms.prepared_async_call(
+            (mmax - mmin + 1, 2), (self.nthreads, 1, 1), stream,
+            lmax, mmin, ni, resources_gpu, q, a, 0)
 
 
     def test_reduce_kernel(self, output, repeat=1, nblocks=1):

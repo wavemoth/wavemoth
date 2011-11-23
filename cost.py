@@ -20,12 +20,14 @@ for k, w, b in [
     (32, 2, 8),
     ]:
     aux = 3 * k * 8 * b
-    red = 4 * 2 * 32 * w * 8 * b
+    red = 3 * 2 * 32 * w * 8 * b
     acc = 2 * k * 8 * b
+
+    cost = aux + red + acc
     
-    print '%r aux=%d red=%d acc=%d %d %d %d' % (
-        (k, w, b), aux, red, acc,
-        cost_a(k, w, b), cost_b(k, w, b), cost_c(k, w, b))
+    print '%r aux=%d red=%d acc=%d =%d' % (
+        (k, w, b), aux, red, acc, aux+red+acc)
+#        cost_a(k, w, b), cost_b(k, w, b), cost_c(k, w, b))
 
 
 print 'Precomputed data:'
@@ -42,3 +44,4 @@ print s / 1024.**2
 
 print 'map size', 12*nside**2 * 8 / 1024.**2
 print 'alm size', (lmax + 1)**2 * 8 / 1024.**2
+print 'q size', (2 * lmax + 1) * 16 * 2 * nside / 1024.**2

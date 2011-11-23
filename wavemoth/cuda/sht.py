@@ -69,12 +69,15 @@ class CudaShtPlan(object):
                                                   skip_kernels=['transpose_legendre_transform',
                                                                 'test_reduce_kernel'])
 
-    def execute_transpose_legendre(self, q, a):
-        self.legendre_kernel.all_transpose_legendre_transforms(self.lmax,
-                                                               self.mmin,
-                                                               self.mmax,
-                                                               self.resources_gpu,
-                                                               q, a)
+    def execute_transpose_legendre(self, q, a, stream=None):
+        return self.legendre_kernel.all_transpose_legendre_transforms(
+            self.lmax,
+            self.mmin,
+            self.mmax,
+            self.resources_gpu,
+            q,
+            a,
+            self.ni, stream)
     
     def get_Lambda(self, m, odd):
         Lambda = compute_normalized_associated_legendre(m, self.thetas,

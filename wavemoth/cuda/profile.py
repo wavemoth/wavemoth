@@ -72,6 +72,8 @@ def cuda_profile(*args, **kw):
         try:
             yield results
         finally:
+            # The stop_profiler call is important as it waits until
+            # asynchronous execution is done
             cuda.stop_profiler()
             parse_profile_csv(profile_file, results)
     finally:

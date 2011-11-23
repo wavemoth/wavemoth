@@ -28,7 +28,7 @@ nside = 2048
 nmaps = 1
 lmax = 2 * nside
 odd = 0
-ntransforms = 20
+ntransforms = 2
 
 mmin = 0
 mmax = lmax
@@ -44,7 +44,7 @@ if not os.path.exists(resource_path) or force:
     with file(resource_path, 'w') as f:
         plan.precompute_to_stream(f, logger)
 plan = CudaShtPlan(nside=nside, lmax=lmax, mmin=mmin, mmax=mmax,
-                   resource_path=resource_path)
+                   resource_path=resource_path, i_chunk=4)
 
 # Set up mock data for all launches
 q = cuda.pagelocked_zeros((ntransforms, lmax + 1, 2, 2 * nmaps, ni), np.float64)

@@ -88,10 +88,11 @@ print 'Host-to-host compute rate: %f GFLOP/s' % (ntransforms * plan.get_flops() 
 print
 print '== Profiled run at nside=%d' % nside
 with cuda_profile() as prof:
-    stream, q_gpu, a_gpu = stream_objects[0]
-    cuda.memcpy_htod(q_gpu, q[0, ...])
-    plan.execute_transpose_legendre(q_gpu, a_gpu)    
-    cuda.memcpy_dtoh(a[0, ...], a_gpu)
+    for rep in range(3):
+        stream, q_gpu, a_gpu = stream_objects[0]
+        cuda.memcpy_htod(q_gpu, q[0, ...])
+        plan.execute_transpose_legendre(q_gpu, a_gpu)    
+        cuda.memcpy_dtoh(a[0, ...], a_gpu)
 
 print 'Transfer in:  ', prof.format('memcpyHtoD', nflops=q.nbytes)
 print 'Compute:      ', prof.format('all_transpose_legendre_transforms',

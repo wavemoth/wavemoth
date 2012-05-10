@@ -111,7 +111,7 @@ def build(bld):
         bld(target='wavemoth',
             source=['src/wavemoth.c', 'src/butterfly.c.in', 'src/legendre_transform.c.in'],
             includes=['src'],
-            use='C99 BLAS FFTW3 OPENMP NUMA',
+            use='C99 BLAS FFTW3 OPENMP NUMA RT',
             features='c cshlib')
 
         bld.add_manual_dependency(

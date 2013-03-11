@@ -16,8 +16,10 @@ C program to benchmark spherical harmonic transforms
 #include <omp.h>
 
 #include <stddef.h>
+#ifdef HAS_PSHT
 #include <psht.h>
 #include <psht_geomhelpers.h>
+#endif
 
 #include "wavemoth.h"
 #include "wavemoth_private.h"
@@ -89,6 +91,7 @@ void finish_sht(void) {
   wavemoth_destroy_plan(sht_plan);
 }
 
+#ifdef HAS_PSHT
 
 /*
 PSHT
@@ -168,6 +171,7 @@ void finish_psht(void) {
 void execute_psht(void *ctx) {
   pshtd_execute_jobs(benchpsht_joblist, benchpsht_geom_info, benchpsht_alm_info);
 }
+#endif
 
 /*
 Main
@@ -201,7 +205,9 @@ static double relative_error(size_t n, double *a, size_t a_stride,
 int main(int argc, char *argv[]) {
   benchmark_t benchmarks[] = {
     (benchmark_t){"sht", setup_sht, execute_sht, finish_sht, 1, 0.0},
+#if HAS_PSHT
     (benchmark_t){"psht", setup_psht, execute_psht, finish_psht, 1, 0.0},
+#endif
     {NULL, NULL, NULL, NULL, 0, 0.0}
   };
 

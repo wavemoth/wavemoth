@@ -1,6 +1,7 @@
 Wavemoth
 ========
 
+
 Please read the paper [1] for more information about this software.
 Note that this code is *experimental*, and has not yet had its first
 release. If you know what you're looking for, go find it. If you are a
@@ -20,6 +21,39 @@ more than one person comes along I'll set up a mailing list.
 
 
 [1] http://arxiv.org/abs/1110.4874
+
+Build instructions
+------------------
+
+Depends on:
+    
+    - Python (probably 2.7, perhaps 2.6 may work)
+    - The normal scientific Python stack
+    - The Tempita package
+      (e.g., ``easy_install tempita`` or ``pip install tempita``).
+    - The futures package (e.g., ``easy_install futures``)
+    - ATLAS
+    - FFTW3
+    - libnuma
+
+Then first configure:
+
+    ./waf configure --inplace \
+        --with-atlas=path/to/atlas
+        --with-fftw3=... \
+        --with-numa=...
+
+And build:
+
+    ./waf install
+
+Then run precomputations:
+
+    python scripts/precompute.py ... 2048.dat
+
+and benchmarks, e.g.:
+
+    bin/shbench -r 2048.dat -j 1 -n 10
 
 Copyright & license
 -------------------

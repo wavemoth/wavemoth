@@ -401,6 +401,7 @@ wavemoth_plan wavemoth_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
   plan->lmax = lmax;
   plan->mmax = mmax;
   plan->flags = flags;
+  plan->nthreads = nthreads;
 
   /* Figure out how threads should be distributed. We query NUMA for
      the nodes we can run on (intersection of cpubind and membind),
@@ -585,11 +586,11 @@ wavemoth_plan wavemoth_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
     pthread_barrier_t barrier, node_barrier;
   } sync;
   pthread_mutex_init(&sync.mutex, NULL);
-  pthread_barrier_init(&sync.barrier, NULL, nthreads);
-  pthread_barrier_init(&sync.node_barrier, NULL, nnodes);
+  //  pthread_barrier_init(&sync.barrier, NULL, nthreads);
+  //pthread_barrier_init(&sync.node_barrier, NULL, nnodes);
   wavemoth_run_in_threads(plan, &wavemoth_create_plan_thread, 1, &sync, NULL, NULL);
-  pthread_barrier_destroy(&sync.barrier);
-  pthread_barrier_destroy(&sync.node_barrier);
+  //pthread_barrier_destroy(&sync.barrier);
+  //pthread_barrier_destroy(&sync.node_barrier);
   pthread_mutex_destroy(&sync.mutex);
 
   /* Now that work_q has been allocated, set up m_to_phase_ring */
@@ -604,7 +605,6 @@ wavemoth_plan wavemoth_plan_to_healpix(int Nside, int lmax, int mmax, int nmaps,
 
   thread_ctx_t adaptor_ctx[nthreads];
   plan->destructing = 0;
-  plan->nthreads = nthreads;
   plan->execute_threads = malloc(sizeof(pthread_t[nthreads]));
   pthread_barrier_init(&plan->execute_barrier, NULL, nthreads + 1);
   wavemoth_run_in_threads(plan, &wait_for_execute_thread, 1, NULL,
@@ -666,7 +666,7 @@ static void wavemoth_create_plan_thread(wavemoth_plan plan, int inode, int icpu,
                                        int ithread, void *ctx) {
   struct {
     pthread_mutex_t mutex;
-    pthread_barrier_t barrier, node_barrier;
+      //    pthread_barrier_t barrier, node_barrier;
   } *sync = ctx;
 
   const int PAGESIZE = getpagesize();
@@ -722,10 +722,10 @@ static void wavemoth_create_plan_thread(wavemoth_plan plan, int inode, int icpu,
         }
       }
       /* All nodes wait in line for harddrive access */
-      pthread_barrier_wait(&sync->node_barrier);
+      //      if (plan->nthreads > 1) pthread_barrier_wait(&sync->node_barrier);
     }
   }
-  pthread_barrier_wait(&sync->barrier);
+  //  if (plan->nthreads > 1) pthread_barrier_wait(&sync->barrier);
 
   /* Copy matrix data into cpu_plans buffers. Stride by
      our thread-on-node number.
@@ -769,7 +769,7 @@ static void wavemoth_create_plan_thread(wavemoth_plan plan, int inode, int icpu,
     node_plan->k_max = node_plan->nblocks_max = 0;
   }
 
-  pthread_barrier_wait(&sync->barrier);
+  //  if (plan->nthreads > 1) pthread_barrier_wait(&sync->barrier);
 
   /* all threads do max*/
   pthread_mutex_lock(&sync->mutex);
@@ -777,7 +777,7 @@ static void wavemoth_create_plan_thread(wavemoth_plan plan, int inode, int icpu,
   node_plan->nblocks_max = zmax(node_plan->nblocks_max,
                                 nblocks_max);
   pthread_mutex_unlock(&sync->mutex);
-  pthread_barrier_wait(&sync->barrier);
+  //  if (plan->nthreads > 1) pthread_barrier_wait(&sync->barrier);
   /* all threads read back values */
   k_max = node_plan->k_max;
   nblocks_max = node_plan->nblocks_max;

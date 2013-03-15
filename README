@@ -47,9 +47,9 @@ And build:
 
     ./waf install
 
-Then run precomputations:
+Then run precomputations. computed on 4 cores:
 
-    python scripts/precompute.py ... 2048.dat
+    python scripts/precompute.py -n 1024 -t 1 1024.dat
 
 and benchmarks, e.g.:
 
